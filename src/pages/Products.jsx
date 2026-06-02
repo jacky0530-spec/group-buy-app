@@ -1,0 +1,543 @@
+import { useState, useEffect, useCallback } from 'react'
+import { ProductsAPI, CustomersAPI, OrdersAPI } from '../lib/db'
+import { useToast, Modal, ConfirmDialog } from '../components/UI'
+import { Plus, Pencil, Trash2, Search, TrendingUp, X, Tag } from 'lucide-react'
+
+export const CATEGORIES = [
+  { id: 'daily',    name: '日用品',   icon: '🧴', color: '#3b82f6' },
+  { id: 'frozen',   name: '冷凍食品', icon: '🧊', color: '#06b6d4' },
+  { id: 'clothing', name: '服飾',     icon: '👗', color: '#ec4899' },
+  { id: 'biscuit',  name: '餅乾',     icon: '🍪', color: '#f59e0b' },
+  { id: 'candy',    name: '糖果',     icon: '🍬', color: '#8b5cf6' },
+  { id: 'other',    name: '其他',     icon: '📦', color: '#6b7280' },
+]
+export const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.id, c]))
+
+// ── 規格設定定義 ──────────────────────────────────────────────
+// 每個分類可設定的規格模式
+const SPEC_MODES = {
+  clothing: [
+    { id: 'color_size', label: '顏色 ＋ 尺碼' },
+    { id: 'color_free', label: '顏色 ＋ Free Size' },
+    { id: 'color_only', label: '僅顏色' },
+    { id: 'size_only',  label: '僅尺碼' },
+    { id: 'none',       label: '無規格' },
+  ],
+  daily: [
+    { id: 'random',      label: '隨機出貨' },
+    { id: 'color_only',  label: '僅顏色' },
+    { id: 'color_size',  label: '顏色 ＋ 尺寸' },
+    { id: 'none',        label: '無規格' },
+  ],
+}
+
+// 預設尺碼選項
+const DEFAULT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']
+
+// 預設顏色
+const PRESET_COLORS = ['黑色', '白色', '灰色', '米白', '藏青', '紅色', '粉色', '藍色', '綠色', '黃色', '咖啡', '紫色']
+
+const EMPTY_FORM = {
+  name: '', price: '', cost: '', category: 'other', note: '',
+  spec_mode: 'none',
+  spec_colors: [],    // ['黑色','白色',...]
+  spec_sizes: [],     // ['S','M','L',...]
+  color_input: '',    // 暫存輸入框
+  size_input: '',     // 暫存輸入框
+}
+
+// ── 規格標籤顯示 ──────────────────────────────────────────────
+function SpecBadges({ product }) {
+  const mode = product.spec_mode
+  if (!mode || mode === 'none') return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+  if (mode === 'random') return <span className="badge badge-sky">🎲 隨機</span>
+  const colors = product.spec_colors || []
+  const sizes  = product.spec_sizes  || []
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      {colors.length > 0 && (
+        <span className="badge badge-pink">🎨 {colors.length} 色</span>
+      )}
+      {mode === 'color_free' && (
+        <span className="badge badge-gray">Free Size</span>
+      )}
+      {sizes.length > 0 && (
+        <span className="badge badge-indigo">📏 {sizes.join('/')}</span>
+      )}
+    </div>
+  )
+}
+
+// ── 規格編輯區塊 ─────────────────────────────────────────────
+function SpecEditor({ form, setForm }) {
+  const cat = form.category
+  const modes = SPEC_MODES[cat]
+  if (!modes) return null   // 冷凍食品、餅乾、糖果、其他 → 不顯示規格
+
+  const mode = form.spec_mode || 'none'
+  const showColor = ['color_size','color_free','color_only','color_size'].includes(mode)
+  const showSize  = mode === 'color_size' || mode === 'size_only'
+  const isRandom  = mode === 'random'
+
+  function addColor() {
+    const v = form.color_input.trim()
+    if (!v || form.spec_colors.includes(v)) { setForm(p => ({ ...p, color_input: '' })); return }
+    setForm(p => ({ ...p, spec_colors: [...p.spec_colors, v], color_input: '' }))
+  }
+  function removeColor(c) { setForm(p => ({ ...p, spec_colors: p.spec_colors.filter(x => x !== c) })) }
+
+  function addSize() {
+    const v = form.size_input.trim().toUpperCase()
+    if (!v || form.spec_sizes.includes(v)) { setForm(p => ({ ...p, size_input: '' })); return }
+    setForm(p => ({ ...p, spec_sizes: [...p.spec_sizes, v], size_input: '' }))
+  }
+  function removeSize(s) { setForm(p => ({ ...p, spec_sizes: p.spec_sizes.filter(x => x !== s) })) }
+
+  function togglePresetSize(s) {
+    setForm(p => ({
+      ...p,
+      spec_sizes: p.spec_sizes.includes(s)
+        ? p.spec_sizes.filter(x => x !== s)
+        : [...p.spec_sizes, s]
+    }))
+  }
+
+  return (
+    <div style={{ borderTop: '1.5px solid var(--border)', paddingTop: 16, marginTop: 4, marginBottom: 4 }}>
+      {/* 模式選擇 */}
+      <div className="form-group" style={{ marginBottom: 12 }}>
+        <label>規格模式</label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {modes.map(m => (
+            <button key={m.id} type="button"
+              onClick={() => setForm(p => ({ ...p, spec_mode: m.id, spec_colors: [], spec_sizes: [] }))}
+              style={{
+                padding: '6px 12px', borderRadius: 8, fontSize: 13, fontFamily: 'inherit',
+                fontWeight: 600, cursor: 'pointer', transition: 'all .15s',
+                border: `2px solid ${mode === m.id ? 'var(--indigo)' : 'var(--border)'}`,
+                background: mode === m.id ? 'var(--indigo-light)' : 'var(--surface)',
+                color: mode === m.id ? 'var(--indigo-dark)' : 'var(--text-secondary)',
+              }}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 隨機說明 */}
+      {isRandom && (
+        <div style={{ background: 'var(--sky-light)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#0369a1' }}>
+          🎲 訂單備註將顯示「隨機出貨」，不需額外選色或選碼。
+        </div>
+      )}
+
+      {/* 顏色編輯 */}
+      {showColor && (
+        <div className="form-group">
+          <label>顏色選項</label>
+          {/* 快速預設 */}
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+            {PRESET_COLORS.map(c => (
+              <button key={c} type="button"
+                onClick={() => {
+                  setForm(p => ({
+                    ...p,
+                    spec_colors: p.spec_colors.includes(c)
+                      ? p.spec_colors.filter(x => x !== c)
+                      : [...p.spec_colors, c]
+                  }))
+                }}
+                style={{
+                  padding: '4px 10px', borderRadius: 99, fontSize: 12, fontFamily: 'inherit',
+                  cursor: 'pointer', transition: 'all .12s', fontWeight: 600,
+                  border: `1.5px solid ${form.spec_colors.includes(c) ? '#ec4899' : 'var(--border)'}`,
+                  background: form.spec_colors.includes(c) ? '#fdf2f8' : 'var(--surface)',
+                  color: form.spec_colors.includes(c) ? '#be185d' : 'var(--text-secondary)',
+                }}>
+                {c}
+              </button>
+            ))}
+          </div>
+          {/* 自訂輸入 */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={form.color_input}
+              onChange={e => setForm(p => ({ ...p, color_input: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addColor())}
+              placeholder="輸入自訂顏色，按 Enter 加入"
+              style={{ flex: 1, padding: '7px 10px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'inherit' }} />
+            <button type="button" className="btn btn-ghost btn-sm" onClick={addColor}>加入</button>
+          </div>
+          {/* 已選顏色 */}
+          {form.spec_colors.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              {form.spec_colors.map(c => (
+                <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#fdf2f8', border: '1.5px solid #fbcfe8', borderRadius: 99, fontSize: 12, fontWeight: 600, color: '#be185d' }}>
+                  {c}
+                  <button type="button" onClick={() => removeColor(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#be185d', display: 'flex', padding: 0, marginLeft: 2 }}><X size={11} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 尺碼編輯 */}
+      {showSize && (
+        <div className="form-group">
+          <label>尺碼選項</label>
+          {/* 快速預設尺碼 */}
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+            {DEFAULT_SIZES.map(s => (
+              <button key={s} type="button"
+                onClick={() => togglePresetSize(s)}
+                style={{
+                  padding: '4px 10px', borderRadius: 8, fontSize: 12, fontFamily: 'inherit',
+                  cursor: 'pointer', transition: 'all .12s', fontWeight: 700,
+                  border: `1.5px solid ${form.spec_sizes.includes(s) ? 'var(--indigo)' : 'var(--border)'}`,
+                  background: form.spec_sizes.includes(s) ? 'var(--indigo-light)' : 'var(--surface)',
+                  color: form.spec_sizes.includes(s) ? 'var(--indigo-dark)' : 'var(--text-secondary)',
+                }}>
+                {s}
+              </button>
+            ))}
+          </div>
+          {/* 自訂輸入 */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={form.size_input}
+              onChange={e => setForm(p => ({ ...p, size_input: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addSize())}
+              placeholder="自訂尺碼（如 26吋、38號），按 Enter 加入"
+              style={{ flex: 1, padding: '7px 10px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'inherit' }} />
+            <button type="button" className="btn btn-ghost btn-sm" onClick={addSize}>加入</button>
+          </div>
+          {/* 已選尺碼 */}
+          {form.spec_sizes.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              {form.spec_sizes.map(s => (
+                <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'var(--indigo-light)', border: '1.5px solid #c7d2fe', borderRadius: 8, fontSize: 12, fontWeight: 700, color: 'var(--indigo-dark)' }}>
+                  {s}
+                  <button type="button" onClick={() => removeSize(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--indigo)', display: 'flex', padding: 0, marginLeft: 2 }}><X size={11} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Free Size 說明 */}
+      {mode === 'color_free' && (
+        <div style={{ background: 'var(--emerald-light)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#065f46', marginTop: 4 }}>
+          ✅ Free Size：訂單只需選顏色，不需選尺碼。
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 主元件 ───────────────────────────────────────────────────
+const EMPTY = EMPTY_FORM
+
+export default function Products() {
+  const toast = useToast()
+  const [products, setProducts]     = useState([])
+  const [customers, setCustomers]   = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [search, setSearch]         = useState('')
+  const [filterCat, setFilterCat]   = useState('all')
+  const [showModal, setShowModal]   = useState(false)
+  const [form, setForm]             = useState(EMPTY)
+  const [editId, setEditId]         = useState(null)
+  const [saving, setSaving]         = useState(false)
+  const [confirmDel, setConfirmDel] = useState(null)
+
+  // 批次開單
+  const [batchBuyers, setBatchBuyers]   = useState([])
+  const [custSearch, setCustSearch]     = useState('')
+  const [custDropOpen, setCustDropOpen] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const [prods, custs] = await Promise.all([ProductsAPI.list(), CustomersAPI.list()])
+    setProducts(prods); setCustomers(custs)
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = products.filter(p => {
+    const m = p.name.toLowerCase().includes(search.toLowerCase())
+    const c = filterCat === 'all' || p.category === filterCat
+    return m && c
+  })
+
+  function openAdd() {
+    setForm(EMPTY); setEditId(null); setBatchBuyers([]); setShowModal(true)
+  }
+  function openEdit(p) {
+    setForm({
+      name: p.name, price: p.price, cost: p.cost,
+      category: p.category || 'other', note: p.note || '',
+      spec_mode:   p.spec_mode   || 'none',
+      spec_colors: p.spec_colors || [],
+      spec_sizes:  p.spec_sizes  || [],
+      color_input: '', size_input: '',
+    })
+    setEditId(p.id); setBatchBuyers([]); setShowModal(true)
+  }
+
+  // 切換分類時重置規格
+  function setCategory(catId) {
+    setForm(p => ({ ...p, category: catId, spec_mode: 'none', spec_colors: [], spec_sizes: [] }))
+  }
+
+  function addBuyer(c) {
+    if (!batchBuyers.find(b => b.id === c.id))
+      setBatchBuyers(p => [...p, { id: c.id, name: c.name, qty: 1 }])
+    setCustDropOpen(false); setCustSearch('')
+  }
+  function updateBuyerQty(id, val) {
+    const n = parseInt(val) || 0
+    if (n <= 0) setBatchBuyers(p => p.filter(b => b.id !== id))
+    else setBatchBuyers(p => p.map(b => b.id === id ? { ...b, qty: n } : b))
+  }
+
+  const profit = p => (+p.price) - (+p.cost)
+  const margin = p => (+p.price) > 0 ? Math.round((profit(p) / (+p.price)) * 100) : 0
+
+  async function save() {
+    if (!form.name.trim() || form.price === '' || form.cost === '') {
+      toast('請填寫名稱、售價與成本', 'error'); return
+    }
+    setSaving(true)
+    try {
+      const dup = await ProductsAPI.isDuplicate(form.name.trim(), editId)
+      if (dup) { toast(`商品「${form.name}」已存在`, 'error'); return }
+
+      const payload = {
+        name:        form.name.trim(),
+        price:       +form.price,
+        cost:        +form.cost,
+        category:    form.category,
+        note:        form.note.trim(),
+        spec_mode:   form.spec_mode || 'none',
+        spec_colors: form.spec_colors || [],
+        spec_sizes:  form.spec_sizes  || [],
+      }
+
+      let prodId = editId
+      if (editId) {
+        await ProductsAPI.update(editId, payload)
+        toast('商品已更新 ✓')
+      } else {
+        const created = await ProductsAPI.create(payload)
+        prodId = created.id
+        toast('商品已新增 ✓')
+      }
+
+      if (batchBuyers.length > 0) {
+        await Promise.all(batchBuyers.map(b => OrdersAPI.create({
+          customer_id:   b.id,
+          customer_name: b.name,
+          items: [{ id: prodId, name: payload.name, price: payload.price, qty: b.qty, note: '' }],
+          total_amount:  payload.price * b.qty,
+          note: '',
+        })))
+        toast(`已同時幫 ${batchBuyers.length} 位客戶開立訂單 ✓`)
+      }
+
+      setShowModal(false); load()
+    } finally { setSaving(false) }
+  }
+
+  async function del(id, name) {
+    await ProductsAPI.delete(id)
+    setConfirmDel(null); toast(`已刪除「${name}」`, 'warning'); load()
+  }
+
+  const filtCusts = customers.filter(c =>
+    c.name.toLowerCase().includes(custSearch.toLowerCase()) ||
+    (c.line_nick || '').toLowerCase().includes(custSearch.toLowerCase())
+  )
+
+  return (
+    <div className="animate-fade">
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800 }}>商品管理</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 2 }}>共 {products.length} 項商品</p>
+        </div>
+        <button className="btn btn-primary" onClick={openAdd}><Plus size={15} />新增商品</button>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="search-input-wrap" style={{ flex: 1, minWidth: 180 }}>
+          <Search size={14} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋商品名稱..."
+            style={{ padding: '8px 8px 8px 32px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 14, outline: 'none', fontFamily: 'inherit', background: 'var(--surface)', width: '100%' }} />
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button className={`btn btn-sm ${filterCat === 'all' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterCat('all')}>全部</button>
+          {CATEGORIES.map(c => (
+            <button key={c.id} className={`btn btn-sm ${filterCat === c.id ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterCat(c.id)}>
+              {c.icon} {c.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="card">
+        <div className="table-container">
+          <table>
+            <thead><tr>
+              <th>商品名稱</th><th>分類</th><th>規格</th><th>售價</th><th>成本</th><th>毛利</th><th>利潤率</th><th>備註</th>
+              <th style={{ textAlign: 'right' }}>操作</th>
+            </tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40 }}><div className="loading-spinner" style={{ margin: '0 auto' }} /></td></tr>}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={9}><div className="empty-state"><Tag size={36} /><span>尚無商品</span></div></td></tr>
+              )}
+              {filtered.map(p => {
+                const cat = CAT_MAP[p.category] || CAT_MAP.other
+                const pct = margin(p)
+                return (
+                  <tr key={p.id}>
+                    <td style={{ fontWeight: 700 }}>{p.name}</td>
+                    <td><span className="badge" style={{ background: cat.color + '22', color: cat.color }}>{cat.icon} {cat.name}</span></td>
+                    <td><SpecBadges product={p} /></td>
+                    <td style={{ fontWeight: 700 }}>NT${p.price}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>NT${p.cost}</td>
+                    <td><span style={{ fontWeight: 700, color: profit(p) >= 0 ? 'var(--emerald)' : 'var(--rose)' }}>{profit(p) >= 0 ? '+' : ''}NT${profit(p)}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ width: 48, height: 6, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: pct > 30 ? 'var(--emerald)' : pct > 10 ? 'var(--amber)' : 'var(--rose)', borderRadius: 99 }} />
+                        </div>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{pct}%</span>
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{p.note || '—'}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <button className="btn-icon btn" onClick={() => openEdit(p)}><Pencil size={13} /></button>
+                        <button className="btn-icon btn" onClick={() => setConfirmDel(p)} style={{ borderColor: 'var(--rose-light)', color: 'var(--rose)' }}><Trash2 size={13} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── 新增 / 編輯 Modal ── */}
+      {showModal && (
+        <Modal title={editId ? '編輯商品' : '新增商品'} onClose={() => setShowModal(false)} width={580}>
+
+          <div className="form-group">
+            <label>商品名稱 *</label>
+            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="例如：韓國海苔禮盒" />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>售價 (NT$) *</label>
+              <input type="number" value={form.price} onChange={e => setForm(p => ({ ...p, price: e.target.value }))} placeholder="0" min="0" />
+            </div>
+            <div className="form-group">
+              <label>成本 (NT$) *</label>
+              <input type="number" value={form.cost} onChange={e => setForm(p => ({ ...p, cost: e.target.value }))} placeholder="0" min="0" />
+            </div>
+          </div>
+
+          {form.price !== '' && form.cost !== '' && (
+            <div style={{ background: profit(form) >= 0 ? 'var(--emerald-light)' : 'var(--rose-light)', borderRadius: 8, padding: '8px 12px', marginBottom: 14, fontSize: 13, display: 'flex', gap: 16, alignItems: 'center' }}>
+              <TrendingUp size={14} color={profit(form) >= 0 ? 'var(--emerald)' : 'var(--rose)'} />
+              <span>毛利：<strong>NT${profit(form)}</strong></span>
+              <span>利潤率：<strong>{margin(form)}%</strong></span>
+            </div>
+          )}
+
+          {/* 分類選擇 */}
+          <div className="form-group">
+            <label>商品分類</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+              {CATEGORIES.map(c => (
+                <button key={c.id} type="button" onClick={() => setCategory(c.id)}
+                  style={{ padding: '8px', borderRadius: 8, border: `2px solid ${form.category === c.id ? c.color : 'var(--border)'}`, background: form.category === c.id ? c.color + '18' : 'var(--surface)', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', fontWeight: 600, color: form.category === c.id ? c.color : 'var(--text-secondary)', transition: 'all .15s' }}>
+                  {c.icon} {c.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 規格編輯（服飾 / 日用品限定） */}
+          <SpecEditor form={form} setForm={setForm} />
+
+          <div className="form-group">
+            <label>備註</label>
+            <input value={form.note} onChange={e => setForm(p => ({ ...p, note: e.target.value }))} placeholder="例如：需冷凍保存、易碎品..." />
+          </div>
+
+          {/* 批次開單 */}
+          <div style={{ borderTop: '1.5px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>🛒 一鍵批次開單（選填）</div>
+            <div style={{ background: 'var(--surface-2)', borderRadius: 10, padding: 12, position: 'relative' }}>
+              <div style={{ marginBottom: 10 }}>
+                <input value={custSearch}
+                  onFocus={() => setCustDropOpen(true)}
+                  onChange={e => { setCustSearch(e.target.value); setCustDropOpen(true) }}
+                  placeholder="搜尋並加入客戶..."
+                  style={{ width: '100%', padding: '7px 10px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'inherit', background: 'var(--surface)' }} />
+                {custDropOpen && custSearch && (
+                  <div style={{ position: 'absolute', left: 12, right: 12, background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-md)', maxHeight: 180, overflowY: 'auto', zIndex: 50 }}>
+                    {filtCusts.filter(c => !batchBuyers.find(b => b.id === c.id)).map(c => (
+                      <div key={c.id} className="dropdown-item" onMouseDown={() => addBuyer(c)}>
+                        <span style={{ fontWeight: 600 }}>{c.name}</span>
+                        {c.line_nick && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Line: {c.line_nick}</span>}
+                      </div>
+                    ))}
+                    {filtCusts.filter(c => !batchBuyers.find(b => b.id === c.id)).length === 0 &&
+                      <div className="dropdown-item" style={{ color: 'var(--text-muted)' }}>無符合結果</div>}
+                  </div>
+                )}
+              </div>
+              {batchBuyers.length === 0 && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '6px 0' }}>尚未加入客戶</div>}
+              {batchBuyers.map(b => (
+                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px dashed var(--border)' }}>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{b.name}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button type="button" onClick={() => updateBuyerQty(b.id, b.qty - 1)} style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontWeight: 700 }}>−</button>
+                    <input type="number" value={b.qty} onChange={e => updateBuyerQty(b.id, e.target.value)} style={{ width: 40, textAlign: 'center', border: '1px solid var(--border)', borderRadius: 6, padding: 3, fontSize: 13, fontFamily: 'inherit', outline: 'none' }} min="1" />
+                    <button type="button" onClick={() => updateBuyerQty(b.id, b.qty + 1)} style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontWeight: 700 }}>+</button>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>= <strong>NT${(+form.price || 0) * b.qty}</strong></span>
+                </div>
+              ))}
+              {batchBuyers.length > 0 && (
+                <div style={{ textAlign: 'right', marginTop: 8, fontSize: 13, color: 'var(--indigo)', fontWeight: 700 }}>
+                  共 {batchBuyers.length} 人，合計 NT${batchBuyers.reduce((s, b) => s + (+form.price || 0) * b.qty, 0).toLocaleString()}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+            <button className="btn btn-ghost" onClick={() => setShowModal(false)}>取消</button>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? '處理中...' : editId ? '確認更新' : '新增商品'}</button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDel && (
+        <ConfirmDialog message={`確定要刪除「${confirmDel.name}」？`}
+          onConfirm={() => del(confirmDel.id, confirmDel.name)}
+          onCancel={() => setConfirmDel(null)} />
+      )}
+    </div>
+  )
+}
