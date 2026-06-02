@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { OrdersAPI, ProductsAPI, CustomersAPI } from '../lib/db'
 import { useToast, Modal, ConfirmDialog } from '../components/UI'
-import { Plus, Pencil, Trash2, Search, ShoppingCart, ChevronDown, X, Printer, CheckCircle, Clock, AlertCircle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, ShoppingCart, ChevronDown, X, Printer, CheckCircle, Clock, AlertCircle, RotateCcw } from 'lucide-react'
 
 const STATUS_CFG = {
   pending:   { label:'待出貨', badge:'badge-amber',   icon:Clock },
@@ -13,13 +13,49 @@ const PAY_CFG = {
   paid:   { label:'已收款', badge:'badge-emerald' },
 }
 
+// ── 規格選擇器（訂單內使用）────────────────────────────────────
+function SpecSelector({ product, value, onChange }) {
+  const mode   = product?.spec_mode   || 'none'
+  const colors = product?.spec_colors || []
+  const sizes  = product?.spec_sizes  || []
+
+  if (!product || mode === 'none') return null
+  if (mode === 'random') return (
+    <span style={{ fontSize:11, background:'var(--sky-light)', color:'#0369a1', padding:'2px 8px', borderRadius:99, fontWeight:600 }}>🎲 隨機出貨</span>
+  )
+
+  const showColor = ['color_size','color_free','color_only'].includes(mode)
+  const showSize  = mode === 'color_size' || mode === 'size_only'
+  const isFree    = mode === 'color_free'
+
+  return (
+    <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', marginTop:4 }}>
+      {showColor && colors.length > 0 && (
+        <select value={value?.color||''} onChange={e=>onChange({...value, color:e.target.value})}
+          style={{ padding:'3px 8px', border:`1.5px solid ${value?.color?'var(--indigo)':'var(--rose)'}`, borderRadius:6, fontSize:12, fontFamily:'inherit', outline:'none', background:'var(--surface)', cursor:'pointer' }}>
+          <option value="">選顏色 *</option>
+          {colors.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+      )}
+      {showSize && sizes.length > 0 && (
+        <select value={value?.size||''} onChange={e=>onChange({...value, size:e.target.value})}
+          style={{ padding:'3px 8px', border:`1.5px solid ${value?.size?'var(--indigo)':'var(--rose)'}`, borderRadius:6, fontSize:12, fontFamily:'inherit', outline:'none', background:'var(--surface)', cursor:'pointer' }}>
+          <option value="">選尺碼 *</option>
+          {sizes.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+      )}
+      {isFree && <span style={{ fontSize:11, background:'var(--emerald-light)', color:'#065f46', padding:'2px 8px', borderRadius:99, fontWeight:600 }}>Free Size</span>}
+    </div>
+  )
+}
+
 export default function Orders() {
   const toast = useToast()
   const [orders,    setOrders]    = useState([])
   const [products,  setProducts]  = useState([])
   const [customers, setCustomers] = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [search, setSearch]       = useState('')
+  const [loading,   setLoading]   = useState(true)
+  const [search,    setSearch]    = useState('')
   const [filterStatus,  setFilterStatus]  = useState('all')
   const [filterPayment, setFilterPayment] = useState('all')
   const [selected, setSelected]   = useState([])
@@ -36,7 +72,7 @@ export default function Orders() {
   const [orderNote,    setOrderNote]    = useState('')
   const [saving,       setSaving]       = useState(false)
 
-  // 出貨單
+  // 出貨單 & 確認刪除
   const [receiptOrders, setReceiptOrders] = useState(null)
   const [confirmDel,    setConfirmDel]    = useState(null)
 
@@ -55,9 +91,7 @@ export default function Orders() {
   const load = useCallback(async () => {
     setLoading(true)
     const [ords, prods, custs] = await Promise.all([
-      OrdersAPI.list(),
-      ProductsAPI.list(),
-      CustomersAPI.list(),
+      OrdersAPI.list(), ProductsAPI.list(), CustomersAPI.list(),
     ])
     setOrders(ords); setProducts(prods); setCustomers(custs)
     setLoading(false)
@@ -65,8 +99,11 @@ export default function Orders() {
 
   useEffect(() => { load() }, [load])
 
+  // 商品 map (含規格)
+  const prodMap = Object.fromEntries(products.map(p => [p.id, p]))
+
   const filtered = orders.filter(o => {
-    const ms = o.customer_name.toLowerCase().includes(search.toLowerCase())
+    const ms  = o.customer_name.toLowerCase().includes(search.toLowerCase())
     const mst = filterStatus  === 'all' || o.status         === filterStatus
     const mp  = filterPayment === 'all' || o.payment_status === filterPayment
     return ms && mst && mp
@@ -87,16 +124,22 @@ export default function Orders() {
   function openEdit(o) {
     setEditId(o.id)
     setFormCustomer({ id:o.customer_id, name:o.customer_name })
-    setCartItems((o.items||[]).map(item => ({ product:{ id:item.id, name:item.name, price:item.price }, qty:item.qty, note:item.note||'' })))
+    setCartItems((o.items||[]).map(item => ({
+      product: prodMap[item.id] || { id:item.id, name:item.name, price:item.price },
+      qty: item.qty,
+      note: item.note || '',
+      spec: item.spec || {},
+    })))
     setOrderNote(o.note||'')
     setShowForm(true)
   }
 
+  // 加入購物車時帶入規格資訊
   function addToCart(prod) {
     setCartItems(prev => {
-      const ex = prev.find(i=>i.product.id===prod.id)
-      if (ex) return prev.map(i=>i.product.id===prod.id?{...i,qty:i.qty+1}:i)
-      return [...prev, { product:prod, qty:1, note:'' }]
+      const ex = prev.find(i => i.product.id === prod.id)
+      if (ex) return prev.map(i => i.product.id===prod.id ? {...i, qty:i.qty+1} : i)
+      return [...prev, { product:prod, qty:1, note:'', spec:{} }]
     })
     setProdOpen(false); setProdSearch('')
   }
@@ -106,23 +149,43 @@ export default function Orders() {
     else setCartItems(p=>p.map((item,i)=>i===idx?{...item,qty:n}:item))
   }
   function updateItemNote(idx, val) { setCartItems(p=>p.map((item,i)=>i===idx?{...item,note:val}:item)) }
+  function updateItemSpec(idx, spec) { setCartItems(p=>p.map((item,i)=>i===idx?{...item,spec}:item)) }
   function removeItem(idx) { setCartItems(p=>p.filter((_,i)=>i!==idx)) }
 
   const total = cartItems.reduce((s,i)=>s+i.product.price*i.qty, 0)
 
+  // 規格必填驗證
+  function validateSpecs() {
+    for (const item of cartItems) {
+      const prod = prodMap[item.product.id] || item.product
+      const mode = prod?.spec_mode || 'none'
+      if (mode === 'none' || mode === 'random' || mode === 'color_free') continue
+      if (['color_size','color_only'].includes(mode) && !(item.spec?.color)) return `「${prod.name}」請選擇顏色`
+      if (['color_size','size_only'].includes(mode) && !(item.spec?.size)) return `「${prod.name}」請選擇尺碼`
+    }
+    return null
+  }
+
   async function save() {
-    if (!formCustomer)         { toast('請選擇客戶','error'); return }
-    if (cartItems.length===0)  { toast('請加入至少一項商品','error'); return }
+    if (!formCustomer)        { toast('請選擇客戶','error'); return }
+    if (cartItems.length===0) { toast('請加入至少一項商品','error'); return }
+    const specErr = validateSpecs()
+    if (specErr) { toast(specErr,'error'); return }
     setSaving(true)
     try {
-      const items = cartItems.map(i=>({ id:i.product.id, name:i.product.name, price:i.product.price, qty:i.qty, note:i.note }))
+      const items = cartItems.map(i => ({
+        id:    i.product.id,
+        name:  i.product.name,
+        price: i.product.price,
+        qty:   i.qty,
+        note:  i.note,
+        spec:  i.spec || {},
+      }))
       const payload = { customer_id:formCustomer.id, customer_name:formCustomer.name, items, total_amount:total, note:orderNote.trim() }
       if (editId) {
-        await OrdersAPI.update(editId, payload)
-        toast('訂單已更新 ✓')
+        await OrdersAPI.update(editId, payload); toast('訂單已更新 ✓')
       } else {
-        await OrdersAPI.create(payload)
-        toast('訂單已開立 ✓')
+        await OrdersAPI.create(payload); toast('訂單已開立 ✓')
       }
       setShowForm(false); load()
     } finally { setSaving(false) }
@@ -134,13 +197,36 @@ export default function Orders() {
     toast(`✅ ${selected.length} 筆訂單已出貨`); setSelected([]); load()
   }
 
-  function toggleSelect(id) { setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]) }
-  function toggleAll() { setSelected(p=>p.length===filtered.length&&filtered.length>0?[]:filtered.map(o=>o.id)) }
+  // ── 狀態切換（支援取消）────────────────────────────────────
+  async function toggleStatus(o) {
+    const next = o.status === 'shipped' ? 'pending' : 'shipped'
+    await OrdersAPI.updateStatus(o.id, next)
+    toast(next==='shipped' ? '✅ 已標記出貨' : '↩️ 已取消出貨'); load()
+  }
+  async function togglePayment(o) {
+    const next = o.payment_status === 'paid' ? 'unpaid' : 'paid'
+    await OrdersAPI.updatePayment(o.id, next)
+    toast(next==='paid' ? '💰 已標記收款' : '↩️ 已取消收款'); load()
+  }
 
-  // 未收款統計（排除已取消）
-  const pendingCount  = orders.filter(o=>o.status==='pending').length
-  const shippedCount  = orders.filter(o=>o.status==='shipped').length
-  const unpaidAmount  = orders.filter(o=>o.payment_status==='unpaid'&&o.status!=='cancelled').reduce((s,o)=>s+(o.total_amount||0),0)
+  function toggleSelect(id) { setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]) }
+  function toggleAll()      { setSelected(p=>p.length===filtered.length&&filtered.length>0?[]:filtered.map(o=>o.id)) }
+
+  const pendingCount = orders.filter(o=>o.status==='pending').length
+  const shippedCount = orders.filter(o=>o.status==='shipped').length
+  const unpaidAmount = orders.filter(o=>o.payment_status==='unpaid'&&o.status!=='cancelled').reduce((s,o)=>s+(o.total_amount||0),0)
+
+  // 規格顯示字串
+  function specLabel(item) {
+    if (!item.spec) return ''
+    const parts = []
+    if (item.spec.color) parts.push(item.spec.color)
+    if (item.spec.size)  parts.push(item.spec.size)
+    const prod = prodMap[item.id]
+    if (prod?.spec_mode === 'random') parts.push('隨機')
+    if (prod?.spec_mode === 'color_free') { if (item.spec.color) parts.push('Free Size') }
+    return parts.length ? `（${parts.join('／')}）` : ''
+  }
 
   return (
     <div className="animate-fade">
@@ -162,9 +248,9 @@ export default function Orders() {
       {/* Quick stats */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:18 }}>
         {[
-          { label:'待出貨',   value:pendingCount,                          color:'#f59e0b', bg:'var(--amber-light)' },
-          { label:'已出貨',   value:shippedCount,                          color:'var(--emerald)', bg:'var(--emerald-light)' },
-          { label:'未收款金額',value:`$${unpaidAmount.toLocaleString()}`, color:'var(--rose)',    bg:'var(--rose-light)' },
+          { label:'待出貨',    value:pendingCount,                          color:'#f59e0b',        bg:'var(--amber-light)' },
+          { label:'已出貨',    value:shippedCount,                          color:'var(--emerald)', bg:'var(--emerald-light)' },
+          { label:'未收款金額',value:`$${unpaidAmount.toLocaleString()}`,  color:'var(--rose)',    bg:'var(--rose-light)' },
         ].map(s=>(
           <div key={s.label} style={{ background:s.bg, borderRadius:'var(--radius)', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
             <span style={{ fontSize:12, fontWeight:600, color:s.color }}>{s.label}</span>
@@ -180,14 +266,14 @@ export default function Orders() {
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋客戶姓名..."
             style={{ padding:'8px 8px 8px 32px', border:'1.5px solid var(--border)', borderRadius:8, fontSize:14, outline:'none', fontFamily:'inherit', background:'var(--surface)', width:'100%' }}/>
         </div>
-        <div style={{ display:'flex', gap:6 }}>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
           {['all','pending','shipped','cancelled'].map(s=>(
             <button key={s} className={`btn btn-sm ${filterStatus===s?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterStatus(s)}>
               {s==='all'?'全部':STATUS_CFG[s]?.label}
             </button>
           ))}
         </div>
-        <div style={{ display:'flex', gap:6 }}>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
           {['all','unpaid','paid'].map(s=>(
             <button key={s} className={`btn btn-sm ${filterPayment===s?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterPayment(s)}>
               {s==='all'?'付款：全部':PAY_CFG[s]?.label}
@@ -202,7 +288,7 @@ export default function Orders() {
           <table>
             <thead><tr>
               <th style={{ width:40 }}><input type="checkbox" checked={selected.length===filtered.length&&filtered.length>0} onChange={toggleAll}/></th>
-              <th>客戶</th><th>商品明細</th><th>金額</th><th>出貨</th><th>付款</th><th>日期</th>
+              <th>客戶</th><th>商品明細</th><th>金額</th><th>出貨狀態</th><th>付款狀態</th><th>日期</th>
               <th style={{ textAlign:'right' }}>操作</th>
             </tr></thead>
             <tbody>
@@ -219,35 +305,47 @@ export default function Orders() {
                       {o.note && <div style={{ fontSize:11,color:'var(--text-muted)',marginTop:2 }}>{o.note}</div>}
                     </td>
                     <td>
-                      <div style={{ fontSize:13,color:'var(--text-secondary)',maxWidth:200 }}>
+                      <div style={{ fontSize:13,color:'var(--text-secondary)',maxWidth:220 }}>
                         {(o.items||[]).map((item,i)=>(
-                          <span key={i}>{item.name}×{item.qty}{i<o.items.length-1?'、':''}</span>
+                          <div key={i}>{item.name}×{item.qty}{specLabel(item)}</div>
                         ))}
                       </div>
                     </td>
                     <td style={{ fontWeight:700,color:'var(--indigo)' }}>NT${(o.total_amount||0).toLocaleString()}</td>
+
+                    {/* 出貨狀態 — 可切換 */}
                     <td>
                       <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
                         <span className={`badge ${scfg.badge}`}>{scfg.label}</span>
-                        {o.status==='pending' && (
-                          <button className="btn btn-sm btn-success" style={{ fontSize:11,padding:'3px 8px' }}
-                            onClick={()=>OrdersAPI.updateStatus(o.id,'shipped').then(()=>{toast('✅ 已出貨');load()})}>
-                            <CheckCircle size={10}/>標記出貨
+                        {o.status!=='cancelled' && (
+                          <button
+                            className={`btn btn-sm ${o.status==='shipped'?'btn-ghost':'btn-success'}`}
+                            style={{ fontSize:11,padding:'3px 8px' }}
+                            onClick={()=>toggleStatus(o)}>
+                            {o.status==='shipped'
+                              ? <><RotateCcw size={10}/>取消出貨</>
+                              : <><CheckCircle size={10}/>標記出貨</>}
                           </button>
                         )}
                       </div>
                     </td>
+
+                    {/* 付款狀態 — 可切換 */}
                     <td>
                       <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
                         <span className={`badge ${pcfg.badge}`}>{pcfg.label}</span>
-                        {o.payment_status==='unpaid'&&o.status!=='cancelled' && (
-                          <button style={{ fontSize:11,padding:'3px 8px',background:'var(--emerald)',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit',fontWeight:600 }}
-                            onClick={()=>OrdersAPI.updatePayment(o.id,'paid').then(()=>{toast('💰 已收款');load()})}>
-                            收款完成
+                        {o.status!=='cancelled' && (
+                          <button
+                            style={{ fontSize:11,padding:'3px 8px',background:o.payment_status==='paid'?'var(--surface-2)':'var(--emerald)',color:o.payment_status==='paid'?'var(--text-secondary)':'#fff',border:`1px solid ${o.payment_status==='paid'?'var(--border)':'var(--emerald)'}`,borderRadius:6,cursor:'pointer',fontFamily:'inherit',fontWeight:600,display:'flex',alignItems:'center',gap:4 }}
+                            onClick={()=>togglePayment(o)}>
+                            {o.payment_status==='paid'
+                              ? <><RotateCcw size={10}/>取消收款</>
+                              : <>收款完成</>}
                           </button>
                         )}
                       </div>
                     </td>
+
                     <td style={{ fontSize:13,color:'var(--text-secondary)' }}>
                       {o.order_date ? new Date(o.order_date).toLocaleDateString('zh-TW') : '—'}
                     </td>
@@ -268,7 +366,8 @@ export default function Orders() {
 
       {/* ── 訂單表單 Modal ── */}
       {showForm && (
-        <Modal title={editId?'編輯訂單':'開立新訂單'} onClose={()=>setShowForm(false)} width={620}>
+        <Modal title={editId?'編輯訂單':'開立新訂單'} onClose={()=>setShowForm(false)} width={640}>
+
           {/* 客戶選擇 */}
           <div className="form-group">
             <label>選擇客戶 *</label>
@@ -277,7 +376,7 @@ export default function Orders() {
                 style={{ width:'100%',justifyContent:'space-between',background:'var(--surface)',border:'1.5px solid var(--border)' }}
                 onClick={()=>setCustOpen(p=>!p)}>
                 <span style={{ color:formCustomer?'var(--text-primary)':'var(--text-muted)',fontWeight:formCustomer?600:400 }}>
-                  {formCustomer ? `${formCustomer.name}` : '請搜尋並選擇客戶...'}
+                  {formCustomer ? formCustomer.name : '請搜尋並選擇客戶...'}
                 </span>
                 <ChevronDown size={14}/>
               </button>
@@ -291,12 +390,8 @@ export default function Orders() {
                   </div>
                   {filtCusts.map(c=>(
                     <div key={c.id} className="dropdown-item" onClick={()=>{ setFormCustomer(c); setCustOpen(false); setCustSearch('') }}>
-                      <div>
-                        <div style={{ fontWeight:600 }}>{c.name}</div>
-                        <div style={{ fontSize:11,color:'var(--text-muted)' }}>
-                          {c.line_nick && `Line: ${c.line_nick}  `}{c.fb_name && `FB: ${c.fb_name}`}
-                        </div>
-                      </div>
+                      <div style={{ fontWeight:600 }}>{c.name}</div>
+                      <div style={{ fontSize:11,color:'var(--text-muted)' }}>{c.line_nick&&`Line: ${c.line_nick}  `}{c.fb_name&&`FB: ${c.fb_name}`}</div>
                     </div>
                   ))}
                   {filtCusts.length===0 && <div className="dropdown-item" style={{ color:'var(--text-muted)' }}>無符合結果</div>}
@@ -305,7 +400,7 @@ export default function Orders() {
             </div>
           </div>
 
-          {/* 商品搜尋加入 */}
+          {/* 商品搜尋 */}
           <div style={{ background:'var(--surface-2)',borderRadius:'var(--radius)',padding:14,marginBottom:16 }}>
             <div className="form-group" style={{ marginBottom:0 }}>
               <label>加入商品</label>
@@ -326,7 +421,14 @@ export default function Orders() {
                     </div>
                     {filtProds.map(p=>(
                       <div key={p.id} className="dropdown-item" onClick={()=>addToCart(p)}>
-                        <span style={{ flex:1,fontWeight:600 }}>{p.name}</span>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontWeight:600 }}>{p.name}</div>
+                          {p.spec_mode && p.spec_mode!=='none' && (
+                            <div style={{ fontSize:11,color:'var(--text-muted)',marginTop:2 }}>
+                              {p.spec_mode==='random'?'🎲 隨機':p.spec_mode==='color_free'?`🎨 ${(p.spec_colors||[]).join('/')}`:`🎨 ${(p.spec_colors||[]).join('/')}${p.spec_sizes?.length?` / 📏 ${p.spec_sizes.join('/')}`:''}` }
+                            </div>
+                          )}
+                        </div>
                         <span style={{ fontSize:12,color:'var(--indigo)',fontWeight:700 }}>NT${p.price}</span>
                       </div>
                     ))}
@@ -341,22 +443,33 @@ export default function Orders() {
           {cartItems.length>0 && (
             <div style={{ marginBottom:16 }}>
               <div style={{ fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:'uppercase',color:'var(--text-secondary)',marginBottom:8 }}>購物清單</div>
-              {cartItems.map((item,idx)=>(
-                <div key={idx} style={{ display:'flex',alignItems:'center',gap:8,padding:'8px 0',borderBottom:'1px dashed var(--border)',flexWrap:'wrap' }}>
-                  <span style={{ flex:1,fontWeight:600,fontSize:14,minWidth:100 }}>{item.product.name}</span>
-                  <input value={item.note} onChange={e=>updateItemNote(idx,e.target.value)} placeholder="備註(選填)"
-                    style={{ flex:1,minWidth:80,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none' }}/>
-                  <span style={{ color:'var(--text-secondary)',fontSize:13,whiteSpace:'nowrap' }}>NT${item.product.price}</span>
-                  <div style={{ display:'flex',alignItems:'center',gap:4 }}>
-                    <button type="button" onClick={()=>updateQty(idx,item.qty-1)} style={{ width:26,height:26,borderRadius:6,border:'1px solid var(--border)',background:'var(--surface)',cursor:'pointer',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center' }}>−</button>
-                    <input type="number" value={item.qty} onChange={e=>updateQty(idx,e.target.value)}
-                      style={{ width:44,textAlign:'center',border:'1px solid var(--border)',borderRadius:6,padding:'3px',fontSize:14,fontFamily:'inherit',outline:'none' }} min="1"/>
-                    <button type="button" onClick={()=>updateQty(idx,item.qty+1)} style={{ width:26,height:26,borderRadius:6,border:'1px solid var(--border)',background:'var(--surface)',cursor:'pointer',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center' }}>+</button>
+              {cartItems.map((item,idx)=>{
+                const prodFull = prodMap[item.product.id] || item.product
+                return (
+                  <div key={idx} style={{ padding:'10px 0',borderBottom:'1px dashed var(--border)' }}>
+                    <div style={{ display:'flex',alignItems:'center',gap:8,flexWrap:'wrap' }}>
+                      <span style={{ flex:1,fontWeight:600,fontSize:14,minWidth:100 }}>{item.product.name}</span>
+                      <input value={item.note} onChange={e=>updateItemNote(idx,e.target.value)} placeholder="備註(選填)"
+                        style={{ flex:1,minWidth:80,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none' }}/>
+                      <span style={{ color:'var(--text-secondary)',fontSize:13,whiteSpace:'nowrap' }}>NT${item.product.price}</span>
+                      <div style={{ display:'flex',alignItems:'center',gap:4 }}>
+                        <button type="button" onClick={()=>updateQty(idx,item.qty-1)} style={{ width:26,height:26,borderRadius:6,border:'1px solid var(--border)',background:'var(--surface)',cursor:'pointer',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center' }}>−</button>
+                        <input type="number" value={item.qty} onChange={e=>updateQty(idx,e.target.value)}
+                          style={{ width:44,textAlign:'center',border:'1px solid var(--border)',borderRadius:6,padding:'3px',fontSize:14,fontFamily:'inherit',outline:'none' }} min="1"/>
+                        <button type="button" onClick={()=>updateQty(idx,item.qty+1)} style={{ width:26,height:26,borderRadius:6,border:'1px solid var(--border)',background:'var(--surface)',cursor:'pointer',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center' }}>+</button>
+                      </div>
+                      <span style={{ fontWeight:700,color:'var(--indigo)',minWidth:72,textAlign:'right',whiteSpace:'nowrap' }}>NT${item.product.price*item.qty}</span>
+                      <button type="button" onClick={()=>removeItem(idx)} style={{ background:'none',border:'none',cursor:'pointer',color:'var(--rose)',display:'flex' }}><X size={14}/></button>
+                    </div>
+                    {/* 規格選擇器 */}
+                    <SpecSelector
+                      product={prodFull}
+                      value={item.spec}
+                      onChange={spec=>updateItemSpec(idx,spec)}
+                    />
                   </div>
-                  <span style={{ fontWeight:700,color:'var(--indigo)',minWidth:72,textAlign:'right',whiteSpace:'nowrap' }}>NT${item.product.price*item.qty}</span>
-                  <button type="button" onClick={()=>removeItem(idx)} style={{ background:'none',border:'none',cursor:'pointer',color:'var(--rose)',display:'flex' }}><X size={14}/></button>
-                </div>
-              ))}
+                )
+              })}
               <div style={{ textAlign:'right',marginTop:10,fontWeight:900,fontSize:16,color:'var(--indigo)' }}>
                 合計：NT${total.toLocaleString()}
               </div>
@@ -402,7 +515,7 @@ export default function Orders() {
                           {data.orders.flatMap(o=>(o.items||[]).map((item,i)=>(
                             <tr key={`${o.id}-${i}`} style={{ borderBottom:'1px solid #f1f5f9' }}>
                               <td style={{ padding:'7px 14px' }}>
-                                {item.name}
+                                {item.name}{specLabel(item)}
                                 {item.note && <span style={{ color:'var(--rose)',fontSize:12 }}> ({item.note})</span>}
                               </td>
                               <td style={{ textAlign:'center',padding:'7px 10px',color:'var(--text-secondary)' }}>NT${item.price}</td>
