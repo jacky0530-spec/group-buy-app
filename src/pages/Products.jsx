@@ -490,19 +490,33 @@ export default function Products() {
               <div style={{ marginBottom: 10 }}>
                 <input value={custSearch}
                   onFocus={() => setCustDropOpen(true)}
+                  onBlur={() => setTimeout(() => setCustDropOpen(false), 150)}
                   onChange={e => { setCustSearch(e.target.value); setCustDropOpen(true) }}
-                  placeholder="搜尋並加入客戶..."
-                  style={{ width: '100%', padding: '7px 10px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'inherit', background: 'var(--surface)' }} />
-                {custDropOpen && custSearch && (
-                  <div style={{ position: 'absolute', left: 12, right: 12, background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-md)', maxHeight: 180, overflowY: 'auto', zIndex: 50 }}>
+                  placeholder="點擊選擇或輸入搜尋客戶..."
+                  style={{ width: '100%', padding: '7px 10px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'inherit', background: 'var(--surface)', cursor: 'pointer' }} />
+                {custDropOpen && (
+                  <div style={{ position: 'absolute', left: 12, right: 12, background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-md)', maxHeight: 200, overflowY: 'auto', zIndex: 50 }}>
+                    {/* 未被加入的客戶清單，依搜尋即時篩選 */}
+                    {filtCusts.filter(c => !batchBuyers.find(b => b.id === c.id)).length === 0 && (
+                      <div className="dropdown-item" style={{ color: 'var(--text-muted)' }}>
+                        {customers.length === 0 ? '尚無客戶，請先至客戶管理新增' : '所有客戶皆已加入'}
+                      </div>
+                    )}
                     {filtCusts.filter(c => !batchBuyers.find(b => b.id === c.id)).map(c => (
                       <div key={c.id} className="dropdown-item" onMouseDown={() => addBuyer(c)}>
-                        <span style={{ fontWeight: 600 }}>{c.name}</span>
-                        {c.line_nick && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Line: {c.line_nick}</span>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--indigo-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13, color: 'var(--indigo)', flexShrink: 0 }}>
+                            {c.name.charAt(0)}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                              {c.line_nick && `Line: ${c.line_nick}`}{c.line_nick && c.fb_name && '　'}{c.fb_name && `FB: ${c.fb_name}`}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     ))}
-                    {filtCusts.filter(c => !batchBuyers.find(b => b.id === c.id)).length === 0 &&
-                      <div className="dropdown-item" style={{ color: 'var(--text-muted)' }}>無符合結果</div>}
                   </div>
                 )}
               </div>
