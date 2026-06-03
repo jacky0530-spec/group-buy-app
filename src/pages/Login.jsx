@@ -1,13 +1,21 @@
 import { useState } from 'react'
+import { useNavigate, Navigate } from 'react-router-dom'
 import { loginWithEmail } from '../lib/auth'
+import { useAuth } from '../components/AuthGuard'
 import { ShoppingBag, Mail, Lock, Eye, EyeOff, LogIn } from 'lucide-react'
 
 export default function Login() {
+  const { user, allowed, checking } = useAuth()
+  const navigate = useNavigate()
+
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [showPwd,  setShowPwd]  = useState(false)
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
+
+  // 已登入且通過白名單 → 直接跳首頁
+  if (user && allowed && !checking) return <Navigate to="/" replace />
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -15,7 +23,7 @@ export default function Login() {
     setLoading(true); setError('')
     try {
       await loginWithEmail(email.trim(), password)
-      // 登入成功 → AuthGuard 偵測到登入狀態，自動跳轉首頁
+      navigate('/', { replace: true })   // 登入成功 → 主動跳轉
     } catch (err) {
       // Firebase 錯誤碼轉換成中文
       const msg = {
