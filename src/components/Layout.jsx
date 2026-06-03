@@ -15,11 +15,35 @@ const NAV = [
 export default function Layout() {
   const [sideOpen, setSideOpen] = useState(false)
 
-  // 列印前暫時移除 sidebar margin，列印後還原
+  // 列印前縮放內容至 A4 寬度，列印後還原
   useEffect(() => {
-    const el = document.getElementById('main-content')
-    const before = () => { if (el) el.style.marginLeft = '0' }
-    const after  = () => { if (el) el.style.marginLeft = '220px' }
+    const wrapper = document.getElementById('main-content')
+    const mainEl  = document.querySelector('.print-main')
+
+    const before = () => {
+      if (!wrapper || !mainEl) return
+      // 移除 sidebar margin
+      wrapper.style.marginLeft = '0'
+      wrapper.style.width      = '100%'
+      // 計算縮放比：A4 可用寬 (794px @96dpi) / 實際內容寬
+      const contentW = mainEl.scrollWidth || mainEl.offsetWidth
+      const a4W      = 794   // 210mm at 96dpi
+      const scale    = contentW > a4W ? (a4W / contentW) : 1
+      mainEl.style.transformOrigin = 'top left'
+      mainEl.style.transform       = `scale(${scale})`
+      // 縮放後高度也需調整，否則會有多餘空白
+      mainEl.style.height = `${mainEl.offsetHeight * scale}px`
+    }
+
+    const after = () => {
+      if (!wrapper || !mainEl) return
+      wrapper.style.marginLeft = '220px'
+      wrapper.style.width      = ''
+      mainEl.style.transform       = ''
+      mainEl.style.transformOrigin = ''
+      mainEl.style.height          = ''
+    }
+
     window.addEventListener('beforeprint', before)
     window.addEventListener('afterprint',  after)
     return () => {
