@@ -1,13 +1,15 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X } from 'lucide-react'
+import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog } from 'lucide-react'
 import { useState } from 'react'
+import { UserMenu } from './AuthGuard'
 
 const NAV = [
-  { to: '/', icon: Home, label: '首頁', end: true },
-  { to: '/products', icon: ShoppingBag, label: '商品管理' },
-  { to: '/customers', icon: Users, label: '客戶管理' },
-  { to: '/orders', icon: ShoppingCart, label: '訂單管理' },
-  { to: '/reports', icon: BarChart2, label: '銷售報表' },
+  { to: '/',          icon: Home,        label: '首頁',   end: true },
+  { to: '/products',  icon: ShoppingBag, label: '商品管理' },
+  { to: '/customers', icon: Users,       label: '客戶管理' },
+  { to: '/orders',    icon: ShoppingCart,label: '訂單管理' },
+  { to: '/reports',   icon: BarChart2,   label: '銷售報表' },
+  { to: '/accounts',  icon: UserCog,     label: '帳號管理' },
 ]
 
 export default function Layout() {
@@ -69,8 +71,11 @@ export default function Layout() {
           ))}
         </nav>
 
-        <div style={{ padding: '14px 20px', borderTop: '1px solid rgba(255,255,255,.06)', color: 'rgba(255,255,255,.25)', fontSize: 11 }}>
-          © 2025 團購百貨管理系統
+        <div style={{ padding: '12px 10px', borderTop: '1px solid rgba(255,255,255,.06)' }}>
+          <UserMenu />
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.2)', fontSize: 10, marginTop: 8 }}>
+            © 2025 團購百貨管理系統
+          </div>
         </div>
       </aside>
 
