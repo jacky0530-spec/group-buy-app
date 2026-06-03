@@ -292,16 +292,31 @@ export default function Products() {
 
   function addBuyer(c) {
     if (!batchBuyers.find(b => b.id === c.id))
-      setBatchBuyers(p => [...p, { id: c.id, name: c.name, qty: 1, spec: {} }])
+      // specs = [{ color:'', size:'', qty:1 }, ...]  每組規格獨立數量
+      setBatchBuyers(p => [...p, { id: c.id, name: c.name, specs: [{ color:'', size:'', qty:1 }] }])
     setCustDropOpen(false); setCustSearch('')
   }
-  function updateBuyerQty(id, val) {
-    const n = parseInt(val) || 0
-    if (n <= 0) setBatchBuyers(p => p.filter(b => b.id !== id))
-    else setBatchBuyers(p => p.map(b => b.id === id ? { ...b, qty: n } : b))
+  // 不再需要舊的 updateBuyerQty / updateBuyerSpec
+  function removeBuyer(id) { setBatchBuyers(p => p.filter(b => b.id !== id)) }
+
+  function addSpecRow(buyerId) {
+    setBatchBuyers(p => p.map(b => b.id === buyerId
+      ? { ...b, specs: [...b.specs, { color:'', size:'', qty:1 }] }
+      : b
+    ))
   }
-  function updateBuyerSpec(id, spec) {
-    setBatchBuyers(p => p.map(b => b.id === id ? { ...b, spec } : b))
+  function removeSpecRow(buyerId, idx) {
+    setBatchBuyers(p => p.map(b => {
+      if (b.id !== buyerId) return b
+      const next = b.specs.filter((_, i) => i !== idx)
+      return next.length === 0 ? null : { ...b, specs: next }
+    }).filter(Boolean))
+  }
+  function updateSpecRow(buyerId, idx, field, value) {
+    setBatchBuyers(p => p.map(b => {
+      if (b.id !== buyerId) return b
+      return { ...b, specs: b.specs.map((s, i) => i === idx ? { ...s, [field]: value } : s) }
+    }))
   }
 
   const profit = p => (+p.price) - (+p.cost)
@@ -338,24 +353,37 @@ export default function Products() {
       }
 
       if (batchBuyers.length > 0) {
-        // 規格必填驗證
         const mode = payload.spec_mode || 'none'
+        // 驗證每位客戶每組規格
         for (const b of batchBuyers) {
-          if (mode === 'none' || mode === 'random' || mode === 'color_free') break
-          if (['color_size','color_only'].includes(mode) && !b.spec?.color) {
-            toast(`請為「${b.name}」選擇顏色`, 'error'); return
-          }
-          if (['color_size','size_only'].includes(mode) && !b.spec?.size) {
-            toast(`請為「${b.name}」選擇尺碼`, 'error'); return
+          for (const s of b.specs) {
+            if (['color_size','color_only'].includes(mode) && !s.color) {
+              toast(`請為「${b.name}」選擇顏色`, 'error'); return
+            }
+            if (['color_size','size_only'].includes(mode) && !s.size) {
+              toast(`請為「${b.name}」選擇尺碼`, 'error'); return
+            }
           }
         }
-        await Promise.all(batchBuyers.map(b => OrdersAPI.create({
-          customer_id:   b.id,
-          customer_name: b.name,
-          items: [{ id: prodId, name: payload.name, price: payload.price, qty: b.qty, note: '', spec: b.spec || {} }],
-          total_amount:  payload.price * b.qty,
-          note: '',
-        })))
+        // 每位客戶建一筆訂單，items 含所有規格列
+        await Promise.all(batchBuyers.map(b => {
+          const items = b.specs.map(s => ({
+            id:    prodId,
+            name:  payload.name,
+            price: payload.price,
+            qty:   s.qty,
+            note:  '',
+            spec:  { color: s.color, size: s.size },
+          }))
+          const total = items.reduce((sum, i) => sum + i.price * i.qty, 0)
+          return OrdersAPI.create({
+            customer_id:   b.id,
+            customer_name: b.name,
+            items,
+            total_amount:  total,
+            note: '',
+          })
+        }))
         toast(`已同時幫 ${batchBuyers.length} 位客戶開立訂單 ✓`)
       }
 
@@ -536,65 +564,91 @@ export default function Products() {
               </div>
               {batchBuyers.length === 0 && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '6px 0' }}>尚未加入客戶</div>}
               {batchBuyers.map(b => {
-                // 判斷此商品是否需要規格
-                const mode    = form.spec_mode || 'none'
-                const colors  = form.spec_colors || []
-                const sizes   = form.spec_sizes  || []
+                const mode     = form.spec_mode || 'none'
+                const colors   = form.spec_colors || []
+                const sizes    = form.spec_sizes  || []
                 const needColor = ['color_size','color_free','color_only'].includes(mode) && colors.length > 0
                 const needSize  = ['color_size','size_only'].includes(mode) && sizes.length > 0
                 const isRandom  = mode === 'random'
-                const isFree    = mode === 'color_free'
+                const hasSpec   = needColor || needSize
+
+                const buyerTotal = b.specs.reduce((s, sp) => s + (+form.price || 0) * sp.qty, 0)
+
                 return (
-                  <div key={b.id} style={{ padding: '8px 0', borderBottom: '1px dashed var(--border)' }}>
-                    {/* 姓名 + 數量 + 小計 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div key={b.id} style={{ padding: '10px 0', borderBottom: '1px dashed var(--border)' }}>
+                    {/* 客戶標題列 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--indigo-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 12, color: 'var(--indigo)', flexShrink: 0 }}>
                         {b.name.charAt(0)}
                       </div>
-                      <span style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{b.name}</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <button type="button" onClick={() => updateBuyerQty(b.id, b.qty - 1)} style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontWeight: 700 }}>−</button>
-                        <input type="number" value={b.qty} onChange={e => updateBuyerQty(b.id, e.target.value)} style={{ width: 40, textAlign: 'center', border: '1px solid var(--border)', borderRadius: 6, padding: 3, fontSize: 13, fontFamily: 'inherit', outline: 'none' }} min="1" />
-                        <button type="button" onClick={() => updateBuyerQty(b.id, b.qty + 1)} style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontWeight: 700 }}>+</button>
-                      </div>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>= <strong>NT${(+form.price || 0) * b.qty}</strong></span>
+                      <span style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>{b.name}</span>
+                      {isRandom && <span style={{ fontSize: 11, background: 'var(--sky-light)', color: '#0369a1', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>🎲 隨機出貨</span>}
+                      <span style={{ fontSize: 12, color: 'var(--indigo)', fontWeight: 700 }}>NT${buyerTotal.toLocaleString()}</span>
+                      <button type="button" onClick={() => removeBuyer(b.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--rose)', display: 'flex', padding: 2 }}>
+                        <X size={13} />
+                      </button>
                     </div>
 
-                    {/* 規格選擇 */}
-                    {(needColor || needSize || isRandom || isFree) && (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, paddingLeft: 36 }}>
-                        {isRandom && (
-                          <span style={{ fontSize: 11, background: 'var(--sky-light)', color: '#0369a1', padding: '3px 10px', borderRadius: 99, fontWeight: 600 }}>🎲 隨機出貨</span>
-                        )}
+                    {/* 每組規格列 */}
+                    {b.specs.map((sp, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, paddingLeft: 34, flexWrap: 'wrap' }}>
+                        {/* 顏色 */}
                         {needColor && (
-                          <select
-                            value={b.spec?.color || ''}
-                            onChange={e => updateBuyerSpec(b.id, { ...b.spec, color: e.target.value })}
-                            style={{ padding: '4px 10px', border: `1.5px solid ${b.spec?.color ? 'var(--indigo)' : 'var(--rose)'}`, borderRadius: 7, fontSize: 12, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', cursor: 'pointer' }}>
+                          <select value={sp.color} onChange={e => updateSpecRow(b.id, idx, 'color', e.target.value)}
+                            style={{ padding: '4px 8px', border: `1.5px solid ${sp.color ? 'var(--indigo)' : 'var(--rose)'}`, borderRadius: 7, fontSize: 12, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', cursor: 'pointer' }}>
                             <option value="">選顏色 *</option>
                             {colors.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         )}
+                        {/* 尺碼 */}
                         {needSize && (
-                          <select
-                            value={b.spec?.size || ''}
-                            onChange={e => updateBuyerSpec(b.id, { ...b.spec, size: e.target.value })}
-                            style={{ padding: '4px 10px', border: `1.5px solid ${b.spec?.size ? 'var(--indigo)' : 'var(--rose)'}`, borderRadius: 7, fontSize: 12, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', cursor: 'pointer' }}>
+                          <select value={sp.size} onChange={e => updateSpecRow(b.id, idx, 'size', e.target.value)}
+                            style={{ padding: '4px 8px', border: `1.5px solid ${sp.size ? 'var(--indigo)' : 'var(--rose)'}`, borderRadius: 7, fontSize: 12, fontFamily: 'inherit', outline: 'none', background: 'var(--surface)', cursor: 'pointer' }}>
                             <option value="">選尺碼 *</option>
                             {sizes.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         )}
-                        {isFree && b.spec?.color && (
-                          <span style={{ fontSize: 11, background: 'var(--emerald-light)', color: '#065f46', padding: '3px 10px', borderRadius: 99, fontWeight: 600 }}>Free Size</span>
+                        {/* Free Size 標籤 */}
+                        {mode === 'color_free' && sp.color && (
+                          <span style={{ fontSize: 11, background: 'var(--emerald-light)', color: '#065f46', padding: '3px 8px', borderRadius: 99, fontWeight: 600 }}>Free</span>
+                        )}
+                        {/* 數量 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <button type="button" onClick={() => updateSpecRow(b.id, idx, 'qty', Math.max(1, sp.qty - 1))}
+                            style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                          <input type="number" value={sp.qty} min="1"
+                            onChange={e => updateSpecRow(b.id, idx, 'qty', Math.max(1, parseInt(e.target.value)||1))}
+                            style={{ width: 36, textAlign: 'center', border: '1px solid var(--border)', borderRadius: 5, padding: '2px', fontSize: 13, fontFamily: 'inherit', outline: 'none' }} />
+                          <button type="button" onClick={() => updateSpecRow(b.id, idx, 'qty', sp.qty + 1)}
+                            style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                        </div>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          NT${(+form.price||0) * sp.qty}
+                        </span>
+                        {/* 刪除此規格列（至少保留一列） */}
+                        {b.specs.length > 1 && (
+                          <button type="button" onClick={() => removeSpecRow(b.id, idx)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--rose)', display: 'flex', padding: 1 }}>
+                            <X size={11} />
+                          </button>
                         )}
                       </div>
+                    ))}
+
+                    {/* 新增規格列按鈕（有規格模式才顯示） */}
+                    {hasSpec && (
+                      <button type="button" onClick={() => addSpecRow(b.id)}
+                        style={{ marginLeft: 34, marginTop: 2, padding: '3px 10px', background: 'var(--indigo-light)', border: '1.5px dashed var(--indigo)', borderRadius: 7, color: 'var(--indigo-dark)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Plus size={11} /> 加規格
+                      </button>
                     )}
                   </div>
                 )
               })}
               {batchBuyers.length > 0 && (
-                <div style={{ textAlign: 'right', marginTop: 8, fontSize: 13, color: 'var(--indigo)', fontWeight: 700 }}>
-                  共 {batchBuyers.length} 人，合計 NT${batchBuyers.reduce((s, b) => s + (+form.price || 0) * b.qty, 0).toLocaleString()}
+                <div style={{ textAlign: 'right', marginTop: 10, fontSize: 13, color: 'var(--indigo)', fontWeight: 700 }}>
+                  共 {batchBuyers.length} 人，合計 NT${batchBuyers.reduce((s, b) => s + b.specs.reduce((ss, sp) => ss + (+form.price||0)*sp.qty, 0), 0).toLocaleString()}
                 </div>
               )}
             </div>
