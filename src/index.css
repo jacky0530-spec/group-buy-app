@@ -198,10 +198,10 @@ td { padding: 11px 14px; vertical-align: middle; }
 .toast-warning { border-left-color: var(--amber); }
 
 @media print {
-  /* ── A4 頁面設定 ── */
+  /* ── A4 橫向，留小邊距 ── */
   @page {
-    size: A4 portrait;
-    margin: 8mm;
+    size: A4 landscape;
+    margin: 10mm;
   }
 
   /* ── 隱藏 sidebar ── */
@@ -216,21 +216,19 @@ td { padding: 11px 14px; vertical-align: middle; }
     overflow: visible !important;
   }
 
-  /* ── 外層容器移除 sidebar margin ── */
+  /* ── 外層容器移除 sidebar margin（JS 也會處理，雙重保險）── */
   #main-content {
     margin-left: 0 !important;
     width: 100% !important;
     display: block !important;
   }
 
-  /* ── main 區域：縮放至 A4 寬度 ── */
+  /* ── main 區域 ── */
   .print-main {
-    padding: 0 !important;
-    width: 210mm !important;        /* A4 寬 */
-    max-width: 210mm !important;
+    padding: 0 8px !important;
+    width: 100% !important;
+    max-width: 100% !important;
     transform-origin: top left;
-    transform: scale(0.75);          /* 縮小 25%，讓寬版內容塞進 A4 */
-    overflow: visible !important;
   }
 
   /* ── 卡片 ── */
@@ -244,7 +242,7 @@ td { padding: 11px 14px; vertical-align: middle; }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 
   /* ── 表格 ── */
-  table { width: 100% !important; border-collapse: collapse !important; font-size: 11px !important; }
-  th, td { padding: 5px 8px !important; border: 1px solid #e2e8f0 !important; }
+  table { width: 100% !important; border-collapse: collapse !important; font-size: 12px !important; }
+  th, td { padding: 6px 10px !important; border: 1px solid #e2e8f0 !important; }
   thead th { background: #f8f9fc !important; }
 }
