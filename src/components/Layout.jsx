@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { UserMenu } from './AuthGuard'
 
 const NAV = [
@@ -14,6 +14,19 @@ const NAV = [
 
 export default function Layout() {
   const [sideOpen, setSideOpen] = useState(false)
+
+  // 列印前暫時移除 sidebar margin，列印後還原
+  useEffect(() => {
+    const el = document.getElementById('main-content')
+    const before = () => { if (el) el.style.marginLeft = '0' }
+    const after  = () => { if (el) el.style.marginLeft = '220px' }
+    window.addEventListener('beforeprint', before)
+    window.addEventListener('afterprint',  after)
+    return () => {
+      window.removeEventListener('beforeprint', before)
+      window.removeEventListener('afterprint',  after)
+    }
+  }, [])
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -88,7 +101,7 @@ export default function Layout() {
       )}
 
       {/* Main */}
-      <div style={{ marginLeft: 220, flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div id="main-content" className="print-content" style={{ marginLeft: 220, flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Top bar (mobile only) */}
         <header style={{ display: 'none', background: '#1e293b', padding: '12px 16px', alignItems: 'center', gap: 12 }} className="mobile-header no-print">
           <button onClick={() => setSideOpen(p => !p)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>
