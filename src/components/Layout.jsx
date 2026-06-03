@@ -97,7 +97,7 @@ export default function Layout() {
           <span style={{ color: '#fff', fontWeight: 700 }}>團購百貨</span>
         </header>
 
-        <main style={{ flex: 1, padding: '24px', minWidth: 0 }}>
+        <main className="print-main" style={{ flex: 1, padding: '24px', minWidth: 0 }}>
           <Outlet />
         </main>
       </div>

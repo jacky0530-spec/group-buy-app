@@ -197,4 +197,30 @@ td { padding: 11px 14px; vertical-align: middle; }
 .toast-error { border-left-color: var(--rose); }
 .toast-warning { border-left-color: var(--amber); }
 
-@media print { .no-print { display: none !important; } body { background: white; } }
+@media print {
+  /* ── 隱藏 sidebar、header、按鈕列 ── */
+  .no-print { display: none !important; }
+  aside     { display: none !important; }
+
+  /* ── 重設 body ── */
+  html, body, #root { background: white !important; height: auto !important; }
+
+  /* ── 內容區撐滿全頁（移除 sidebar 的 margin-left:220px）── */
+  .print-main {
+    margin-left: 0 !important;
+    padding: 16px 20px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* ── 去除卡片陰影 ── */
+  .card { box-shadow: none !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
+
+  /* ── 強制背景色（圖表、badge、stat-card）── */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  /* ── 表格 ── */
+  table { width: 100% !important; border-collapse: collapse !important; font-size: 12px !important; }
+  th, td { padding: 6px 10px !important; border: 1px solid #e2e8f0 !important; }
+  thead th { background: #f8f9fc !important; }
+}
