@@ -198,51 +198,37 @@ td { padding: 11px 14px; vertical-align: middle; }
 .toast-warning { border-left-color: var(--amber); }
 
 @media print {
-  /* ── A4 橫向，留小邊距 ── */
-  @page {
-    size: A4 landscape;
-    margin: 10mm;
-  }
+  /* ── A4 直向 ── */
+  @page { size: A4 portrait; margin: 12mm; }
 
-  /* ── 隱藏 sidebar ── */
+  /* ── 隱藏 sidebar 與互動元素 ── */
   .no-print { display: none !important; }
   aside     { display: none !important; }
 
   /* ── body 重設 ── */
-  html, body, #root {
-    background: white !important;
-    height: auto !important;
-    width: 100% !important;
-    overflow: visible !important;
-  }
+  html, body, #root { background: white !important; height: auto !important; }
 
-  /* ── 外層容器移除 sidebar margin（JS 也會處理，雙重保險）── */
+  /* ── 移除 sidebar margin ── */
   #main-content {
     margin-left: 0 !important;
     width: 100% !important;
     display: block !important;
   }
+  .print-main { padding: 0 !important; width: 100% !important; }
 
-  /* ── main 區域 ── */
-  .print-main {
-    padding: 0 8px !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    transform-origin: top left;
-  }
+  /* ── 隱藏畫面圖表區（recharts 圖在列印時常截圖）── */
+  .animate-fade > *:not(.print-only) { display: none !important; }
 
-  /* ── 卡片 ── */
-  .card {
-    box-shadow: none !important;
-    border: 1px solid #e2e8f0 !important;
-    break-inside: avoid;
-  }
+  /* ── 顯示列印專用純文字報表 ── */
+  .print-only { display: block !important; }
 
-  /* ── 強制背景色列印 ── */
+  /* ── 表格樣式 ── */
+  table { width: 100% !important; border-collapse: collapse !important; }
+  th, td { border: 1px solid #e2e8f0 !important; }
+
+  /* ── 強制背景色 ── */
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 
-  /* ── 表格 ── */
-  table { width: 100% !important; border-collapse: collapse !important; font-size: 12px !important; }
-  th, td { padding: 6px 10px !important; border: 1px solid #e2e8f0 !important; }
-  thead th { background: #f8f9fc !important; }
+  /* ── 分頁控制 ── */
+  tr { break-inside: avoid; }
 }

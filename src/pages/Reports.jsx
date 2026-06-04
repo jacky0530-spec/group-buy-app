@@ -6,7 +6,166 @@ import { TrendingUp, DollarSign, Package, Users, Search, Printer, ChevronDown } 
 const CAT_COLORS = { daily:'#3b82f6', frozen:'#06b6d4', clothing:'#ec4899', biscuit:'#f59e0b', candy:'#8b5cf6', other:'#6b7280' }
 const CAT_LABELS = { daily:'日用品', frozen:'冷凍食品', clothing:'服飾', biscuit:'餅乾', candy:'糖果', other:'其他' }
 
-// 規格顯示
+// ── 列印專用區塊（畫面隱藏，列印時顯示）────────────────────
+function PrintReport({ filteredOrders, totalRevenue, totalProfit, trendData, topProds, catData, filtBuyers, filterMode, inputMonth, inputStart, inputEnd }) {
+  const periodLabel = filterMode==='month' ? inputMonth
+    : filterMode==='range' && inputStart && inputEnd ? `${inputStart} ~ ${inputEnd}`
+    : '全部期間'
+
+  return (
+    <div className="print-only" style={{ display:'none' }}>
+      {/* 標題 */}
+      <div style={{ textAlign:'center', marginBottom:16, paddingBottom:12, borderBottom:'2px solid #1e293b' }}>
+        <div style={{ fontSize:20, fontWeight:900, color:'#1e293b' }}>🛍️ 團購百貨 銷售報表</div>
+        <div style={{ fontSize:12, color:'#64748b', marginTop:4 }}>
+          列印日期：{new Date().toLocaleDateString('zh-TW')}　查詢期間：{periodLabel}　共 {filteredOrders.length} 筆訂單
+        </div>
+      </div>
+
+      {/* 摘要數據 */}
+      <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:16, fontSize:13 }}>
+        <thead>
+          <tr style={{ background:'#1e293b', color:'#fff' }}>
+            <th style={{ padding:'8px 12px', textAlign:'center' }}>總銷售額</th>
+            <th style={{ padding:'8px 12px', textAlign:'center' }}>預估毛利</th>
+            <th style={{ padding:'8px 12px', textAlign:'center' }}>訂單數量</th>
+            <th style={{ padding:'8px 12px', textAlign:'center' }}>購買客戶</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{ background:'#f8f9fc' }}>
+            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#6366f1' }}>NT${totalRevenue.toLocaleString()}</td>
+            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#10b981' }}>NT${totalProfit.toLocaleString()}</td>
+            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#f59e0b' }}>{filteredOrders.length} 筆</td>
+            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#0ea5e9' }}>{new Set(filteredOrders.map(o=>o.customer_id)).size} 人</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* 兩欄：熱銷商品 + 分類佔比 */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:16 }}>
+        <div>
+          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>🏆 熱銷商品 Top 8</div>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+            <thead><tr style={{ background:'#f1f5f9' }}>
+              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>商品名稱</th>
+              <th style={{ padding:'5px 8px', textAlign:'center', border:'1px solid #e2e8f0' }}>數量</th>
+              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>營收</th>
+            </tr></thead>
+            <tbody>
+              {topProds.length===0 && <tr><td colSpan={3} style={{ padding:'8px', textAlign:'center', color:'#94a3b8', border:'1px solid #e2e8f0' }}>無資料</td></tr>}
+              {topProds.map((p,i)=>(
+                <tr key={i} style={{ background:i%2===0?'#fff':'#f8f9fc' }}>
+                  <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>{p.name}</td>
+                  <td style={{ padding:'5px 8px', textAlign:'center', border:'1px solid #e2e8f0', fontWeight:700 }}>{p.qty}</td>
+                  <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>NT${p.revenue.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>🏷️ 分類銷售佔比</div>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+            <thead><tr style={{ background:'#f1f5f9' }}>
+              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>分類</th>
+              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>金額</th>
+              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>佔比</th>
+            </tr></thead>
+            <tbody>
+              {catData.length===0 && <tr><td colSpan={3} style={{ padding:'8px', textAlign:'center', color:'#94a3b8', border:'1px solid #e2e8f0' }}>無資料</td></tr>}
+              {[...catData].sort((a,b)=>b.value-a.value).map((c,i)=>{
+                const tot = catData.reduce((s,x)=>s+x.value,0)
+                const pct = tot>0 ? Math.round(c.value/tot*100) : 0
+                return (
+                  <tr key={i} style={{ background:i%2===0?'#fff':'#f8f9fc' }}>
+                    <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>
+                      <span style={{ display:'inline-block', width:9, height:9, borderRadius:2, background:c.color, marginRight:5, verticalAlign:'middle' }}/>
+                      {c.name}
+                    </td>
+                    <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700 }}>NT${c.value.toLocaleString()}</td>
+                    <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>{pct}%</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 銷售趨勢 */}
+      {trendData.length>0 && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>📈 銷售趨勢</div>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+            <thead><tr style={{ background:'#f1f5f9' }}>
+              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>期間</th>
+              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>銷售金額</th>
+              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>比例</th>
+            </tr></thead>
+            <tbody>
+              {trendData.map((t,i)=>{
+                const maxAmt = Math.max(...trendData.map(x=>x.amount))
+                const barW   = maxAmt>0 ? Math.round(t.amount/maxAmt*100) : 0
+                return (
+                  <tr key={i} style={{ background:i%2===0?'#fff':'#f8f9fc' }}>
+                    <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>{t.date}</td>
+                    <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>NT${t.amount.toLocaleString()}</td>
+                    <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>
+                      <div style={{ height:9, background:'#6366f1', width:`${barW}%`, borderRadius:3, minWidth:2 }}/>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 買家明細 */}
+      {filtBuyers.length>0 && (
+        <div>
+          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>👥 買家訂單明細</div>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:10 }}>
+            <thead><tr style={{ background:'#f1f5f9' }}>
+              <th style={{ padding:'4px 7px', textAlign:'left', border:'1px solid #e2e8f0' }}>客戶</th>
+              <th style={{ padding:'4px 7px', textAlign:'left', border:'1px solid #e2e8f0' }}>商品</th>
+              <th style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>出貨</th>
+              <th style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>收款</th>
+              <th style={{ padding:'4px 7px', textAlign:'right', border:'1px solid #e2e8f0' }}>金額</th>
+            </tr></thead>
+            <tbody>
+              {filtBuyers.map(buyer=>buyer.orders.map((o,oi)=>(
+                <tr key={`${buyer.id}-${oi}`} style={{ background:oi%2===0?'#fff':'#f8f9fc' }}>
+                  <td style={{ padding:'4px 7px', border:'1px solid #e2e8f0', fontWeight:oi===0?700:400, color:oi===0?'#1e293b':'transparent' }}>
+                    {oi===0 ? buyer.name : '↳'}
+                  </td>
+                  <td style={{ padding:'4px 7px', border:'1px solid #e2e8f0' }}>
+                    {(o.items||[]).map((item,ii)=>(
+                      <div key={ii}>{item.name}{item.spec?.color||item.spec?.size?`（${[item.spec.color,item.spec.size].filter(Boolean).join('／')}）`:''} ×{item.qty}</div>
+                    ))}
+                  </td>
+                  <td style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>
+                    {o.status==='shipped'?'✅':o.status==='cancelled'?'❌':'⏳'}
+                  </td>
+                  <td style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>
+                    {o.payment_status==='paid'?'💰':'⬜'}
+                  </td>
+                  <td style={{ padding:'4px 7px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>
+                    NT${(o.total_amount||0).toLocaleString()}
+                  </td>
+                </tr>
+              )))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 規格顯示
 function specLabel(item) {
   if (!item?.spec) return ''
   const parts = []
@@ -199,6 +358,20 @@ export default function Reports() {
 
   return (
     <div className="animate-fade">
+      {/* ── 列印專用區塊（畫面隱藏，列印時顯示）── */}
+      <PrintReport
+        filteredOrders={filteredOrders}
+        totalRevenue={totalRevenue}
+        totalProfit={totalProfit}
+        trendData={trendData}
+        topProds={topProds}
+        catData={catData}
+        filtBuyers={filtBuyers}
+        filterMode={filterMode}
+        inputMonth={inputMonth}
+        inputStart={inputStart}
+        inputEnd={inputEnd}
+      />
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
         <div>
           <h2 style={{ fontSize:22,fontWeight:800 }}>銷售報表</h2>
