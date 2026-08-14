@@ -5,6 +5,7 @@ import { getCustomerPhoneLast2 } from '../lib/customerSearch'
 
 const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
 const dateText = value => value ? new Date(value).toLocaleDateString('zh-TW') : '—'
+const SPEC_STYLE = { color:'#dc2626', fontWeight:900 }
 
 function specText(item) {
   const spec = item?.spec || {}
@@ -176,7 +177,7 @@ function DimensionSummary({ title, rows }) {
   return <div style={{ border:'1px solid var(--border)', borderRadius:10, overflow:'hidden' }}>
     <div style={{ background:'var(--surface-2)', padding:'9px 12px', fontSize:13, fontWeight:800 }}>{title}</div>
     <div style={{ padding:'8px 12px' }}>
-      {rows.map(row => <div key={row.label} style={{ display:'flex', justifyContent:'space-between', gap:12, padding:'5px 0', borderBottom:'1px dashed var(--border)' }}><span>{row.label}</span><strong>{row.qty} 件</strong></div>)}
+      {rows.map(row => <div key={row.label} style={{ display:'flex', justifyContent:'space-between', gap:12, padding:'5px 0', borderBottom:'1px dashed var(--border)' }}><span style={SPEC_STYLE}>{row.label}</span><strong>{row.qty} 件</strong></div>)}
     </div>
   </div>
 }
@@ -276,7 +277,7 @@ export default function PendingProductReport() {
 
   function exportCurrent() {
     if (!canOutput) return
-    const rows = [['客戶','手機','手機末碼','Line','FB','商品','規格/口味','備註','訂購日期','數量','單價','小計']]
+    const rows = [['客戶','手機','手機末兩碼','Line','FB','商品','規格/口味','備註','訂購日期','數量','單價','小計']]
     currentRows.forEach(customer => {
       customer.items.forEach(item => rows.push([
         customer.name,
@@ -326,7 +327,7 @@ export default function PendingProductReport() {
     return customer.items.map((item,index) => (
       <div key={`${customer.key}-${index}`} style={{ padding:'5px 0', borderBottom:index < customer.items.length - 1 ? '1px dashed var(--border)' : 'none' }}>
         {showProductName && <strong style={{ color:'var(--indigo)' }}>{item.product_name}　</strong>}
-        <strong>{item.spec}</strong> ×{item.qty}　{money(item.price)}／件　<span style={{ fontWeight:700 }}>{money(item.amount)}</span>
+        <span style={SPEC_STYLE}>{item.spec}</span> ×{item.qty}　{money(item.price)}／件　<span style={{ fontWeight:700 }}>{money(item.amount)}</span>
         {item.note && <span style={{ color:'var(--text-secondary)' }}>　備註：{item.note}</span>}
         <div style={{ color:'var(--text-muted)', fontSize:11 }}>訂購：{item.dates.join('、')}</div>
       </div>
@@ -386,7 +387,7 @@ export default function PendingProductReport() {
           <div style={{ marginBottom:12, fontWeight:700 }}>共 {summary.customers} 位客戶／{summary.qty} 件／合計 {money(summary.amount)}</div>
           <table>
             <thead><tr><th>客戶</th><th>手機</th><th>商品 / 訂購明細</th><th>數量</th><th>小計</th></tr></thead>
-            <tbody>{currentRows.map(customer => <tr key={`print-${customer.key}`}><td><strong>{customer.name}</strong></td><td>{customer.phone || (customer.phone_last2 ? `末碼 ${customer.phone_last2}` : '—')}</td><td>{customer.items.map((item,index) => <div key={`print-${customer.key}-${index}`}>{mode === 'buyer' && <strong>{item.product_name}　</strong>}{item.spec} ×{item.qty}　{money(item.price)}/件{item.note ? `　${item.note}` : ''}<br/><small>訂購：{item.dates.join('、')}</small></div>)}</td><td><strong>{customer.total_qty}</strong></td><td><strong>{money(customer.total_amount)}</strong></td></tr>)}</tbody>
+            <tbody>{currentRows.map(customer => <tr key={`print-${customer.key}`}><td><strong>{customer.name}</strong></td><td>{customer.phone || (customer.phone_last2 ? `末碼 ${customer.phone_last2}` : '—')}</td><td>{customer.items.map((item,index) => <div key={`print-${customer.key}-${index}`}>{mode === 'buyer' && <strong>{item.product_name}　</strong>}<span style={SPEC_STYLE}>{item.spec}</span> ×{item.qty}　{money(item.price)}/件{item.note ? `　${item.note}` : ''}<br/><small>訂購：{item.dates.join('、')}</small></div>)}</td><td><strong>{customer.total_qty}</strong></td><td><strong>{money(customer.total_amount)}</strong></td></tr>)}</tbody>
             {currentRows.length > 0 && <tfoot><tr><td colSpan={3} style={{ textAlign:'right', fontWeight:800 }}>合計</td><td style={{ fontWeight:900 }}>{summary.qty}</td><td style={{ fontWeight:900 }}>{money(summary.amount)}</td></tr></tfoot>}
           </table>
 
@@ -395,7 +396,7 @@ export default function PendingProductReport() {
             <div style={{ marginBottom:8 }}>此商品全部未出貨訂單：{orderingSummary.totalQty} 件／{money(orderingSummary.totalAmount)}</div>
             <table>
               <thead><tr><th>規格組合</th><th>數量</th><th>金額</th></tr></thead>
-              <tbody>{orderingSummary.combos.map(row => <tr key={`print-combo-${row.label}`}><td>{row.label}</td><td><strong>{row.qty}</strong></td><td>{money(row.amount)}</td></tr>)}</tbody>
+              <tbody>{orderingSummary.combos.map(row => <tr key={`print-combo-${row.label}`}><td><span style={SPEC_STYLE}>{row.label}</span></td><td><strong>{row.qty}</strong></td><td>{money(row.amount)}</td></tr>)}</tbody>
               <tfoot><tr><td style={{ textAlign:'right', fontWeight:800 }}>總計</td><td style={{ fontWeight:900 }}>{orderingSummary.totalQty}</td><td style={{ fontWeight:900 }}>{money(orderingSummary.totalAmount)}</td></tr></tfoot>
             </table>
           </div>}
@@ -437,7 +438,7 @@ export default function PendingProductReport() {
             <div className="table-container" style={{ marginBottom:16 }}>
               <table>
                 <thead><tr><th>規格組合</th><th>口味</th><th>顏色</th><th>尺寸</th><th>訂購數量</th><th>金額</th></tr></thead>
-                <tbody>{orderingSummary.combos.map(row => <tr key={row.label}><td style={{ fontWeight:800 }}>{row.label}</td><td>{row.flavor || '—'}</td><td>{row.color || '—'}</td><td>{row.size || '—'}</td><td style={{ fontWeight:900, color:'var(--indigo)' }}>{row.qty} 件</td><td>{money(row.amount)}</td></tr>)}</tbody>
+                <tbody>{orderingSummary.combos.map(row => <tr key={row.label}><td><span style={SPEC_STYLE}>{row.label}</span></td><td><span style={row.flavor ? SPEC_STYLE : undefined}>{row.flavor || '—'}</span></td><td><span style={row.color ? SPEC_STYLE : undefined}>{row.color || '—'}</span></td><td><span style={row.size ? SPEC_STYLE : undefined}>{row.size || '—'}</span></td><td style={{ fontWeight:900, color:'var(--indigo)' }}>{row.qty} 件</td><td>{money(row.amount)}</td></tr>)}</tbody>
                 <tfoot><tr><td colSpan={4} style={{ textAlign:'right', fontWeight:800 }}>總計</td><td style={{ fontWeight:900, color:'var(--indigo)' }}>{orderingSummary.totalQty} 件</td><td style={{ fontWeight:900 }}>{money(orderingSummary.totalAmount)}</td></tr></tfoot>
               </table>
             </div>
