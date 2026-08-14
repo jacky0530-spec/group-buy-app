@@ -128,11 +128,7 @@ export default function PendingProductReport() {
       matches.forEach(item => {
         const qty = Number(item.qty || 0)
         const price = Number(item.sale_price ?? item.price ?? 0)
-        const detailKey = [
-          specText(item),
-          price,
-          String(item.note || '').trim(),
-        ].join('|')
+        const detailKey = [specText(item), price, String(item.note || '').trim()].join('|')
 
         if (!group.items.has(detailKey)) {
           group.items.set(detailKey, {
@@ -211,7 +207,7 @@ export default function PendingProductReport() {
         </div>
       </div>
 
-      {error && <div style={{ background:'var(--rose-light)', color:'var(--rose)', padding:12, borderRadius:8, marginBottom:14 }}>{error}</div>}
+      {error && <div className="no-print" style={{ background:'var(--rose-light)', color:'var(--rose)', padding:12, borderRadius:8, marginBottom:14 }}>{error}</div>}
 
       <div className="card no-print" style={{ marginBottom:16 }}>
         <div className="card-header" style={{ fontWeight:800 }}>① 挑選商品</div>
@@ -234,12 +230,28 @@ export default function PendingProductReport() {
 
       {selectedProduct && (
         <>
-          <div className="print-only" style={{ marginBottom:14 }}>
-            <h2 style={{ margin:0 }}>未出貨商品報表</h2>
-            <div style={{ marginTop:4 }}>商品：{selectedProduct.name}　列印日期：{new Date().toLocaleDateString('zh-TW')}</div>
+          <div className="print-only" style={{ display:'none' }}>
+            <h2 style={{ marginBottom:6 }}>未出貨商品報表</h2>
+            <div style={{ marginBottom:12 }}>商品：<strong>{selectedProduct.name}</strong>　列印日期：{new Date().toLocaleDateString('zh-TW')}</div>
+            <div style={{ marginBottom:12, fontWeight:700 }}>共 {summary.customers} 位客戶／{summary.qty} 件／合計 {money(summary.amount)}</div>
+            <table>
+              <thead><tr><th>客戶</th><th>手機</th><th>規格 / 訂購明細</th><th>數量</th><th>小計</th></tr></thead>
+              <tbody>
+                {filteredRows.map(customer => (
+                  <tr key={`print-${customer.key}`}>
+                    <td><strong>{customer.name}</strong></td>
+                    <td>{customer.phone || (customer.phone_last2 ? `末碼 ${customer.phone_last2}` : '—')}</td>
+                    <td>{customer.items.map((item,index) => <div key={`print-${customer.key}-${index}`}>{item.spec} ×{item.qty}　{money(item.price)}/件{item.note ? `　${item.note}` : ''}<br/><small>訂購：{item.dates.join('、')}</small></div>)}</td>
+                    <td><strong>{customer.total_qty}</strong></td>
+                    <td><strong>{money(customer.total_amount)}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr><td colSpan={3} style={{ textAlign:'right', fontWeight:800 }}>合計</td><td style={{ fontWeight:900 }}>{summary.qty}</td><td style={{ fontWeight:900 }}>{money(summary.amount)}</td></tr></tfoot>
+            </table>
           </div>
 
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:12, marginBottom:16 }}>
+          <div className="no-print" style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:12, marginBottom:16 }}>
             <div style={{ background:'var(--indigo-light)', borderRadius:10, padding:14, position:'relative' }}><div style={{ fontSize:12, fontWeight:700, color:'var(--indigo)' }}>未出貨客戶</div><strong style={{ fontSize:22, color:'var(--indigo)' }}>{summary.customers} 位</strong><Users size={25} style={{ position:'absolute', right:12, top:15, opacity:.25 }}/></div>
             <div style={{ background:'var(--amber-light)', borderRadius:10, padding:14, position:'relative' }}><div style={{ fontSize:12, fontWeight:700, color:'#b45309' }}>未出貨數量</div><strong style={{ fontSize:22, color:'#b45309' }}>{summary.qty} 件</strong><Package size={25} style={{ position:'absolute', right:12, top:15, opacity:.25 }}/></div>
             <div style={{ background:'var(--emerald-light)', borderRadius:10, padding:14, position:'relative' }}><div style={{ fontSize:12, fontWeight:700, color:'var(--emerald)' }}>訂購金額</div><strong style={{ fontSize:22, color:'var(--emerald)' }}>{money(summary.amount)}</strong><DollarSign size={25} style={{ position:'absolute', right:12, top:15, opacity:.25 }}/></div>
@@ -250,7 +262,7 @@ export default function PendingProductReport() {
             <input value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} placeholder="搜尋客戶姓名、電話、末兩碼、Line、FB..." style={{ padding:'8px 8px 8px 32px', width:'100%' }}/>
           </div>
 
-          <div className="card">
+          <div className="card no-print">
             <div className="card-header" style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
               <strong><PackageSearch size={15} style={{ verticalAlign:'middle', marginRight:6 }}/>{selectedProduct.name}－未出貨名單</strong>
               <span style={{ fontSize:12, color:'var(--text-muted)' }}>共 {summary.customers} 位／{summary.qty} 件／{money(summary.amount)}</span>
