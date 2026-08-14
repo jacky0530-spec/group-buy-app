@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function accountPath() {
+      return /databases/$(database)/documents/accounts/$(request.auth.uid);
+    }
+
+    function hasAccess() {
+      return signedIn()
+        && exists(accountPath())
+        && get(accountPath()).data.disabled != true;
+    }
+
+    function isOwner() {
+      return hasAccess()
+        && get(accountPath()).data.role == 'owner';
+    }
+
+    function validRole(role) {
+      return role == 'owner' || role == 'staff';
+    }
+
+    match /products/{id} {
+      allow read, write: if hasAccess();
+    }
+
+    match /customers/{id} {
+      allow read, write: if hasAccess();
+    }
+
+    match /orders/{id} {
+      allow read, write: if hasAccess();
+    }
+
+    match /accounts/{uid} {
+      allow read: if hasAccess();
+      allow create: if isOwner()
+        && validRole(request.resource.data.role)
+        && request.resource.data.disabled == false;
+      allow update: if isOwner()
+        && validRole(request.resource.data.role);
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
