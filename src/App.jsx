@@ -8,6 +8,7 @@ import Products from './pages/Products'
 import Customers from './pages/Customers'
 import Orders from './pages/Orders'
 import Reports from './pages/Reports'
+import PendingProductReport from './pages/PendingProductReport'
 import Accounts from './pages/Accounts'
 
 export default function App() {
@@ -20,11 +21,12 @@ export default function App() {
             <Route element={<AuthGuard />}>
               <Route path="/" element={<Layout />}>
                 <Route index element={<Home />} />
-                <Route path="products"  element={<Products />} />
+                <Route path="products" element={<Products />} />
                 <Route path="customers" element={<Customers />} />
-                <Route path="orders"    element={<Orders />} />
-                <Route path="reports"   element={<Reports />} />
-                <Route path="accounts"  element={<Accounts />} />
+                <Route path="orders" element={<Orders />} />
+                <Route path="reports" element={<Reports />} />
+                <Route path="pending-report" element={<PendingProductReport />} />
+                <Route path="accounts" element={<Accounts />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
