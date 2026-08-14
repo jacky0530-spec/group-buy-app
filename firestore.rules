@@ -25,35 +25,25 @@ service cloud.firestore {
       return role == 'owner' || role == 'staff';
     }
 
-    // Business records are intentionally soft-deleted/archived.
-    // Direct document deletion is denied so historical accounting cannot be destroyed by client code.
-    match /products/{id} {
-      allow read, create, update: if hasAccess();
-      allow delete: if false;
-    }
-
-    match /customers/{id} {
-      allow read, create, update: if hasAccess();
-      allow delete: if false;
-    }
-
-    match /orders/{id} {
-      allow read, create, update: if hasAccess();
-      allow delete: if false;
-    }
-
+    // 帳號權限維持獨立控制。
     match /accounts/{uid} {
       allow read: if hasAccess();
       allow create: if isOwner()
         && validRole(request.resource.data.role)
         && request.resource.data.disabled == false;
       allow update: if isOwner()
-        && validRole(request.resource.data.role);
+        && validRole(request.resource.data.role)
+        && (uid != request.auth.uid || request.resource.data.disabled == false);
       allow delete: if false;
     }
 
-    match /{document=**} {
-      allow read, write: if false;
+    // 除 accounts 外，所有應用資料共用同一套規則。
+    // 未來新增 suppliers / inventory / purchases / refunds 等 collection
+    // 不需要再修改或重新部署 Firestore Rules。
+    // 歷史資料一律採軟封存，Client 禁止 hard delete。
+    match /{collection}/{document=**} {
+      allow read, create, update: if collection != 'accounts' && hasAccess();
+      allow delete: if false;
     }
   }
 }
