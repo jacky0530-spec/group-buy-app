@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { CustomersAPI, OrdersAPI } from '../lib/db'
 import { useToast, Modal, ConfirmDialog } from '../components/UI'
-import { Plus, Pencil, Archive, Search, Users, RotateCcw } from 'lucide-react'
+import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from '../lib/customerSearch'
+import { Plus, Pencil, Archive, Search, Users, RotateCcw, Upload } from 'lucide-react'
 
-const EMPTY = { name:'', line_nick:'', fb_name:'', phone:'', note:'' }
+const EMPTY = { name:'', line_nick:'', fb_name:'', phone:'', phone_last2:'', note:'' }
 
 export default function Customers() {
   const toast = useToast()
+  const importRef = useRef(null)
   const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -15,6 +17,7 @@ export default function Customers() {
   const [form, setForm] = useState({ ...EMPTY })
   const [editId, setEditId] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [confirmArchive, setConfirmArchive] = useState(null)
   const [orderCounts, setOrderCounts] = useState({})
 
@@ -40,11 +43,13 @@ export default function Customers() {
 
   useEffect(() => { load() }, [load])
 
+  const q = search.toLowerCase().trim()
   const filtered = customers.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.line_nick || '').toLowerCase().includes(search.toLowerCase()) ||
-    (c.fb_name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (c.phone || '').includes(search)
+    c.name.toLowerCase().includes(q) ||
+    (c.line_nick || '').toLowerCase().includes(q) ||
+    (c.fb_name || '').toLowerCase().includes(q) ||
+    (c.phone || '').includes(search.trim()) ||
+    getCustomerPhoneLast2(c).toLowerCase().includes(q)
   )
 
   function openAdd() {
@@ -56,10 +61,17 @@ export default function Customers() {
   function openEdit(c) {
     setForm({
       name:c.name || '', line_nick:c.line_nick || '', fb_name:c.fb_name || '',
-      phone:c.phone || '', note:c.note || '',
+      phone:c.phone || '', phone_last2:getCustomerPhoneLast2(c), note:c.note || '',
     })
     setEditId(c.id)
     setShowModal(true)
+  }
+
+  function updatePhone(value) {
+    setForm(p => {
+      const derived = derivePhoneLast2(value)
+      return { ...p, phone:value, phone_last2:derived || p.phone_last2 }
+    })
   }
 
   async function save() {
@@ -68,7 +80,7 @@ export default function Customers() {
     try {
       const payload = {
         name:form.name.trim(), line_nick:form.line_nick.trim(), fb_name:form.fb_name.trim(),
-        phone:form.phone.trim(), note:form.note.trim(),
+        phone:form.phone.trim(), phone_last2:normalizePhoneLast2(form.phone_last2), note:form.note.trim(),
       }
       const dup = await CustomersAPI.isDuplicateIdentity(payload, editId)
       if (dup.duplicate) {
@@ -89,6 +101,25 @@ export default function Customers() {
       toast('儲存失敗：' + err.message, 'error')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function importCustomerFile(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setImporting(true)
+    try {
+      const parsed = JSON.parse(await file.text())
+      const rows = Array.isArray(parsed) ? parsed : parsed.customers
+      if (!Array.isArray(rows)) throw new Error('檔案內找不到 customers 資料')
+      const result = await CustomersAPI.importRows(rows)
+      toast(`匯入完成：新增 ${result.created}、補資料 ${result.updated}、略過重複 ${result.skipped}${result.ambiguous ? `、同名需區分 ${result.ambiguous}` : ''} ✓`)
+      await load()
+    } catch (err) {
+      toast('匯入失敗：' + err.message, 'error')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -115,19 +146,25 @@ export default function Customers() {
         <div>
           <h2 style={{ fontSize:22, fontWeight:800 }}>客戶管理</h2>
           <p style={{ color:'var(--text-secondary)', fontSize:13, marginTop:2 }}>
-            共 {customers.length} 位　姓名可重複；電話 / Line / FB 用來輔助辨識
+            共 {customers.length} 位　姓名可重複；手機末兩碼可用於快速找人
           </p>
         </div>
-        <div style={{ display:'flex', gap:8 }}>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <input ref={importRef} type="file" accept=".json,application/json" onChange={importCustomerFile} style={{ display:'none' }}/>
+          <button className="btn btn-ghost" disabled={importing} onClick={() => importRef.current?.click()}><Upload size={15}/>{importing ? '匯入中...' : '匯入客戶檔'}</button>
           <button className="btn btn-ghost" onClick={() => setShowArchived(v => !v)}>{showArchived ? '隱藏封存' : '顯示封存'}</button>
           <button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>新增客戶</button>
         </div>
       </div>
 
+      <div style={{ background:'var(--sky-light)', borderRadius:8, padding:'9px 12px', marginBottom:14, fontSize:12, color:'#0369a1' }}>
+        📱 手機末兩碼可重複，例如末碼「12」可以有多位客戶；開單時會列出所有符合的人名供你挑選。完整電話填入後會自動帶出末兩碼。
+      </div>
+
       <div style={{ marginBottom:14 }}>
-        <div className="search-input-wrap" style={{ maxWidth:420 }}>
+        <div className="search-input-wrap" style={{ maxWidth:520 }}>
           <Search size={14}/>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋姓名、Line、FB、電話..."
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋姓名、手機末兩碼、完整電話、Line、FB..."
             style={{ padding:'8px 8px 8px 32px', border:'1.5px solid var(--border)', borderRadius:8, fontSize:14, outline:'none', fontFamily:'inherit', background:'var(--surface)', width:'100%' }}/>
         </div>
       </div>
@@ -135,18 +172,20 @@ export default function Customers() {
       <div className="card">
         <div className="table-container">
           <table>
-            <thead><tr><th>姓名</th><th>Line 暱稱</th><th>FB 名稱</th><th>電話</th><th>有效訂單數</th><th>備註</th><th style={{ textAlign:'right' }}>操作</th></tr></thead>
+            <thead><tr><th>姓名</th><th>末兩碼</th><th>Line 暱稱</th><th>FB 名稱</th><th>完整電話</th><th>有效訂單數</th><th>備註</th><th style={{ textAlign:'right' }}>操作</th></tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={7} style={{ textAlign:'center', padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
-              {!loading && filtered.length === 0 && <tr><td colSpan={7}><div className="empty-state"><Users size={36}/><span>尚無客戶</span></div></td></tr>}
+              {loading && <tr><td colSpan={8} style={{ textAlign:'center', padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan={8}><div className="empty-state"><Users size={36}/><span>尚無客戶</span></div></td></tr>}
               {filtered.map(c => {
                 const archived = c.active === false
+                const last2 = getCustomerPhoneLast2(c)
                 return (
                   <tr key={c.id} style={{ opacity:archived ? .55 : 1 }}>
                     <td><div style={{ display:'flex', alignItems:'center', gap:10 }}>
                       <div style={{ width:32, height:32, borderRadius:'50%', background:'var(--indigo-light)', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, color:'var(--indigo)' }}>{c.name.charAt(0)}</div>
                       <div><div style={{ fontWeight:700 }}>{c.name}</div>{archived && <span className="badge badge-gray">已封存</span>}</div>
                     </div></td>
+                    <td>{last2 ? <span className="badge badge-indigo">📱 {last2}</span> : '—'}</td>
                     <td>{c.line_nick ? <span className="badge badge-emerald">🟢 {c.line_nick}</span> : '—'}</td>
                     <td>{c.fb_name ? <span className="badge badge-sky">📘 {c.fb_name}</span> : '—'}</td>
                     <td style={{ color:'var(--text-secondary)' }}>{c.phone || '—'}</td>
@@ -169,14 +208,17 @@ export default function Customers() {
       {showModal && (
         <Modal title={editId ? '編輯客戶資料' : '新增客戶'} onClose={() => setShowModal(false)}>
           <div style={{ background:'var(--sky-light)', borderRadius:8, padding:'9px 12px', marginBottom:14, fontSize:12, color:'#0369a1' }}>
-            ℹ️ 不再以姓名判斷重複；同名客戶可以建立。系統會用電話、Line、FB 資料提醒重複。
+            ℹ️ 同名客戶可以存在；請用手機末兩碼、完整電話、Line 或 FB 協助辨識。
           </div>
           <div className="form-group"><label>真實姓名 *</label><input value={form.name} onChange={e => setForm(p => ({ ...p, name:e.target.value }))}/></div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <div className="form-group"><label>手機末兩碼</label><input inputMode="numeric" value={form.phone_last2} onChange={e => setForm(p => ({ ...p, phone_last2:e.target.value }))} placeholder="例如：12"/></div>
+            <div className="form-group"><label>完整電話</label><input type="tel" value={form.phone} onChange={e => updatePhone(e.target.value)} placeholder="0912-345-678"/></div>
+          </div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
             <div className="form-group"><label>Line 暱稱</label><input value={form.line_nick} onChange={e => setForm(p => ({ ...p, line_nick:e.target.value }))}/></div>
             <div className="form-group"><label>FB 名稱</label><input value={form.fb_name} onChange={e => setForm(p => ({ ...p, fb_name:e.target.value }))}/></div>
           </div>
-          <div className="form-group"><label>聯絡電話</label><input type="tel" value={form.phone} onChange={e => setForm(p => ({ ...p, phone:e.target.value }))} placeholder="0912-345-678"/></div>
           <div className="form-group"><label>備註</label><input value={form.note} onChange={e => setForm(p => ({ ...p, note:e.target.value }))}/></div>
           <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
             <button className="btn btn-ghost" onClick={() => setShowModal(false)}>取消</button>
