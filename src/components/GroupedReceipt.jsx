@@ -1,0 +1,151 @@
+import { Printer } from 'lucide-react'
+import { Modal } from './UI'
+
+function digits(value) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function phoneSuffix(order) {
+  const stored = String(order?.customer_phone_last2 || '').trim()
+  if (stored) return stored
+  const phone = digits(order?.customer_phone)
+  return phone.length >= 2 ? phone.slice(-2) : phone
+}
+
+function customerKey(order) {
+  const name = String(order?.customer_name || '').trim().toLocaleLowerCase('zh-TW')
+  const suffix = phoneSuffix(order)
+  // 現有客戶資料以「姓名 + 手機末碼」作為領貨辨識；可將分開建立的訂單合併成同一張出貨明細。
+  return `${name}__${suffix}`
+}
+
+function specText(item) {
+  const spec = item?.spec || {}
+  const parts = []
+  if (spec.flavor) parts.push(`口味：${spec.flavor}`)
+  if (spec.color) parts.push(spec.color)
+  if (spec.size) parts.push(spec.size)
+  return parts.length ? `（${parts.join('／')}）` : ''
+}
+
+function itemKey(item) {
+  const price = Number(item.sale_price ?? item.price ?? 0)
+  const spec = item?.spec || {}
+  return [
+    item.product_id || item.id || '',
+    item.product_name || item.name || '',
+    price,
+    spec.flavor || '',
+    spec.color || '',
+    spec.size || '',
+    item.note || '',
+  ].join('__')
+}
+
+export function groupReceiptOrders(orders = []) {
+  const groups = new Map()
+
+  orders.forEach(order => {
+    const key = customerKey(order)
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        customer_name:order.customer_name || '未命名客戶',
+        customer_phone:order.customer_phone || '',
+        customer_phone_last2:phoneSuffix(order),
+        order_ids:[],
+        items:new Map(),
+      })
+    }
+
+    const group = groups.get(key)
+    group.order_ids.push(order.id)
+    if (!group.customer_phone && order.customer_phone) group.customer_phone = order.customer_phone
+
+    ;(order.items || []).forEach(item => {
+      const key = itemKey(item)
+      const qty = Number(item.qty || 0)
+      const price = Number(item.sale_price ?? item.price ?? 0)
+      const subtotal = Number(item.subtotal ?? price * qty)
+      const old = group.items.get(key)
+      if (old) {
+        old.qty += qty
+        old.subtotal += subtotal
+      } else {
+        group.items.set(key, {
+          ...item,
+          qty,
+          sale_price:price,
+          subtotal,
+        })
+      }
+    })
+  })
+
+  return [...groups.values()].map(group => {
+    const items = [...group.items.values()]
+    return {
+      ...group,
+      items,
+      subtotal:items.reduce((sum,item) => sum + Number(item.subtotal || 0),0),
+    }
+  })
+}
+
+function phoneLabel(group) {
+  const phone = String(group.customer_phone || '').trim()
+  if (phone) return phone
+  return group.customer_phone_last2 ? `末碼 ${group.customer_phone_last2}` : '未留手機'
+}
+
+export default function GroupedReceipt({ orders, onClose }) {
+  const groups = groupReceiptOrders(orders)
+  const grandTotal = groups.reduce((sum,group) => sum + group.subtotal,0)
+  const itemCount = groups.reduce((sum,group) => sum + group.items.reduce((s,item) => s + Number(item.qty || 0),0),0)
+
+  return (
+    <Modal title="📋 出貨明細單" onClose={onClose} width={760}>
+      <div id="receipt-area">
+        <div style={{ textAlign:'center',marginBottom:16,paddingBottom:12,borderBottom:'2px solid var(--border)' }}>
+          <div style={{ fontWeight:900,fontSize:20 }}>🛍️ 團購百貨 出貨單</div>
+          <div style={{ color:'var(--text-secondary)',fontSize:12,marginTop:4 }}>
+            列印日期：{new Date().toLocaleDateString('zh-TW')}　｜　共 {groups.length} 位客戶／{itemCount} 件
+          </div>
+        </div>
+
+        {groups.map(group => (
+          <div key={group.key} style={{ border:'1px solid var(--border)',borderRadius:10,marginBottom:14,overflow:'hidden',breakInside:'avoid' }}>
+            <div style={{ background:'var(--surface-2)',padding:'9px 12px',fontWeight:800,display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap' }}>
+              <span>👤 {group.customer_name}</span>
+              <span style={{ color:'var(--text-secondary)',fontSize:12 }}>📱 {phoneLabel(group)}</span>
+            </div>
+
+            {group.items.map((item,i) => (
+              <div key={`${group.key}-${i}`} style={{ display:'grid',gridTemplateColumns:'1fr 80px 70px 100px',gap:8,padding:'7px 12px',borderTop:'1px solid var(--border)',fontSize:13 }}>
+                <span>{item.product_name || item.name}{specText(item)}{item.note && ` — ${item.note}`}</span>
+                <span style={{ textAlign:'right' }}>NT${Number(item.sale_price ?? item.price ?? 0).toLocaleString()}</span>
+                <span style={{ textAlign:'center' }}>×{item.qty}</span>
+                <strong style={{ textAlign:'right' }}>NT${Number(item.subtotal || 0).toLocaleString()}</strong>
+              </div>
+            ))}
+
+            <div style={{ borderTop:'2px solid var(--border)',padding:'9px 12px',display:'flex',justifyContent:'flex-end',alignItems:'center',gap:18,background:'var(--surface-2)' }}>
+              <span style={{ fontSize:12,color:'var(--text-secondary)' }}>客戶小計</span>
+              <strong style={{ fontSize:16,color:'var(--indigo)' }}>NT${group.subtotal.toLocaleString()}</strong>
+            </div>
+          </div>
+        ))}
+
+        <div style={{ borderTop:'3px double var(--border)',marginTop:18,padding:'14px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--indigo-light)',borderRadius:10 }}>
+          <strong>總合計（{groups.length} 位客戶）</strong>
+          <strong style={{ fontSize:22,color:'var(--indigo)' }}>NT${grandTotal.toLocaleString()}</strong>
+        </div>
+      </div>
+
+      <div style={{ display:'flex',gap:10,justifyContent:'flex-end',marginTop:14 }}>
+        <button className="btn btn-ghost" onClick={onClose}>關閉</button>
+        <button className="btn btn-primary" onClick={() => window.print()}><Printer size={14}/>列印</button>
+      </div>
+    </Modal>
+  )
+}
