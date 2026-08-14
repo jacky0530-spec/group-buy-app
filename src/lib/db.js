@@ -5,6 +5,7 @@ import {
   writeBatch, arrayUnion, limit, startAfter,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from './customerSearch'
 
 function tsToISO(val) {
   if (!val) return null
@@ -26,6 +27,26 @@ function normalize(docSnap) {
 const now = () => Timestamp.now()
 const nowISO = () => new Date().toISOString()
 const activeOnly = rows => rows.filter(x => x.active !== false)
+const normalizeNameKey = value => String(value || '').trim().toLocaleLowerCase('zh-TW')
+
+function customerPayload(data) {
+  const phone = String(data.phone || '').trim()
+  const manualLast2 = normalizePhoneLast2(data.phone_last2)
+  return {
+    ...data,
+    phone,
+    phone_last2: manualLast2 || derivePhoneLast2(phone),
+  }
+}
+
+function mergedNote(current, incoming) {
+  const oldText = String(current || '').trim()
+  const newText = String(incoming || '').trim()
+  if (!newText) return oldText
+  if (!oldText) return newText
+  if (oldText.includes(newText)) return oldText
+  return `${oldText}；${newText}`
+}
 
 export function snapshotOrderItem(product, { qty = 1, note = '', spec = {} } = {}) {
   const price = Number(product.price || 0)
@@ -101,12 +122,14 @@ export const CustomersAPI = {
     return includeArchived ? rows : activeOnly(rows)
   },
   async create(data) {
-    const payload = { ...data, active:true, joined_at:now(), updated_at:now() }
+    const clean = customerPayload(data)
+    const payload = { ...clean, active:true, joined_at:now(), updated_at:now() }
     const ref = await addDoc(collection(db,'customers'), payload)
-    return { id:ref.id, ...data, active:true, joined_at:nowISO() }
+    return { id:ref.id, ...clean, active:true, joined_at:nowISO() }
   },
   async update(id, data) {
-    await updateDoc(doc(db,'customers',id), { ...data, updated_at:now() })
+    const clean = customerPayload(data)
+    await updateDoc(doc(db,'customers',id), { ...clean, updated_at:now() })
   },
   async archive(id) {
     await updateDoc(doc(db,'customers',id), { active:false, archived_at:now(), updated_at:now() })
@@ -121,6 +144,83 @@ export const CustomersAPI = {
       if (snap.docs.some(d => d.id !== excludeId && d.data().active !== false)) return { duplicate:true, field, value }
     }
     return { duplicate:false }
+  },
+  async importRows(rows = []) {
+    if (!Array.isArray(rows)) throw new Error('匯入格式不正確')
+    const snap = await getDocs(collection(db,'customers'))
+    const local = snap.docs.map(normalize)
+    const operations = []
+    let created = 0, updated = 0, skipped = 0, ambiguous = 0
+
+    const scheduleUpdate = (customer, patch) => {
+      operations.push({ type:'update', ref:doc(db,'customers',customer.id), data:{ ...patch, updated_at:now() } })
+      Object.assign(customer,patch)
+      updated += 1
+    }
+
+    for (const input of rows) {
+      const name = String(input?.name || '').trim()
+      if (!name) { skipped += 1; continue }
+      const phone = String(input?.phone || '').trim()
+      const phoneLast2 = normalizePhoneLast2(input?.phone_last2) || derivePhoneLast2(phone)
+      const note = String(input?.note || '').trim()
+      const key = normalizeNameKey(name)
+      const sameName = local.filter(c => c.active !== false && normalizeNameKey(c.name) === key)
+      const exact = sameName.find(c => {
+        const existingLast2 = getCustomerPhoneLast2(c)
+        return phoneLast2 ? existingLast2 === phoneLast2 : !existingLast2
+      })
+
+      if (exact) {
+        const patch = {}
+        if (phoneLast2 && !normalizePhoneLast2(exact.phone_last2)) patch.phone_last2 = phoneLast2
+        if (phone && !exact.phone) patch.phone = phone
+        const nextNote = mergedNote(exact.note,note)
+        if (nextNote !== String(exact.note || '').trim()) patch.note = nextNote
+        if (Object.keys(patch).length) scheduleUpdate(exact,patch)
+        else skipped += 1
+        continue
+      }
+
+      const untagged = sameName.filter(c => !getCustomerPhoneLast2(c) && !c.phone)
+      if (phoneLast2 && sameName.length === 1 && untagged.length === 1) {
+        const target = untagged[0]
+        const patch = { phone_last2:phoneLast2 }
+        if (phone) patch.phone = phone
+        const nextNote = mergedNote(target.note,note)
+        if (nextNote !== String(target.note || '').trim()) patch.note = nextNote
+        scheduleUpdate(target,patch)
+        continue
+      }
+
+      if (phoneLast2 && sameName.length > 1 && untagged.length > 0) ambiguous += 1
+      const ref = doc(collection(db,'customers'))
+      const payload = {
+        name,
+        line_nick:String(input?.line_nick || '').trim(),
+        fb_name:String(input?.fb_name || '').trim(),
+        phone,
+        phone_last2:phoneLast2,
+        note,
+        active:true,
+        import_source:String(input?.import_source || 'customer-json-v1'),
+        joined_at:now(),
+        updated_at:now(),
+      }
+      operations.push({ type:'set', ref, data:payload })
+      local.push({ id:ref.id, ...payload })
+      created += 1
+    }
+
+    for (let i=0; i<operations.length; i+=400) {
+      const batch = writeBatch(db)
+      operations.slice(i,i+400).forEach(op => {
+        if (op.type === 'set') batch.set(op.ref,op.data)
+        else batch.update(op.ref,op.data)
+      })
+      await batch.commit()
+    }
+    return { scanned:rows.length, created, updated, skipped, ambiguous }
   },
 }
 
