@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Download, PackageSearch, Printer, Search, Users, Package, DollarSign, UserSearch } from 'lucide-react'
+import { Download, PackageSearch, Printer, Search, Users, Package, DollarSign, UserSearch, Boxes } from 'lucide-react'
 import { CustomersAPI, OrdersAPI, ProductsAPI } from '../lib/db'
 import { getCustomerPhoneLast2 } from '../lib/customerSearch'
 
@@ -105,11 +105,80 @@ function buildPendingRows(pendingOrders, customerMap, selectedProduct = null) {
   })).sort((a,b) => a.name.localeCompare(b.name, 'zh-Hant'))
 }
 
+function increment(map, key, qty) {
+  if (!key) return
+  map.set(key, (map.get(key) || 0) + qty)
+}
+
+function mapToRows(map) {
+  return Array.from(map.entries())
+    .map(([label, qty]) => ({ label, qty }))
+    .sort((a,b) => a.label.localeCompare(b.label, 'zh-Hant', { numeric:true }))
+}
+
+function buildOrderingSummary(pendingOrders, selectedProduct) {
+  if (!selectedProduct) return { combos:[], colors:[], sizes:[], flavors:[], totalQty:0, totalAmount:0 }
+
+  const combos = new Map()
+  const colors = new Map()
+  const sizes = new Map()
+  const flavors = new Map()
+  let totalQty = 0
+  let totalAmount = 0
+
+  pendingOrders.forEach(order => {
+    ;(order.items || []).filter(item => matchesProduct(item, selectedProduct)).forEach(item => {
+      const spec = item.spec || {}
+      const flavor = String(spec.flavor || '').trim()
+      const color = String(spec.color || '').trim()
+      const size = String(spec.size || '').trim()
+      const qty = Number(item.qty || 0)
+      const price = Number(item.sale_price ?? item.price ?? 0)
+      const comboKey = [flavor, color, size].join('|')
+      const comboLabel = [
+        flavor && `口味：${flavor}`,
+        color && `顏色：${color}`,
+        size && `尺寸：${size}`,
+      ].filter(Boolean).join('／') || '一般規格'
+
+      if (!combos.has(comboKey)) combos.set(comboKey, { label:comboLabel, flavor, color, size, qty:0, amount:0 })
+      const combo = combos.get(comboKey)
+      combo.qty += qty
+      combo.amount += price * qty
+
+      increment(flavors, flavor, qty)
+      increment(colors, color, qty)
+      increment(sizes, size, qty)
+      totalQty += qty
+      totalAmount += price * qty
+    })
+  })
+
+  return {
+    combos:Array.from(combos.values()).sort((a,b) => a.label.localeCompare(b.label, 'zh-Hant', { numeric:true })),
+    colors:mapToRows(colors),
+    sizes:mapToRows(sizes),
+    flavors:mapToRows(flavors),
+    totalQty,
+    totalAmount,
+  }
+}
+
 function matchesBuyer(row, search) {
   const q = String(search || '').trim().toLowerCase()
   if (!q) return true
   return [row.name, row.phone, row.phone_last2, row.line_nick, row.fb_name]
     .some(value => String(value || '').toLowerCase().includes(q))
+}
+
+function DimensionSummary({ title, rows }) {
+  if (!rows.length) return null
+  return <div style={{ border:'1px solid var(--border)', borderRadius:10, overflow:'hidden' }}>
+    <div style={{ background:'var(--surface-2)', padding:'9px 12px', fontSize:13, fontWeight:800 }}>{title}</div>
+    <div style={{ padding:'8px 12px' }}>
+      {rows.map(row => <div key={row.label} style={{ display:'flex', justifyContent:'space-between', gap:12, padding:'5px 0', borderBottom:'1px dashed var(--border)' }}><span>{row.label}</span><strong>{row.qty} 件</strong></div>)}
+    </div>
+  </div>
 }
 
 export default function PendingProductReport() {
@@ -190,6 +259,11 @@ export default function PendingProductReport() {
     [buyerRows, buyerSearch],
   )
 
+  const orderingSummary = useMemo(
+    () => buildOrderingSummary(pendingOrders, selectedProduct),
+    [pendingOrders, selectedProduct],
+  )
+
   const currentRows = mode === 'product' ? filteredProductRows : filteredBuyerRows
   const summary = useMemo(() => ({
     customers:currentRows.length,
@@ -219,6 +293,22 @@ export default function PendingProductReport() {
         item.amount,
       ]))
     })
+
+    if (mode === 'product') {
+      rows.push([], ['團購訂貨彙總'], ['規格組合','數量','金額'])
+      orderingSummary.combos.forEach(row => rows.push([row.label, row.qty, row.amount]))
+      ;[
+        ['口味小計', orderingSummary.flavors],
+        ['顏色小計', orderingSummary.colors],
+        ['尺寸小計', orderingSummary.sizes],
+      ].forEach(([title, detailRows]) => {
+        if (!detailRows.length) return
+        rows.push([], [title,'數量'])
+        detailRows.forEach(row => rows.push([row.label, row.qty]))
+      })
+      rows.push([], ['未出貨總件數', orderingSummary.totalQty], ['未出貨總金額', orderingSummary.totalAmount])
+    }
+
     const filename = mode === 'product' ? `未出貨-${selectedProduct.name}.csv` : `未出貨-買家查詢${buyerSearch.trim() ? `-${buyerSearch.trim()}` : ''}.csv`
     downloadCsv(rows, filename)
   }
@@ -299,6 +389,16 @@ export default function PendingProductReport() {
             <tbody>{currentRows.map(customer => <tr key={`print-${customer.key}`}><td><strong>{customer.name}</strong></td><td>{customer.phone || (customer.phone_last2 ? `末碼 ${customer.phone_last2}` : '—')}</td><td>{customer.items.map((item,index) => <div key={`print-${customer.key}-${index}`}>{mode === 'buyer' && <strong>{item.product_name}　</strong>}{item.spec} ×{item.qty}　{money(item.price)}/件{item.note ? `　${item.note}` : ''}<br/><small>訂購：{item.dates.join('、')}</small></div>)}</td><td><strong>{customer.total_qty}</strong></td><td><strong>{money(customer.total_amount)}</strong></td></tr>)}</tbody>
             {currentRows.length > 0 && <tfoot><tr><td colSpan={3} style={{ textAlign:'right', fontWeight:800 }}>合計</td><td style={{ fontWeight:900 }}>{summary.qty}</td><td style={{ fontWeight:900 }}>{money(summary.amount)}</td></tr></tfoot>}
           </table>
+
+          {mode === 'product' && orderingSummary.combos.length > 0 && <div style={{ marginTop:18 }}>
+            <h3 style={{ marginBottom:8 }}>團購訂貨彙總</h3>
+            <div style={{ marginBottom:8 }}>此商品全部未出貨訂單：{orderingSummary.totalQty} 件／{money(orderingSummary.totalAmount)}</div>
+            <table>
+              <thead><tr><th>規格組合</th><th>數量</th><th>金額</th></tr></thead>
+              <tbody>{orderingSummary.combos.map(row => <tr key={`print-combo-${row.label}`}><td>{row.label}</td><td><strong>{row.qty}</strong></td><td>{money(row.amount)}</td></tr>)}</tbody>
+              <tfoot><tr><td style={{ textAlign:'right', fontWeight:800 }}>總計</td><td style={{ fontWeight:900 }}>{orderingSummary.totalQty}</td><td style={{ fontWeight:900 }}>{money(orderingSummary.totalAmount)}</td></tr></tfoot>
+            </table>
+          </div>}
         </div>
 
         <div className="no-print" style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:12, marginBottom:16 }}>
@@ -309,7 +409,7 @@ export default function PendingProductReport() {
 
         {mode === 'product' && <div className="search-input-wrap no-print" style={{ maxWidth:500, marginBottom:14 }}><Search size={14}/><input value={productBuyerSearch} onChange={e => setProductBuyerSearch(e.target.value)} placeholder="在此商品名單中搜尋姓名、手機、末兩碼、Line、FB..." style={{ padding:'8px 8px 8px 32px', width:'100%' }}/></div>}
 
-        <div className="card no-print">
+        <div className="card no-print" style={{ marginBottom:16 }}>
           <div className="card-header" style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
             <strong><PackageSearch size={15} style={{ verticalAlign:'middle', marginRight:6 }}/>{reportLabel}</strong>
             <span style={{ fontSize:12, color:'var(--text-muted)' }}>共 {summary.customers} 位／{summary.qty} 件／{money(summary.amount)}</span>
@@ -325,6 +425,30 @@ export default function PendingProductReport() {
             </table>
           </div>
         </div>
+
+        {mode === 'product' && orderingSummary.combos.length > 0 && <div className="card no-print">
+          <div className="card-header" style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <strong><Boxes size={16} style={{ verticalAlign:'middle', marginRight:7 }}/>團購訂貨彙總（供應商下單用）</strong>
+            <span style={{ fontSize:12, color:'var(--text-muted)' }}>全部未出貨：{orderingSummary.totalQty} 件／{money(orderingSummary.totalAmount)}</span>
+          </div>
+          <div className="card-body">
+            <div style={{ background:'var(--amber-light)', color:'#92400e', borderRadius:8, padding:'9px 11px', fontSize:12, marginBottom:14 }}>此區依「{selectedProduct.name}」全部未出貨訂單統計，不受上方客戶搜尋篩選影響，可直接作為向供應商下單的數量依據。</div>
+
+            <div className="table-container" style={{ marginBottom:16 }}>
+              <table>
+                <thead><tr><th>規格組合</th><th>口味</th><th>顏色</th><th>尺寸</th><th>訂購數量</th><th>金額</th></tr></thead>
+                <tbody>{orderingSummary.combos.map(row => <tr key={row.label}><td style={{ fontWeight:800 }}>{row.label}</td><td>{row.flavor || '—'}</td><td>{row.color || '—'}</td><td>{row.size || '—'}</td><td style={{ fontWeight:900, color:'var(--indigo)' }}>{row.qty} 件</td><td>{money(row.amount)}</td></tr>)}</tbody>
+                <tfoot><tr><td colSpan={4} style={{ textAlign:'right', fontWeight:800 }}>總計</td><td style={{ fontWeight:900, color:'var(--indigo)' }}>{orderingSummary.totalQty} 件</td><td style={{ fontWeight:900 }}>{money(orderingSummary.totalAmount)}</td></tr></tfoot>
+              </table>
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:12 }}>
+              <DimensionSummary title="口味小計" rows={orderingSummary.flavors}/>
+              <DimensionSummary title="顏色小計" rows={orderingSummary.colors}/>
+              <DimensionSummary title="尺寸小計" rows={orderingSummary.sizes}/>
+            </div>
+          </div>
+        </div>}
       </>}
     </div>
   )
