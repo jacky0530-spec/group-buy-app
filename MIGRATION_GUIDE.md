@@ -1,256 +1,139 @@
-# 🔄 Firebase → Supabase 遷移指南
+# Firebase → Supabase 資料遷移指南
 
-本系統刻意將所有資料庫操作集中在 `src/lib/db.js`，
-遷移時只需修改這一個檔案，所有頁面零改動。
+這份文件只在「舊 Firebase 已經有正式資料」時需要。如果目前只是測試資料，可以直接建立新的 Supabase Project，不必搬資料。
 
----
+## 先說明：哪些資料可以直接搬？
 
-## 第一步：匯出 Firebase 資料
+可以直接搬並保留原 ID：
 
-在瀏覽器開發者主控台（F12）執行下方程式碼，
-或在專案中建立一個臨時頁面執行：
+- `products`
+- `customers`
+- `orders`
 
-```js
-import { db } from './src/lib/firebase'
-import { collection, getDocs } from 'firebase/firestore'
+新版 Supabase schema 刻意把這三張表的 `id` 設成 `text`，所以舊 Firestore document ID 可以原封不動保留，訂單內的 `customer_id` / `product_id` 關聯不會因為遷移而失效。
 
-async function exportAll() {
-  const cols = ['products', 'customers', 'orders']
-  const result = {}
-  for (const col of cols) {
-    const snap = await getDocs(collection(db, col))
-    result[col] = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-  }
-  // 下載 JSON
-  const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = 'firebase_export.json'
-  a.click()
-}
-exportAll()
-```
+Supabase Auth 帳號不建議直接搬 Firebase 密碼雜湊；管理者與員工帳號請在 Supabase 重新建立。業務資料不受影響。
 
----
+## 建議切換流程
 
-## 第二步：在 Supabase 建立資料庫
+1. 先建立新的 Supabase Project。
+2. 執行 `supabase/schema.sql`。
+3. 建立第一位 Supabase Owner。
+4. 從 Firebase 匯出 `products / customers / orders`。
+5. 匯入 Supabase 並核對筆數與金額。
+6. 在測試網址登入並驗證商品、客戶、訂單與報表。
+7. 確認無誤後，才把 Vercel 的環境變數從 Firebase 改成 Supabase。
 
-到 Supabase Dashboard → SQL Editor，執行 `SUPABASE_SCHEMA.sql`。
+## Firebase 匯出格式
 
----
+建議整理成一個 JSON：
 
-## 第三步：匯入資料到 Supabase
-
-建立一個臨時腳本 `import_to_supabase.mjs`：
-
-```js
-import { createClient } from '@supabase/supabase-js'
-import data from './firebase_export.json' assert { type: 'json' }
-
-const supabase = createClient('YOUR_URL', 'YOUR_ANON_KEY')
-
-// Firestore Timestamp → ISO string
-function tsToISO(val) {
-  if (!val) return null
-  if (val._seconds) return new Date(val._seconds * 1000).toISOString()
-  return val
-}
-
-async function importAll() {
-  // --- products ---
-  const products = data.products.map(p => ({
-    id:         p.id,
-    name:       p.name,
-    price:      p.price || 0,
-    cost:       p.cost  || 0,
-    category:   p.category || 'other',
-    note:       p.note || null,
-    created_at: tsToISO(p.created_at),
-    updated_at: tsToISO(p.updated_at),
-  }))
-  const { error: pe } = await supabase.from('products').upsert(products)
-  if (pe) console.error('products error:', pe)
-  else console.log(`✅ 匯入 ${products.length} 筆商品`)
-
-  // --- customers ---
-  const customers = data.customers.map(c => ({
-    id:        c.id,
-    name:      c.name,
-    line_nick: c.line_nick || null,
-    fb_name:   c.fb_name   || null,
-    phone:     c.phone     || null,
-    note:      c.note      || null,
-    joined_at: tsToISO(c.joined_at),
-    updated_at:tsToISO(c.updated_at),
-  }))
-  const { error: ce } = await supabase.from('customers').upsert(customers)
-  if (ce) console.error('customers error:', ce)
-  else console.log(`✅ 匯入 ${customers.length} 筆客戶`)
-
-  // --- orders ---
-  const orders = data.orders.map(o => ({
-    id:             o.id,
-    customer_id:    o.customer_id   || null,
-    customer_name:  o.customer_name,
-    items:          o.items || [],
-    total_amount:   o.total_amount  || 0,
-    status:         o.status        || 'pending',
-    payment_status: o.payment_status|| 'unpaid',
-    note:           o.note          || null,
-    order_date:     tsToISO(o.order_date),
-    shipped_at:     tsToISO(o.shipped_at),
-    updated_at:     tsToISO(o.updated_at),
-  }))
-  const { error: oe } = await supabase.from('orders').upsert(orders)
-  if (oe) console.error('orders error:', oe)
-  else console.log(`✅ 匯入 ${orders.length} 筆訂單`)
-
-  console.log('🎉 資料匯入完成！')
-}
-
-importAll()
-```
-
-執行：
-```bash
-node import_to_supabase.mjs
-```
-
----
-
-## 第四步：替換 db.js
-
-將 `src/lib/db.js` 內容替換為以下 Supabase 版本：
-
-```js
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-)
-
-export const ProductsAPI = {
-  async list() {
-    const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false })
-    return data || []
-  },
-  async create(payload) {
-    const { data } = await supabase.from('products').insert({ ...payload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }).select().single()
-    return data
-  },
-  async update(id, payload) {
-    await supabase.from('products').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', id)
-  },
-  async delete(id) {
-    await supabase.from('products').delete().eq('id', id)
-  },
-  async isDuplicate(name, excludeId = null) {
-    let q = supabase.from('products').select('id').eq('name', name)
-    if (excludeId) q = q.neq('id', excludeId)
-    const { data } = await q
-    return data && data.length > 0
-  },
-}
-
-export const CustomersAPI = {
-  async list() {
-    const { data } = await supabase.from('customers').select('*').order('joined_at', { ascending: false })
-    return data || []
-  },
-  async create(payload) {
-    const { data } = await supabase.from('customers').insert({ ...payload, joined_at: new Date().toISOString(), updated_at: new Date().toISOString() }).select().single()
-    return data
-  },
-  async update(id, payload) {
-    await supabase.from('customers').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', id)
-  },
-  async delete(id) {
-    await supabase.from('customers').delete().eq('id', id)
-  },
-  async isDuplicate(name, excludeId = null) {
-    let q = supabase.from('customers').select('id').eq('name', name)
-    if (excludeId) q = q.neq('id', excludeId)
-    const { data } = await q
-    return data && data.length > 0
-  },
-}
-
-export const OrdersAPI = {
-  async list() {
-    const { data } = await supabase.from('orders').select('*').order('order_date', { ascending: false })
-    return data || []
-  },
-  async create(payload) {
-    const { data } = await supabase.from('orders').insert({ ...payload, status: 'pending', payment_status: 'unpaid', order_date: new Date().toISOString(), updated_at: new Date().toISOString() }).select().single()
-    return data
-  },
-  async update(id, payload) {
-    await supabase.from('orders').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', id)
-  },
-  async updateStatus(id, status) {
-    const patch = { status, updated_at: new Date().toISOString() }
-    if (status === 'shipped') patch.shipped_at = new Date().toISOString()
-    await supabase.from('orders').update(patch).eq('id', id)
-  },
-  async updatePayment(id, payment_status) {
-    await supabase.from('orders').update({ payment_status, updated_at: new Date().toISOString() }).eq('id', id)
-  },
-  async delete(id) {
-    await supabase.from('orders').delete().eq('id', id)
-  },
-  async batchUpdateStatus(ids, status) {
-    const patch = { status, updated_at: new Date().toISOString() }
-    if (status === 'shipped') patch.shipped_at = new Date().toISOString()
-    await supabase.from('orders').update(patch).in('id', ids)
-  },
-}
-
-export const StatsAPI = {
-  async getSummary() {
-    const [{ count: productCount }, { count: customerCount }, { data: orders }] = await Promise.all([
-      supabase.from('products').select('*', { count: 'exact', head: true }),
-      supabase.from('customers').select('*', { count: 'exact', head: true }),
-      supabase.from('orders').select('*').order('order_date', { ascending: false }),
-    ])
-    const all = orders || []
-    return {
-      productCount:  productCount || 0,
-      customerCount: customerCount || 0,
-      orderCount:    all.length,
-      pendingCount:  all.filter(o => o.status === 'pending').length,
-      revenue:       all.filter(o => o.status === 'shipped').reduce((s, o) => s + (o.total_amount || 0), 0),
-      recentOrders:  all.slice(0, 5),
-    }
-  },
+```json
+{
+  "products": [],
+  "customers": [],
+  "orders": []
 }
 ```
 
----
+每筆資料請保留原本 Firestore document ID，例如：
 
-## 第五步：更新 .env.local
-
-```
-# 停用 Firebase（保留備份）
-# VITE_FIREBASE_API_KEY=...
-
-# 啟用 Supabase
-VITE_SUPABASE_URL=https://your_project.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
+```json
+{
+  "id": "AbCdEf123456",
+  "name": "商品名稱"
+}
 ```
 
----
+Firestore Timestamp 請轉成 ISO 8601 字串，例如：
 
-## 遷移完成 ✅
+```text
+2026-08-14T08:00:00.000Z
+```
 
-| 步驟 | 工作量 |
-|------|--------|
-| 匯出 Firebase 資料 | 5 分鐘 |
-| 建立 Supabase Schema | 2 分鐘 |
-| 匯入資料腳本 | 3 分鐘 |
-| 替換 db.js | 直接複製貼上 |
-| 更新 .env | 1 分鐘 |
-| **頁面元件修改量** | **零改動** |
+## 欄位對應
 
-> 這就是資料存取層（DAL）設計的價值：業務邏輯與資料庫解耦，
-> 未來不管換 Supabase、PlanetScale 或其他服務，頁面程式碼永遠不動。
+### products
+
+保留：
+
+- `id`
+- `name`
+- `price`
+- `cost`
+- `category`
+- `supplier`
+- `note`
+- `spec_mode`
+- `spec_colors`
+- `spec_sizes`
+- `spec_flavors`
+- `active`
+- `created_at`
+- `updated_at`
+- `archived_at`
+
+舊資料沒有 `spec_flavors` 時使用空陣列 `[]`。
+
+### customers
+
+保留：
+
+- `id`
+- `name`
+- `line_nick`
+- `fb_name`
+- `phone`
+- `note`
+- `active`
+- `joined_at`
+- `updated_at`
+- `archived_at`
+
+### orders
+
+保留：
+
+- `id`
+- `customer_id`
+- `customer_name`
+- `items`
+- `total_amount`
+- `note`
+- `status`
+- `payment_status`
+- `payable_status`
+- `refund_amount`
+- `refunds`
+- `status_history`
+- `cancellation_reason`
+- `archived`
+- `order_date`
+- `created_at`
+- `updated_at`
+- `shipped_at`
+- `cancelled_at`
+- `refunded_at`
+- `archived_at`
+
+舊訂單缺少成本快照時，匯入後用：
+
+**帳號與權限 → 升級舊訂單快照**
+
+系統會以目前商品資料補上 `sale_price / cost_price / category / supplier`。
+
+## 驗證方式
+
+遷移完成後至少核對：
+
+- 商品總筆數
+- 客戶總筆數
+- 訂單總筆數
+- 待出貨筆數
+- 已出貨筆數
+- 有效訂單總額
+- 已出貨營收
+- 未收款金額
+- 退款總額
+
+如果你把 Firebase 匯出的 JSON 檔交給 ChatGPT，可以直接依這個 schema 整理並匯入新的 Supabase Project，不需要自行寫匯入程式。
