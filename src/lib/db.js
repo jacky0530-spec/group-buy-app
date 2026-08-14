@@ -1,175 +1,321 @@
-/**
- * ============================================================
- *  db.js — 資料存取層 (Data Access Layer)
- * ============================================================
- *  所有頁面只呼叫此檔案的函式，不直接使用 Firebase SDK。
- *  未來遷移 Supabase 時，只需改動此單一檔案即可。
- *
- *  資料結構設計完全對齊 Supabase SQL Schema：
- *    Collection/Table : products | customers | orders
- *    欄位命名         : snake_case (e.g. order_date, customer_id)
- *    時間欄位         : ISO 8601 string (相容 PostgreSQL timestamptz)
- *
- * ============================================================
- *  未來換 Supabase 步驟：
- *   1. npm uninstall firebase
- *   2. npm install @supabase/supabase-js
- *   3. 將下方每個函式的實作替換成對應的 Supabase 呼叫
- *      (可參考 MIGRATION_GUIDE.md)
- *   4. 其他頁面零改動 ✓
- * ============================================================
- */
-
 import {
   collection, doc,
-  getDocs, getDoc, addDoc, updateDoc, deleteDoc,
+  getDocs, getDoc, addDoc, updateDoc,
   query, orderBy, where, Timestamp,
+  writeBatch, arrayUnion, limit, startAfter,
 } from 'firebase/firestore'
 import { db } from './firebase'
 
-// ── 內部工具 ─────────────────────────────────────────────────
-
-/** Firestore Timestamp → ISO string (相容 Supabase) */
 function tsToISO(val) {
   if (!val) return null
   if (val instanceof Timestamp) return val.toDate().toISOString()
   if (val?.seconds) return new Timestamp(val.seconds, val.nanoseconds).toDate().toISOString()
-  return val // 已是 string
+  return val
 }
 
-/** 將文件資料正規化，時間欄位統一輸出 ISO string */
 function normalize(docSnap) {
   const d = { id: docSnap.id, ...docSnap.data() }
-  const timeFields = ['created_at','updated_at','joined_at','order_date','shipped_at']
+  const timeFields = [
+    'created_at','updated_at','joined_at','order_date','shipped_at',
+    'cancelled_at','refunded_at','archived_at',
+  ]
   timeFields.forEach(f => { if (d[f]) d[f] = tsToISO(d[f]) })
   return d
 }
 
-/** 現在時間的 Firestore Timestamp */
 const now = () => Timestamp.now()
+const nowISO = () => new Date().toISOString()
+const activeOnly = rows => rows.filter(x => x.active !== false)
 
-// ── Products ─────────────────────────────────────────────────
+export function snapshotOrderItem(product, { qty = 1, note = '', spec = {} } = {}) {
+  const price = Number(product.price || 0)
+  const cost = Number(product.cost || 0)
+  const quantity = Math.max(1, Number(qty || 1))
+  return {
+    id: product.id,
+    product_id: product.id,
+    name: product.name,
+    product_name: product.name,
+    price,
+    sale_price: price,
+    cost_price: cost,
+    category: product.category || 'other',
+    supplier: product.supplier || '',
+    qty: quantity,
+    subtotal: price * quantity,
+    cost_subtotal: cost * quantity,
+    note: note || '',
+    spec: {
+      color: spec?.color || '',
+      size: spec?.size || '',
+      flavor: spec?.flavor || '',
+    },
+  }
+}
+
+export function effectiveOrderAmount(order) {
+  if (!order || order.status === 'cancelled') return 0
+  return Math.max(0, Number(order.total_amount || 0) - Number(order.refund_amount || 0))
+}
+
+export function orderSnapshotCost(order, currentCostMap = {}) {
+  if (!order || order.status === 'cancelled') return 0
+  return (order.items || []).reduce((sum, item) => {
+    const qty = Number(item.qty || 0)
+    const snapCost = item.cost_price
+    const fallback = currentCostMap[item.product_id || item.id] || 0
+    return sum + Number(snapCost ?? fallback) * qty
+  }, 0)
+}
 
 export const ProductsAPI = {
-  async list() {
+  async list({ includeArchived = false } = {}) {
     const snap = await getDocs(query(collection(db,'products'), orderBy('created_at','desc')))
-    return snap.docs.map(normalize)
+    const rows = snap.docs.map(normalize)
+    return includeArchived ? rows : activeOnly(rows)
   },
-
   async create(data) {
-    const payload = { ...data, created_at: now(), updated_at: now() }
+    const payload = { ...data, active:true, created_at:now(), updated_at:now() }
     const ref = await addDoc(collection(db,'products'), payload)
-    return { id: ref.id, ...data, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+    return { id:ref.id, ...data, active:true, created_at:nowISO(), updated_at:nowISO() }
   },
-
   async update(id, data) {
-    await updateDoc(doc(db,'products',id), { ...data, updated_at: now() })
+    await updateDoc(doc(db,'products',id), { ...data, updated_at:now() })
   },
-
-  async delete(id) {
-    await deleteDoc(doc(db,'products',id))
+  async archive(id) {
+    await updateDoc(doc(db,'products',id), { active:false, archived_at:now(), updated_at:now() })
   },
-
-  /** 查重 (排除自身 id) */
+  async restore(id) {
+    await updateDoc(doc(db,'products',id), { active:true, archived_at:null, updated_at:now() })
+  },
   async isDuplicate(name, excludeId = null) {
     const snap = await getDocs(query(collection(db,'products'), where('name','==',name)))
-    return snap.docs.some(d => d.id !== excludeId)
+    return snap.docs.some(d => d.id !== excludeId && d.data().active !== false)
   },
 }
-
-// ── Customers ────────────────────────────────────────────────
 
 export const CustomersAPI = {
-  async list() {
+  async list({ includeArchived = false } = {}) {
     const snap = await getDocs(query(collection(db,'customers'), orderBy('joined_at','desc')))
-    return snap.docs.map(normalize)
+    const rows = snap.docs.map(normalize)
+    return includeArchived ? rows : activeOnly(rows)
   },
-
   async create(data) {
-    const payload = { ...data, joined_at: now(), updated_at: now() }
+    const payload = { ...data, active:true, joined_at:now(), updated_at:now() }
     const ref = await addDoc(collection(db,'customers'), payload)
-    return { id: ref.id, ...data }
+    return { id:ref.id, ...data, active:true, joined_at:nowISO() }
   },
-
   async update(id, data) {
-    await updateDoc(doc(db,'customers',id), { ...data, updated_at: now() })
+    await updateDoc(doc(db,'customers',id), { ...data, updated_at:now() })
   },
-
-  async delete(id) {
-    await deleteDoc(doc(db,'customers',id))
+  async archive(id) {
+    await updateDoc(doc(db,'customers',id), { active:false, archived_at:now(), updated_at:now() })
   },
-
-  async isDuplicate(name, excludeId = null) {
-    const snap = await getDocs(query(collection(db,'customers'), where('name','==',name)))
-    return snap.docs.some(d => d.id !== excludeId)
+  async restore(id) {
+    await updateDoc(doc(db,'customers',id), { active:true, archived_at:null, updated_at:now() })
+  },
+  async isDuplicateIdentity({ phone = '', line_nick = '', fb_name = '' }, excludeId = null) {
+    const checks = [['phone',phone.trim()],['line_nick',line_nick.trim()],['fb_name',fb_name.trim()]].filter(([,v]) => v)
+    for (const [field,value] of checks) {
+      const snap = await getDocs(query(collection(db,'customers'), where(field,'==',value)))
+      if (snap.docs.some(d => d.id !== excludeId && d.data().active !== false)) return { duplicate:true, field, value }
+    }
+    return { duplicate:false }
   },
 }
-
-// ── Orders ───────────────────────────────────────────────────
 
 export const OrdersAPI = {
   async list() {
     const snap = await getDocs(query(collection(db,'orders'), orderBy('order_date','desc')))
     return snap.docs.map(normalize)
   },
-
+  async listByDateRange(startISO, endISO) {
+    const clauses = [orderBy('order_date','desc')]
+    if (startISO) clauses.unshift(where('order_date','>=', Timestamp.fromDate(new Date(startISO))))
+    if (endISO) clauses.unshift(where('order_date','<=', Timestamp.fromDate(new Date(endISO))))
+    const snap = await getDocs(query(collection(db,'orders'), ...clauses))
+    return snap.docs.map(normalize)
+  },
+  async listPage({ pageSize = 100, cursor = null } = {}) {
+    const clauses = [orderBy('order_date','desc'), limit(pageSize)]
+    if (cursor) clauses.splice(1,0,startAfter(cursor))
+    const snap = await getDocs(query(collection(db,'orders'), ...clauses))
+    return {
+      rows:snap.docs.map(normalize),
+      nextCursor:snap.docs.length ? snap.docs[snap.docs.length-1] : null,
+      hasMore:snap.docs.length === pageSize,
+    }
+  },
   async create(data) {
     const payload = {
       ...data,
-      status: 'pending',
-      payment_status: 'unpaid',
-      order_date: now(),
-      updated_at: now(),
+      status:data.status || 'pending',
+      payment_status:data.payment_status || 'unpaid',
+      payable_status:data.payable_status || 'unpaid',
+      refund_amount:Number(data.refund_amount || 0),
+      refunds:data.refunds || [],
+      status_history:data.status_history || [{ status:data.status || 'pending', at:nowISO(), note:'建立訂單' }],
+      order_date:now(), created_at:now(), updated_at:now(),
     }
     const ref = await addDoc(collection(db,'orders'), payload)
-    return { id: ref.id, ...data }
+    return { id:ref.id, ...data, ...payload, order_date:nowISO(), created_at:nowISO(), updated_at:nowISO() }
   },
-
+  async batchCreate(orderPayloads) {
+    const batch = writeBatch(db)
+    const created = []
+    for (const data of orderPayloads) {
+      const ref = doc(collection(db,'orders'))
+      const payload = {
+        ...data,
+        status:data.status || 'pending',
+        payment_status:data.payment_status || 'unpaid',
+        payable_status:data.payable_status || 'unpaid',
+        refund_amount:Number(data.refund_amount || 0),
+        refunds:data.refunds || [],
+        status_history:[{ status:data.status || 'pending', at:nowISO(), note:'批次建立訂單' }],
+        order_date:now(), created_at:now(), updated_at:now(),
+      }
+      batch.set(ref,payload)
+      created.push({ id:ref.id, ...data })
+    }
+    await batch.commit()
+    return created
+  },
   async update(id, data) {
-    await updateDoc(doc(db,'orders',id), { ...data, updated_at: now() })
+    await updateDoc(doc(db,'orders',id), { ...data, updated_at:now() })
   },
-
-  async updateStatus(id, status) {
-    const patch = { status, updated_at: now() }
-    if (status === 'shipped') patch.shipped_at = now()
+  async updateStatus(id, status, { reason = '' } = {}) {
+    const patch = {
+      status,
+      updated_at:now(),
+      status_history:arrayUnion({ status, at:nowISO(), note:reason || '' }),
+    }
+    if (status === 'shipped') {
+      patch.shipped_at = now(); patch.cancelled_at = null; patch.cancellation_reason = ''
+    } else if (status === 'cancelled') {
+      patch.cancelled_at = now(); patch.cancellation_reason = reason || ''
+    } else if (status === 'pending') {
+      patch.shipped_at = null; patch.cancelled_at = null; patch.cancellation_reason = ''
+    }
     await updateDoc(doc(db,'orders',id), patch)
   },
-
   async updatePayment(id, payment_status) {
-    await updateDoc(doc(db,'orders',id), { payment_status, updated_at: now() })
+    await updateDoc(doc(db,'orders',id), { payment_status, updated_at:now() })
   },
-
-  async delete(id) {
-    await deleteDoc(doc(db,'orders',id))
+  async updatePayable(id, payable_status) {
+    await updateDoc(doc(db,'orders',id), { payable_status, updated_at:now() })
   },
-
+  async applyRefund(id, { amount, note = '' }) {
+    const ref = doc(db,'orders',id)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) throw new Error('找不到訂單')
+    const order = normalize(snap)
+    const total = Number(order.total_amount || 0)
+    const oldRefund = Number(order.refund_amount || 0)
+    const addAmount = Number(amount || 0)
+    if (!(addAmount > 0)) throw new Error('退款金額必須大於 0')
+    if (oldRefund + addAmount > total) throw new Error('累積退款金額不可超過訂單總額')
+    const newRefund = oldRefund + addAmount
+    const payment_status = newRefund >= total ? 'refunded' : 'partial_refund'
+    await updateDoc(ref, {
+      refund_amount:newRefund,
+      payment_status,
+      refunded_at:now(),
+      refunds:arrayUnion({ amount:addAmount, note:note || '', at:nowISO() }),
+      updated_at:now(),
+    })
+  },
+  async clearRefunds(id) {
+    await updateDoc(doc(db,'orders',id), {
+      refund_amount:0, refunds:[], refunded_at:null, payment_status:'paid', updated_at:now(),
+    })
+  },
+  async archive(id) {
+    await updateDoc(doc(db,'orders',id), { archived:true, archived_at:now(), updated_at:now() })
+  },
   async batchUpdateStatus(ids, status) {
-    const patch = { status, updated_at: now() }
-    if (status === 'shipped') patch.shipped_at = now()
-    await Promise.all(ids.map(id => updateDoc(doc(db,'orders',id), patch)))
+    const batch = writeBatch(db)
+    ids.forEach(id => {
+      const patch = { status, updated_at:now(), status_history:arrayUnion({ status, at:nowISO(), note:'批次更新' }) }
+      if (status === 'shipped') patch.shipped_at = now()
+      batch.update(doc(db,'orders',id),patch)
+    })
+    await batch.commit()
   },
 }
 
-// ── Dashboard summary (Home page) ────────────────────────────
-
 export const StatsAPI = {
   async getSummary() {
-    const [products, customers, orders] = await Promise.all([
-      getDocs(collection(db,'products')),
-      getDocs(collection(db,'customers')),
-      getDocs(query(collection(db,'orders'), orderBy('order_date','desc'))),
-    ])
-    const orderData = orders.docs.map(normalize)
-    const recentOrders = orderData.slice(0, 5)
-    const pending  = orderData.filter(o => o.status === 'pending').length
-    const revenue  = orderData.filter(o => o.status === 'shipped').reduce((s,o) => s+(o.total_amount||0), 0)
+    const [products,customers,orders] = await Promise.all([ProductsAPI.list(),CustomersAPI.list(),OrdersAPI.list()])
+    const activeOrders = orders.filter(o => o.status !== 'cancelled' && !o.archived)
+    const shippedOrders = activeOrders.filter(o => o.status === 'shipped')
+    const paidOrders = activeOrders.filter(o => ['paid','partial_refund','refunded'].includes(o.payment_status))
     return {
-      productCount:  products.size,
-      customerCount: customers.size,
-      orderCount:    orderData.length,
-      pendingCount:  pending,
-      revenue,
-      recentOrders,
+      productCount:products.length,
+      customerCount:customers.length,
+      orderCount:activeOrders.length,
+      pendingCount:activeOrders.filter(o => o.status === 'pending').length,
+      orderValue:activeOrders.reduce((s,o) => s + effectiveOrderAmount(o),0),
+      shippedRevenue:shippedOrders.reduce((s,o) => s + effectiveOrderAmount(o),0),
+      collectedAmount:paidOrders.reduce((s,o) => s + effectiveOrderAmount(o),0),
+      outstandingAmount:activeOrders.filter(o => o.payment_status === 'unpaid').reduce((s,o) => s + effectiveOrderAmount(o),0),
+      recentOrders:orders.filter(o => !o.archived).slice(0,5),
     }
+  },
+}
+
+export const MaintenanceAPI = {
+  async backfillLegacyOrderSnapshots() {
+    const [products,ordersSnap] = await Promise.all([
+      ProductsAPI.list({ includeArchived:true }),
+      getDocs(collection(db,'orders')),
+    ])
+    const productMap = Object.fromEntries(products.map(p => [p.id,p]))
+    const targets = ordersSnap.docs.filter(orderDoc => {
+      const data = orderDoc.data()
+      return (data.items || []).some(item =>
+        item.cost_price === undefined || item.sale_price === undefined ||
+        item.category === undefined || item.product_id === undefined
+      ) || data.payable_status === undefined || data.refund_amount === undefined
+    })
+    let updated = 0
+    for (let i=0; i<targets.length; i+=400) {
+      const batch = writeBatch(db)
+      targets.slice(i,i+400).forEach(orderDoc => {
+        const data = orderDoc.data()
+        const items = (data.items || []).map(item => {
+          const pid = item.product_id || item.id
+          const product = productMap[pid] || {}
+          const qty = Number(item.qty || 0)
+          const salePrice = Number(item.sale_price ?? item.price ?? product.price ?? 0)
+          const costPrice = Number(item.cost_price ?? product.cost ?? 0)
+          return {
+            ...item,
+            id:pid,
+            product_id:pid,
+            name:item.name || item.product_name || product.name || '已刪除商品',
+            product_name:item.product_name || item.name || product.name || '已刪除商品',
+            price:salePrice,
+            sale_price:salePrice,
+            cost_price:costPrice,
+            category:item.category || product.category || 'other',
+            supplier:item.supplier ?? product.supplier ?? '',
+            subtotal:Number(item.subtotal ?? salePrice * qty),
+            cost_subtotal:Number(item.cost_subtotal ?? costPrice * qty),
+            spec:{ color:item.spec?.color || '', size:item.spec?.size || '', flavor:item.spec?.flavor || '' },
+          }
+        })
+        batch.update(orderDoc.ref, {
+          items,
+          payable_status:data.payable_status || 'unpaid',
+          refund_amount:Number(data.refund_amount || 0),
+          refunds:data.refunds || [],
+          updated_at:now(),
+        })
+        updated += 1
+      })
+      await batch.commit()
+    }
+    return { scanned:ordersSnap.size, updated }
   },
 }

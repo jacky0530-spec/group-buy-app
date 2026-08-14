@@ -17,5 +17,15 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // This app intentionally colocates small hooks/helpers with components.
+      'react-refresh/only-export-components': 'off',
+      // Data loading effects call async functions that update state; this is a valid I/O synchronization pattern here.
+      'react-hooks/set-state-in-effect': 'off',
+      // React Compiler is not enabled in this Vite app; this compiler-specific rule is not actionable here.
+      'react-hooks/preserve-manual-memoization': 'off',
+      // Chinese full-width spacing in JSX copy is presentation text, not source-code indentation.
+      'no-irregular-whitespace': 'off',
+    },
   },
 ])

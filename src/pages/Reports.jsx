@@ -1,680 +1,343 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { OrdersAPI, ProductsAPI, CustomersAPI } from '../lib/db'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { OrdersAPI, ProductsAPI, CustomersAPI, effectiveOrderAmount, orderSnapshotCost } from '../lib/db'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
-import { TrendingUp, DollarSign, Package, Users, Search, Printer, ChevronDown } from 'lucide-react'
+import { TrendingUp, DollarSign, Package, Search, Printer, Download, WalletCards, ReceiptText, Building2 } from 'lucide-react'
 
 const CAT_COLORS = { daily:'#3b82f6', frozen:'#06b6d4', clothing:'#ec4899', biscuit:'#f59e0b', candy:'#8b5cf6', other:'#6b7280' }
 const CAT_LABELS = { daily:'日用品', frozen:'冷凍食品', clothing:'服飾', biscuit:'餅乾', candy:'糖果', other:'其他' }
+const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
+const dateText = value => value ? new Date(value).toLocaleDateString('zh-TW') : '—'
 
-// ── 列印專用區塊（畫面隱藏，列印時顯示）────────────────────
-function PrintReport({ filteredOrders, totalRevenue, totalProfit, trendData, topProds, catData, filtBuyers, filterMode, inputMonth, inputStart, inputEnd }) {
-  const periodLabel = filterMode==='month' ? inputMonth
-    : filterMode==='range' && inputStart && inputEnd ? `${inputStart} ~ ${inputEnd}`
-    : '全部期間'
-
-  return (
-    <div className="print-only" style={{ display:'none' }}>
-      {/* 標題 */}
-      <div style={{ textAlign:'center', marginBottom:16, paddingBottom:12, borderBottom:'2px solid #1e293b' }}>
-        <div style={{ fontSize:20, fontWeight:900, color:'#1e293b' }}>🛍️ 團購百貨 銷售報表</div>
-        <div style={{ fontSize:12, color:'#64748b', marginTop:4 }}>
-          列印日期：{new Date().toLocaleDateString('zh-TW')}　查詢期間：{periodLabel}　共 {filteredOrders.length} 筆訂單
-        </div>
-      </div>
-
-      {/* 摘要數據 */}
-      <table style={{ width:'100%', borderCollapse:'collapse', marginBottom:16, fontSize:13 }}>
-        <thead>
-          <tr style={{ background:'#1e293b', color:'#fff' }}>
-            <th style={{ padding:'8px 12px', textAlign:'center' }}>總銷售額</th>
-            <th style={{ padding:'8px 12px', textAlign:'center' }}>預估毛利</th>
-            <th style={{ padding:'8px 12px', textAlign:'center' }}>訂單數量</th>
-            <th style={{ padding:'8px 12px', textAlign:'center' }}>購買客戶</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{ background:'#f8f9fc' }}>
-            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#6366f1' }}>NT${totalRevenue.toLocaleString()}</td>
-            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#10b981' }}>NT${totalProfit.toLocaleString()}</td>
-            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#f59e0b' }}>{filteredOrders.length} 筆</td>
-            <td style={{ padding:'10px 12px', textAlign:'center', fontWeight:800, fontSize:15, color:'#0ea5e9' }}>{new Set(filteredOrders.map(o=>o.customer_id)).size} 人</td>
-          </tr>
-        </tbody>
-      </table>
-
-      {/* 兩欄：熱銷商品 + 分類佔比 */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:16 }}>
-        <div>
-          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>🏆 熱銷商品 Top 8</div>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-            <thead><tr style={{ background:'#f1f5f9' }}>
-              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>商品名稱</th>
-              <th style={{ padding:'5px 8px', textAlign:'center', border:'1px solid #e2e8f0' }}>數量</th>
-              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>營收</th>
-            </tr></thead>
-            <tbody>
-              {topProds.length===0 && <tr><td colSpan={3} style={{ padding:'8px', textAlign:'center', color:'#94a3b8', border:'1px solid #e2e8f0' }}>無資料</td></tr>}
-              {topProds.map((p,i)=>(
-                <tr key={i} style={{ background:i%2===0?'#fff':'#f8f9fc' }}>
-                  <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>{p.name}</td>
-                  <td style={{ padding:'5px 8px', textAlign:'center', border:'1px solid #e2e8f0', fontWeight:700 }}>{p.qty}</td>
-                  <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>NT${p.revenue.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div>
-          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>🏷️ 分類銷售佔比</div>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-            <thead><tr style={{ background:'#f1f5f9' }}>
-              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>分類</th>
-              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>金額</th>
-              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>佔比</th>
-            </tr></thead>
-            <tbody>
-              {catData.length===0 && <tr><td colSpan={3} style={{ padding:'8px', textAlign:'center', color:'#94a3b8', border:'1px solid #e2e8f0' }}>無資料</td></tr>}
-              {[...catData].sort((a,b)=>b.value-a.value).map((c,i)=>{
-                const tot = catData.reduce((s,x)=>s+x.value,0)
-                const pct = tot>0 ? Math.round(c.value/tot*100) : 0
-                return (
-                  <tr key={i} style={{ background:i%2===0?'#fff':'#f8f9fc' }}>
-                    <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>
-                      <span style={{ display:'inline-block', width:9, height:9, borderRadius:2, background:c.color, marginRight:5, verticalAlign:'middle' }}/>
-                      {c.name}
-                    </td>
-                    <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700 }}>NT${c.value.toLocaleString()}</td>
-                    <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>{pct}%</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 銷售趨勢 */}
-      {trendData.length>0 && (
-        <div style={{ marginBottom:16 }}>
-          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>📈 銷售趨勢</div>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-            <thead><tr style={{ background:'#f1f5f9' }}>
-              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>期間</th>
-              <th style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0' }}>銷售金額</th>
-              <th style={{ padding:'5px 8px', textAlign:'left', border:'1px solid #e2e8f0' }}>比例</th>
-            </tr></thead>
-            <tbody>
-              {trendData.map((t,i)=>{
-                const maxAmt = Math.max(...trendData.map(x=>x.amount))
-                const barW   = maxAmt>0 ? Math.round(t.amount/maxAmt*100) : 0
-                return (
-                  <tr key={i} style={{ background:i%2===0?'#fff':'#f8f9fc' }}>
-                    <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>{t.date}</td>
-                    <td style={{ padding:'5px 8px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>NT${t.amount.toLocaleString()}</td>
-                    <td style={{ padding:'5px 8px', border:'1px solid #e2e8f0' }}>
-                      <div style={{ height:9, background:'#6366f1', width:`${barW}%`, borderRadius:3, minWidth:2 }}/>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* 買家明細 */}
-      {filtBuyers.length>0 && (
-        <div>
-          <div style={{ fontWeight:800, fontSize:12, marginBottom:4, padding:'5px 10px', background:'#1e293b', color:'#fff', borderRadius:'6px 6px 0 0' }}>👥 買家訂單明細</div>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:10 }}>
-            <thead><tr style={{ background:'#f1f5f9' }}>
-              <th style={{ padding:'4px 7px', textAlign:'left', border:'1px solid #e2e8f0' }}>客戶</th>
-              <th style={{ padding:'4px 7px', textAlign:'left', border:'1px solid #e2e8f0' }}>商品</th>
-              <th style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>出貨</th>
-              <th style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>收款</th>
-              <th style={{ padding:'4px 7px', textAlign:'right', border:'1px solid #e2e8f0' }}>金額</th>
-            </tr></thead>
-            <tbody>
-              {filtBuyers.map(buyer=>buyer.orders.map((o,oi)=>(
-                <tr key={`${buyer.id}-${oi}`} style={{ background:oi%2===0?'#fff':'#f8f9fc' }}>
-                  <td style={{ padding:'4px 7px', border:'1px solid #e2e8f0', fontWeight:oi===0?700:400, color:oi===0?'#1e293b':'transparent' }}>
-                    {oi===0 ? buyer.name : '↳'}
-                  </td>
-                  <td style={{ padding:'4px 7px', border:'1px solid #e2e8f0' }}>
-                    {(o.items||[]).map((item,ii)=>(
-                      <div key={ii}>{item.name}{item.spec?.color||item.spec?.size?`（${[item.spec.color,item.spec.size].filter(Boolean).join('／')}）`:''} ×{item.qty}</div>
-                    ))}
-                  </td>
-                  <td style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>
-                    {o.status==='shipped'?'✅':o.status==='cancelled'?'❌':'⏳'}
-                  </td>
-                  <td style={{ padding:'4px 7px', textAlign:'center', border:'1px solid #e2e8f0' }}>
-                    {o.payment_status==='paid'?'💰':'⬜'}
-                  </td>
-                  <td style={{ padding:'4px 7px', textAlign:'right', border:'1px solid #e2e8f0', fontWeight:700, color:'#6366f1' }}>
-                    NT${(o.total_amount||0).toLocaleString()}
-                  </td>
-                </tr>
-              )))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  )
+function specText(item) {
+  const spec = item?.spec || {}
+  return [spec.flavor && `口味:${spec.flavor}`, spec.color, spec.size].filter(Boolean).join(' / ')
 }
 
-// ── 規格顯示
-function specLabel(item) {
-  if (!item?.spec) return ''
-  const parts = []
-  if (item.spec.color) parts.push(item.spec.color)
-  if (item.spec.size)  parts.push(item.spec.size)
-  return parts.length ? `（${parts.join('／')}）` : ''
+function periodBounds(mode, month, start, end) {
+  if (mode === 'month' && month) {
+    const [year, mon] = month.split('-').map(Number)
+    return [
+      new Date(year, mon - 1, 1, 0, 0, 0).toISOString(),
+      new Date(year, mon, 0, 23, 59, 59, 999).toISOString(),
+    ]
+  }
+  if (mode === 'range' && start && end) {
+    return [new Date(`${start}T00:00:00`).toISOString(), new Date(`${end}T23:59:59`).toISOString()]
+  }
+  return [null, null]
+}
+
+function downloadBlob(filename, content, type) {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+function escapeCsv(value) {
+  return `"${String(value ?? '').replaceAll('"', '""')}"`
+}
+
+function exportCsv(orders, filename) {
+  const rows = [['日期','客戶','商品','規格/口味','數量','售價','成本','狀態','收款','退款','有效訂單金額']]
+  orders.forEach(order => {
+    ;(order.items || []).forEach(item => rows.push([
+      dateText(order.order_date),
+      order.customer_name,
+      item.product_name || item.name,
+      specText(item),
+      item.qty,
+      item.sale_price ?? item.price ?? 0,
+      item.cost_price ?? '',
+      order.status,
+      order.payment_status,
+      order.refund_amount || 0,
+      effectiveOrderAmount(order),
+    ]))
+  })
+  downloadBlob(filename, '\ufeff' + rows.map(row => row.map(escapeCsv).join(',')).join('\n'), 'text/csv;charset=utf-8')
+}
+
+function exportExcel(orders, filename) {
+  const body = orders.flatMap(order => (order.items || []).map(item => `
+    <tr>
+      <td>${dateText(order.order_date)}</td><td>${order.customer_name || ''}</td>
+      <td>${item.product_name || item.name || ''}</td><td>${specText(item)}</td>
+      <td>${item.qty || 0}</td><td>${item.sale_price ?? item.price ?? 0}</td>
+      <td>${item.cost_price ?? ''}</td><td>${order.status || ''}</td>
+      <td>${order.payment_status || ''}</td><td>${order.refund_amount || 0}</td>
+      <td>${effectiveOrderAmount(order)}</td>
+    </tr>`)).join('')
+  const html = `\ufeff<html><head><meta charset="utf-8"></head><body><table border="1">
+    <tr><th>日期</th><th>客戶</th><th>商品</th><th>規格/口味</th><th>數量</th><th>售價</th><th>成本</th><th>狀態</th><th>收款</th><th>退款</th><th>有效訂單金額</th></tr>
+    ${body}</table></body></html>`
+  downloadBlob(filename, html, 'application/vnd.ms-excel;charset=utf-8')
 }
 
 export default function Reports() {
-  const [allOrders,  setAllOrders]  = useState([])
-  const [products,   setProducts]   = useState([])
-  const [customers,  setCustomers]  = useState([])
-  const [loading,    setLoading]    = useState(true)
+  const currentMonth = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }, [])
 
-  // 日期篩選
-  const [filterMode, setFilterMode] = useState('all')
-  const [inputMonth, setInputMonth] = useState(() => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` })
+  const [orders, setOrders] = useState([])
+  const [products, setProducts] = useState([])
+  const [customers, setCustomers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [filterMode, setFilterMode] = useState('month')
+  const [inputMonth, setInputMonth] = useState(currentMonth)
   const [inputStart, setInputStart] = useState('')
-  const [inputEnd,   setInputEnd]   = useState('')
-
-  // 頁籤：chart | buyer
-  const [activeTab, setActiveTab]  = useState('chart')
-
-  // 買家查詢
-  const [buyerSearch,      setBuyerSearch]      = useState('')
-  const [buyerStatusFilter,setBuyerStatusFilter] = useState('all')   // all | pending | shipped
-  const [buyerPayFilter,   setBuyerPayFilter]    = useState('all')   // all | unpaid | paid
-  const [buyerProdFilter,  setBuyerProdFilter]   = useState('')       // product id
-  const [prodDropOpen,     setProdDropOpen]      = useState(false)
-  const [prodDropSearch,   setProdDropSearch]    = useState('')
-  const prodDropRef = useRef(null)
-
-  // 商品追蹤（圖表頁）
-  const [trackProd,  setTrackProd]  = useState(null)
+  const [inputEnd, setInputEnd] = useState('')
+  const [activeTab, setActiveTab] = useState('summary')
+  const [buyerSearch, setBuyerSearch] = useState('')
+  const [trackProd, setTrackProd] = useState(null)
   const [prodSearch, setProdSearch] = useState('')
 
-  useEffect(() => {
-    const h = e => { if (prodDropRef.current && !prodDropRef.current.contains(e.target)) setProdDropOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
+  const loadMasters = useCallback(async () => {
+    try {
+      const [prods, custs] = await Promise.all([
+        ProductsAPI.list({ includeArchived:true }),
+        CustomersAPI.list({ includeArchived:true }),
+      ])
+      setProducts(prods)
+      setCustomers(custs)
+    } catch (err) {
+      setError(`主檔載入失敗：${err.message}`)
+    }
   }, [])
 
-  const load = useCallback(async () => {
+  const loadOrders = useCallback(async () => {
+    if (filterMode === 'range' && (!inputStart || !inputEnd)) return
     setLoading(true)
-    const [ords, prods, custs] = await Promise.all([OrdersAPI.list(), ProductsAPI.list(), CustomersAPI.list()])
-    setAllOrders(ords); setProducts(prods); setCustomers(custs)
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  // 日期篩選
-  const filteredOrders = (() => {
-    if (filterMode==='month') {
-      const [y,m] = inputMonth.split('-')
-      return allOrders.filter(o=>{ const d=new Date(o.order_date); return d.getFullYear()==y&&(d.getMonth()+1)==m })
+    setError('')
+    try {
+      const [start, end] = periodBounds(filterMode, inputMonth, inputStart, inputEnd)
+      const rows = start && end ? await OrdersAPI.listByDateRange(start, end) : await OrdersAPI.list()
+      setOrders(rows)
+    } catch (err) {
+      setError(`訂單報表載入失敗：${err.message}`)
+    } finally {
+      setLoading(false)
     }
-    if (filterMode==='range'&&inputStart&&inputEnd) {
-      const s=new Date(inputStart+'T00:00:00'), e=new Date(inputEnd+'T23:59:59')
-      return allOrders.filter(o=>{ const d=new Date(o.order_date); return d>=s&&d<=e })
-    }
-    return allOrders
-  })()
+  }, [filterMode, inputMonth, inputStart, inputEnd])
 
-  const costMap = Object.fromEntries(products.map(p=>[p.id, p.cost||0]))
-  const catMap  = Object.fromEntries(products.map(p=>[p.id, p.category||'other']))
+  useEffect(() => { loadMasters() }, [loadMasters])
+  useEffect(() => { loadOrders() }, [loadOrders])
 
-  const totalRevenue = filteredOrders.reduce((s,o)=>s+(o.total_amount||0),0)
-  const totalCost    = filteredOrders.reduce((s,o)=>s+(o.items||[]).reduce((cs,item)=>cs+(costMap[item.id]||0)*item.qty,0),0)
-  const totalProfit  = totalRevenue-totalCost
-  const uniqueCusts  = new Set(filteredOrders.map(o=>o.customer_id)).size
+  const currentCostMap = Object.fromEntries(products.map(p => [p.id, Number(p.cost || 0)]))
+  const currentCatMap = Object.fromEntries(products.map(p => [p.id, p.category || 'other']))
+  const validOrders = orders.filter(order => order.status !== 'cancelled')
+  const shippedOrders = validOrders.filter(order => order.status === 'shipped')
+  const cancelledOrders = orders.filter(order => order.status === 'cancelled')
 
-  // 趨勢
-  const trendMap = {}
-  filteredOrders.forEach(o=>{
-    const d=new Date(o.order_date)
-    const key = filterMode==='all' ? `${d.getFullYear()}/${d.getMonth()+1}月` : `${d.getMonth()+1}/${d.getDate()}`
-    trendMap[key]=(trendMap[key]||0)+(o.total_amount||0)
-  })
-  const trendData = Object.entries(trendMap).map(([date,amount])=>({date,amount}))
+  const orderValue = validOrders.reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
+  const shippedRevenue = shippedOrders.reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
+  const shippedCost = shippedOrders.reduce((sum, order) => sum + orderSnapshotCost(order, currentCostMap), 0)
+  const shippedProfit = shippedRevenue - shippedCost
+  const collectedAmount = validOrders
+    .filter(order => ['paid','partial_refund','refunded'].includes(order.payment_status))
+    .reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
+  const outstandingAmount = validOrders
+    .filter(order => order.payment_status === 'unpaid')
+    .reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
+  const refundAmount = validOrders.reduce((sum, order) => sum + Number(order.refund_amount || 0), 0)
+  const cancelledAmount = cancelledOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0)
+  const supplierPaidCost = validOrders
+    .filter(order => order.payable_status === 'paid')
+    .reduce((sum, order) => sum + orderSnapshotCost(order, currentCostMap), 0)
+  const payableOutstanding = validOrders
+    .filter(order => order.payable_status !== 'paid')
+    .reduce((sum, order) => sum + orderSnapshotCost(order, currentCostMap), 0)
+  const netCashFlow = collectedAmount - supplierPaidCost
 
-  // 熱銷
-  const prodSales = {}
-  filteredOrders.forEach(o=>(o.items||[]).forEach(item=>{
-    if(!prodSales[item.name]) prodSales[item.name]={qty:0,revenue:0}
-    prodSales[item.name].qty+=item.qty
-    prodSales[item.name].revenue+=item.price*item.qty
-  }))
-  const topProds = Object.entries(prodSales).sort((a,b)=>b[1].qty-a[1].qty).slice(0,8)
-    .map(([name,data])=>({ name:name.length>10?name.slice(0,10)+'…':name, ...data }))
-
-  // 分類
-  const catSales = {}
-  filteredOrders.forEach(o=>(o.items||[]).forEach(item=>{
-    const cat=catMap[item.id]||'other'
-    catSales[cat]=(catSales[cat]||0)+item.price*item.qty
-  }))
-  const catData = Object.entries(catSales).map(([cat,value])=>({ name:CAT_LABELS[cat]||cat, value, color:CAT_COLORS[cat]||'#999' }))
-
-  // 商品追蹤
-  const trackBuyers = trackProd ? (() => {
+  const trendData = useMemo(() => {
     const map = {}
-    filteredOrders.forEach(o=>{
-      const found=(o.items||[]).find(i=>i.id===trackProd.id||i.name===trackProd.name)
-      if(found){
-        if(!map[o.customer_name]) map[o.customer_name]={qty:0,pending:0,total:0}
-        map[o.customer_name].qty+=found.qty
-        if(o.status==='pending') map[o.customer_name].pending+=found.qty
-        map[o.customer_name].total+=found.price*found.qty
-      }
+    shippedOrders.forEach(order => {
+      const d = new Date(order.order_date)
+      const key = filterMode === 'all' ? `${d.getFullYear()}/${d.getMonth() + 1}月` : `${d.getMonth() + 1}/${d.getDate()}`
+      map[key] = (map[key] || 0) + effectiveOrderAmount(order)
     })
-    return Object.entries(map).sort((a,b)=>b[1].qty-a[1].qty).map(([name,data])=>({name,...data}))
-  })() : []
+    return Object.entries(map).map(([date, amount]) => ({ date, amount }))
+  }, [shippedOrders, filterMode])
 
-  const filtProds = products.filter(p=>p.name.toLowerCase().includes(prodSearch.toLowerCase()))
-
-  // ── 買家查詢 ────────────────────────────────────────────────
-  // 建立每位客戶的訂單摘要
-  const buyerRows = (() => {
-    const custMap = Object.fromEntries(customers.map(c=>[c.id,c]))
+  const topProds = useMemo(() => {
     const map = {}
-    filteredOrders.forEach(o => {
-      const cid = o.customer_id || o.customer_name
-      if (!map[cid]) map[cid] = {
-        id: cid,
-        name: o.customer_name,
-        line_nick: custMap[o.customer_id]?.line_nick || '',
-        fb_name:   custMap[o.customer_id]?.fb_name   || '',
-        orders: [],
+    validOrders.forEach(order => (order.items || []).forEach(item => {
+      const key = item.product_id || item.id || item.product_name || item.name
+      if (!map[key]) map[key] = { name:item.product_name || item.name || '未命名商品', qty:0, revenue:0 }
+      map[key].qty += Number(item.qty || 0)
+      map[key].revenue += Number(item.sale_price ?? item.price ?? 0) * Number(item.qty || 0)
+    }))
+    return Object.values(map).sort((a,b) => b.qty - a.qty).slice(0, 8).map(row => ({ ...row, chartName:row.name.length > 12 ? `${row.name.slice(0,12)}…` : row.name }))
+  }, [validOrders])
+
+  const catData = useMemo(() => {
+    const map = {}
+    validOrders.forEach(order => (order.items || []).forEach(item => {
+      const category = item.category || currentCatMap[item.product_id || item.id] || 'other'
+      map[category] = (map[category] || 0) + Number(item.sale_price ?? item.price ?? 0) * Number(item.qty || 0)
+    }))
+    return Object.entries(map).map(([category, value]) => ({ name:CAT_LABELS[category] || category, value, color:CAT_COLORS[category] || '#999' }))
+  }, [validOrders, currentCatMap])
+
+  const filteredProducts = products.filter(p => p.active !== false && p.name.toLowerCase().includes(prodSearch.toLowerCase()))
+  const trackBuyers = useMemo(() => {
+    if (!trackProd) return []
+    const map = {}
+    validOrders.forEach(order => {
+      const matches = (order.items || []).filter(item =>
+        (item.product_id || item.id) === trackProd.id || (item.product_name || item.name) === trackProd.name
+      )
+      if (!matches.length) return
+      if (!map[order.customer_name]) map[order.customer_name] = { name:order.customer_name, qty:0, pending:0, total:0 }
+      matches.forEach(item => {
+        const qty = Number(item.qty || 0)
+        map[order.customer_name].qty += qty
+        if (order.status === 'pending') map[order.customer_name].pending += qty
+        map[order.customer_name].total += Number(item.sale_price ?? item.price ?? 0) * qty
+      })
+    })
+    return Object.values(map).sort((a,b) => b.qty - a.qty)
+  }, [trackProd, validOrders])
+
+  const customerMap = Object.fromEntries(customers.map(c => [c.id, c]))
+  const buyerRows = useMemo(() => {
+    const map = {}
+    validOrders.forEach(order => {
+      const id = order.customer_id || order.customer_name
+      if (!map[id]) {
+        const customer = customerMap[order.customer_id] || {}
+        map[id] = { id, name:order.customer_name, line_nick:customer.line_nick || '', fb_name:customer.fb_name || '', orders:[] }
       }
-      map[cid].orders.push(o)
+      map[id].orders.push(order)
     })
+    return Object.values(map)
+  }, [validOrders, customerMap])
 
-    return Object.values(map).map(c => {
-      const os = c.orders
-      const totalAmt    = os.reduce((s,o)=>s+(o.total_amount||0),0)
-      const pendingAmt  = os.filter(o=>o.status==='pending').reduce((s,o)=>s+(o.total_amount||0),0)
-      const unpaidAmt   = os.filter(o=>o.payment_status==='unpaid'&&o.status!=='cancelled').reduce((s,o)=>s+(o.total_amount||0),0)
-      const orderCount  = os.length
-      const pendingCnt  = os.filter(o=>o.status==='pending').length
-      const shippedCnt  = os.filter(o=>o.status==='shipped').length
-      const unpaidCnt   = os.filter(o=>o.payment_status==='unpaid'&&o.status!=='cancelled').length
-      const paidCnt     = os.filter(o=>o.payment_status==='paid').length
-      return { ...c, totalAmt, pendingAmt, unpaidAmt, orderCount, pendingCnt, shippedCnt, unpaidCnt, paidCnt }
-    })
-  })()
-
-  // 買家篩選後
-  const selectedProd = products.find(p=>p.id===buyerProdFilter)
-
-  const filtBuyers = buyerRows.filter(c => {
-    const mName = !buyerSearch ||
-      c.name.toLowerCase().includes(buyerSearch.toLowerCase()) ||
-      (c.line_nick||'').toLowerCase().includes(buyerSearch.toLowerCase()) ||
-      (c.fb_name||'').toLowerCase().includes(buyerSearch.toLowerCase())
-    const mStatus =
-      buyerStatusFilter==='all' ? true :
-      buyerStatusFilter==='pending' ? c.pendingCnt > 0 :
-      buyerStatusFilter==='shipped' ? c.shippedCnt > 0 : true
-    const mPay =
-      buyerPayFilter==='all' ? true :
-      buyerPayFilter==='unpaid' ? c.unpaidCnt > 0 :
-      buyerPayFilter==='paid'   ? c.paidCnt   > 0 : true
-    const mProd = !buyerProdFilter ? true :
-      c.orders.some(o=>(o.items||[]).some(i=>i.id===buyerProdFilter))
-    return mName && mStatus && mPay && mProd
+  const filteredBuyers = buyerRows.filter(buyer => {
+    const q = buyerSearch.toLowerCase()
+    return !q || buyer.name.toLowerCase().includes(q) || buyer.line_nick.toLowerCase().includes(q) || buyer.fb_name.toLowerCase().includes(q)
   })
 
-  // 買家明細訂單（篩選條件）
-  function getBuyerOrders(buyer) {
-    return buyer.orders.filter(o => {
-      const mStatus =
-        buyerStatusFilter==='all' ? true :
-        buyerStatusFilter==='pending' ? o.status==='pending' :
-        buyerStatusFilter==='shipped' ? o.status==='shipped' : true
-      const mPay =
-        buyerPayFilter==='all' ? true :
-        buyerPayFilter==='unpaid' ? o.payment_status==='unpaid'&&o.status!=='cancelled' :
-        buyerPayFilter==='paid'   ? o.payment_status==='paid' : true
-      const mProd = !buyerProdFilter ? true :
-        (o.items||[]).some(i=>i.id===buyerProdFilter)
-      return mStatus && mPay && mProd
+  const supplierRows = useMemo(() => {
+    const map = {}
+    validOrders.forEach(order => (order.items || []).forEach(item => {
+      const supplier = item.supplier || '未指定供應商'
+      if (!map[supplier]) map[supplier] = { supplier, total:0, paid:0, outstanding:0 }
+      const fallback = currentCostMap[item.product_id || item.id] || 0
+      const cost = Number(item.cost_price ?? fallback) * Number(item.qty || 0)
+      map[supplier].total += cost
+      if (order.payable_status === 'paid') map[supplier].paid += cost
+      else map[supplier].outstanding += cost
+    }))
+    return Object.values(map).sort((a,b) => b.outstanding - a.outstanding)
+  }, [validOrders, currentCostMap])
+
+  const monthlyRows = useMemo(() => {
+    const map = {}
+    shippedOrders.forEach(order => {
+      const d = new Date(order.order_date)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}`
+      if (!map[key]) map[key] = { month:key, revenue:0, cost:0 }
+      map[key].revenue += effectiveOrderAmount(order)
+      map[key].cost += orderSnapshotCost(order, currentCostMap)
     })
-  }
+    return Object.values(map).sort((a,b) => a.month.localeCompare(b.month)).map(row => ({ ...row, profit:row.revenue - row.cost }))
+  }, [shippedOrders, currentCostMap])
 
-  const filtProdsDrop = products.filter(p=>p.name.toLowerCase().includes(prodDropSearch.toLowerCase()))
-
-  // 列印買家報表
-  function printBuyerReport() { window.print() }
+  const periodLabel = filterMode === 'all' ? '全部期間' : filterMode === 'month' ? inputMonth : `${inputStart || '?'}-${inputEnd || '?'}`
 
   return (
     <div className="animate-fade">
-      {/* ── 列印專用區塊（畫面隱藏，列印時顯示）── */}
-      <PrintReport
-        filteredOrders={filteredOrders}
-        totalRevenue={totalRevenue}
-        totalProfit={totalProfit}
-        trendData={trendData}
-        topProds={topProds}
-        catData={catData}
-        filtBuyers={filtBuyers}
-        filterMode={filterMode}
-        inputMonth={inputMonth}
-        inputStart={inputStart}
-        inputEnd={inputEnd}
-      />
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
         <div>
-          <h2 style={{ fontSize:22,fontWeight:800 }}>銷售報表</h2>
-          <p style={{ color:'var(--text-secondary)',fontSize:13,marginTop:2 }}>營收趨勢 • 熱銷分析 • 買家查詢</p>
+          <h2 style={{ fontSize:22, fontWeight:800 }}>銷售與財務報表</h2>
+          <p style={{ color:'var(--text-secondary)', fontSize:13, marginTop:2 }}>取消單排除、退款扣除、成本採下單時快照</p>
         </div>
-        <button className="btn btn-ghost" onClick={printBuyerReport}><Printer size={14}/>列印報表</button>
+        <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
+          <button className="btn btn-ghost" onClick={() => exportCsv(validOrders, `group-buy-${periodLabel}.csv`)}><Download size={13}/>CSV</button>
+          <button className="btn btn-ghost" onClick={() => exportExcel(validOrders, `group-buy-${periodLabel}.xls`)}><Download size={13}/>Excel</button>
+          <button className="btn btn-ghost" onClick={() => window.print()}><Printer size={14}/>列印</button>
+        </div>
       </div>
 
-      {/* 日期篩選 */}
-      <div style={{ background:'var(--surface)',borderRadius:'var(--radius)',padding:'14px 16px',marginBottom:20,display:'flex',gap:12,flexWrap:'wrap',alignItems:'center',boxShadow:'var(--shadow-sm)' }}>
-        <div style={{ display:'flex',gap:6 }}>
-          {[['all','全部'],['month','指定月份'],['range','自訂區間']].map(([v,l])=>(
-            <button key={v} className={`btn btn-sm ${filterMode===v?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterMode(v)}>{l}</button>
-          ))}
-        </div>
-        {filterMode==='month' && (
-          <input type="month" value={inputMonth} onChange={e=>setInputMonth(e.target.value)}
-            style={{ border:'1.5px solid var(--border)',borderRadius:8,padding:'6px 10px',fontSize:13,outline:'none',fontFamily:'inherit' }}/>
-        )}
-        {filterMode==='range' && (
-          <div style={{ display:'flex',gap:8,alignItems:'center' }}>
-            <input type="date" value={inputStart} onChange={e=>setInputStart(e.target.value)}
-              style={{ border:'1.5px solid var(--border)',borderRadius:8,padding:'6px 10px',fontSize:13,outline:'none',fontFamily:'inherit' }}/>
-            <span style={{ color:'var(--text-muted)' }}>〜</span>
-            <input type="date" value={inputEnd} onChange={e=>setInputEnd(e.target.value)}
-              style={{ border:'1.5px solid var(--border)',borderRadius:8,padding:'6px 10px',fontSize:13,outline:'none',fontFamily:'inherit' }}/>
-          </div>
-        )}
-        <span style={{ fontSize:13,color:'var(--text-muted)',marginLeft:'auto' }}>共 {filteredOrders.length} 筆</span>
-      </div>
-
-      {/* Stat cards */}
-      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:14,marginBottom:20 }}>
-        {[
-          { label:'總銷售額', value:`NT$${totalRevenue.toLocaleString()}`, icon:DollarSign, bg:'linear-gradient(135deg,#6366f1,#4338ca)' },
-          { label:'預估毛利', value:`NT$${totalProfit.toLocaleString()}`,  icon:TrendingUp, bg:'linear-gradient(135deg,#10b981,#059669)' },
-          { label:'訂單數量', value:`${filteredOrders.length} 筆`,         icon:Package,   bg:'linear-gradient(135deg,#f59e0b,#d97706)' },
-          { label:'購買客戶', value:`${uniqueCusts} 人`,                   icon:Users,     bg:'linear-gradient(135deg,#0ea5e9,#0284c7)' },
-        ].map(s=>(
-          <div key={s.label} className="stat-card" style={{ background:s.bg }}>
-            <div style={{ fontSize:11,fontWeight:700,letterSpacing:.6,opacity:.8,textTransform:'uppercase',marginBottom:6 }}>{s.label}</div>
-            <div style={{ fontSize:22,fontWeight:900,letterSpacing:'-1px',position:'relative',zIndex:1 }}>{loading?'—':s.value}</div>
-            <s.icon size={28} style={{ position:'absolute',right:16,top:'50%',transform:'translateY(-50%)',opacity:.22 }}/>
-          </div>
+      <div style={{ background:'var(--surface)', borderRadius:'var(--radius)', padding:'14px 16px', marginBottom:18, display:'flex', gap:12, flexWrap:'wrap', alignItems:'center', boxShadow:'var(--shadow-sm)' }}>
+        {[['month','指定月份'],['range','自訂區間'],['all','全部歷史']].map(([value,label]) => (
+          <button key={value} className={`btn btn-sm ${filterMode === value ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterMode(value)}>{label}</button>
         ))}
+        {filterMode === 'month' && <input type="month" value={inputMonth} onChange={e => setInputMonth(e.target.value)}/>} 
+        {filterMode === 'range' && <><input type="date" value={inputStart} onChange={e => setInputStart(e.target.value)}/><span>〜</span><input type="date" value={inputEnd} onChange={e => setInputEnd(e.target.value)}/></>}
+        <span style={{ marginLeft:'auto', color:'var(--text-muted)', fontSize:12 }}>{loading ? '讀取中...' : `${orders.length} 筆`}</span>
       </div>
 
-      {/* 頁籤 */}
-      <div className="tabs" style={{ marginBottom:20 }}>
-        <button className={`tab ${activeTab==='chart'?'active':''}`} onClick={()=>setActiveTab('chart')}>📊 圖表分析</button>
-        <button className={`tab ${activeTab==='buyer'?'active':''}`} onClick={()=>setActiveTab('buyer')}>👥 買家查詢</button>
+      {error && <div style={{ background:'var(--rose-light)', color:'var(--rose)', padding:12, borderRadius:8, marginBottom:14 }}>{error}</div>}
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:12, marginBottom:18 }}>
+        {[
+          { label:'有效訂單總額', value:orderValue, icon:ReceiptText, bg:'linear-gradient(135deg,#6366f1,#4338ca)' },
+          { label:'已出貨營收', value:shippedRevenue, icon:DollarSign, bg:'linear-gradient(135deg,#10b981,#059669)' },
+          { label:'已收款淨額', value:collectedAmount, icon:WalletCards, bg:'linear-gradient(135deg,#0ea5e9,#0284c7)' },
+          { label:'未收款', value:outstandingAmount, icon:ReceiptText, bg:'linear-gradient(135deg,#f59e0b,#d97706)' },
+          { label:'已出貨毛利', value:shippedProfit, icon:TrendingUp, bg:'linear-gradient(135deg,#14b8a6,#0f766e)' },
+          { label:'退款', value:refundAmount, icon:Package, bg:'linear-gradient(135deg,#f43f5e,#be123c)' },
+        ].map(card => {
+          const Icon = card.icon
+          return <div key={card.label} className="stat-card" style={{ background:card.bg }}><div style={{ fontSize:11, fontWeight:700, opacity:.8 }}>{card.label}</div><div style={{ fontSize:21, fontWeight:900, marginTop:5 }}>{loading ? '—' : money(card.value)}</div><Icon size={27} style={{ position:'absolute', right:14, top:'50%', transform:'translateY(-50%)', opacity:.22 }}/></div>
+        })}
       </div>
 
-      {/* ── 圖表分析頁籤 ── */}
-      {activeTab==='chart' && (
-        <div id="print-chart-section">
-          <div style={{ display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:20 }}>
-            <div className="card">
-              <div className="card-header" style={{ fontWeight:700 }}>📈 銷售趨勢</div>
-              <div style={{ padding:'16px 8px' }}>
-                {trendData.length===0
-                  ? <div style={{ textAlign:'center',color:'var(--text-muted)',padding:40 }}>此期間無資料</div>
-                  : <ResponsiveContainer width="100%" height={220}>
-                      <LineChart data={trendData}>
-                        <XAxis dataKey="date" tick={{ fontSize:11 }}/>
-                        <YAxis tick={{ fontSize:11 }}/>
-                        <Tooltip formatter={v=>[`NT$${v.toLocaleString()}`,'營收']}/>
-                        <Line type="monotone" dataKey="amount" stroke="#6366f1" strokeWidth={2.5} dot={{ r:3 }} activeDot={{ r:5 }}/>
-                      </LineChart>
-                    </ResponsiveContainer>
-                }
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-header" style={{ fontWeight:700 }}>🏷️ 分類佔比</div>
-              <div style={{ padding:'16px 8px' }}>
-                {catData.length===0
-                  ? <div style={{ textAlign:'center',color:'var(--text-muted)',padding:40 }}>此期間無資料</div>
-                  : <ResponsiveContainer width="100%" height={220}>
-                      <PieChart>
-                        <Pie data={catData} cx="50%" cy="50%" outerRadius={78} dataKey="value"
-                          label={({name,percent})=>`${name} ${Math.round(percent*100)}%`} labelLine={false} fontSize={10}>
-                          {catData.map((e,i)=><Cell key={i} fill={e.color}/>)}
-                        </Pie>
-                        <Tooltip formatter={v=>[`NT$${v.toLocaleString()}`]}/>
-                      </PieChart>
-                    </ResponsiveContainer>
-                }
-              </div>
-            </div>
-          </div>
+      <div style={{ background:'var(--surface-2)', borderRadius:10, padding:'9px 12px', marginBottom:18, fontSize:12, color:'var(--text-secondary)' }}>
+        有效訂單＝非取消訂單－退款；已出貨毛利＝已出貨營收－歷史成本快照。取消金額 {money(cancelledAmount)} 不計入營收、毛利、應收與應付。
+      </div>
 
-          <div className="card" style={{ marginBottom:20 }}>
-            <div className="card-header" style={{ fontWeight:700 }}>🏆 熱銷商品 Top 8</div>
-            <div style={{ padding:'16px 8px' }}>
-              {topProds.length===0
-                ? <div style={{ textAlign:'center',color:'var(--text-muted)',padding:32 }}>此期間無資料</div>
-                : <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={topProds} layout="vertical">
-                      <XAxis type="number" tick={{ fontSize:11 }}/>
-                      <YAxis dataKey="name" type="category" width={100} tick={{ fontSize:12 }}/>
-                      <Tooltip formatter={v=>[`${v} 件`,'銷售數量']}/>
-                      <Bar dataKey="qty" fill="#6366f1" radius={[0,4,4,0]}/>
-                    </BarChart>
-                  </ResponsiveContainer>
-              }
-            </div>
-          </div>
+      <div className="tabs" style={{ marginBottom:18 }}>
+        <button className={`tab ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}>📊 銷售分析</button>
+        <button className={`tab ${activeTab === 'buyer' ? 'active' : ''}`} onClick={() => setActiveTab('buyer')}>👥 買家查詢</button>
+        <button className={`tab ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => setActiveTab('finance')}>💰 財務 / 損益</button>
+      </div>
 
-          {/* 商品買家追蹤 */}
-          <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14 }}>
-            <div className="card">
-              <div className="card-header" style={{ fontWeight:700 }}>🔍 商品買家追蹤</div>
-              <div className="card-body">
-                <div className="search-input-wrap" style={{ marginBottom:12 }}>
-                  <Search size={14}/>
-                  <input value={prodSearch} onChange={e=>setProdSearch(e.target.value)} placeholder="搜尋商品..."
-                    style={{ padding:'8px 8px 8px 32px',border:'1.5px solid var(--border)',borderRadius:8,fontSize:14,outline:'none',fontFamily:'inherit',background:'var(--surface)',width:'100%' }}/>
-                </div>
-                <div style={{ maxHeight:300,overflowY:'auto' }}>
-                  {filtProds.map(p=>(
-                    <div key={p.id} onClick={()=>setTrackProd(p)}
-                      style={{ padding:'9px 12px',borderRadius:8,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:trackProd?.id===p.id?'var(--indigo-light)':'transparent',color:trackProd?.id===p.id?'var(--indigo-dark)':'var(--text-primary)',fontWeight:trackProd?.id===p.id?700:400,transition:'all .15s',marginBottom:2 }}>
-                      <span>{p.name}</span>
-                      {trackProd?.id===p.id && <span style={{ fontSize:11,background:'var(--indigo)',color:'#fff',padding:'2px 7px',borderRadius:99 }}>追蹤中</span>}
-                    </div>
-                  ))}
-                  {filtProds.length===0 && <div style={{ color:'var(--text-muted)',textAlign:'center',padding:24 }}>無商品</div>}
-                </div>
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-header" style={{ fontWeight:700 }}>
-                {trackProd ? `📦 ${trackProd.name} — 買家名單` : '選擇商品以查看買家'}
-              </div>
-              {!trackProd && <div style={{ textAlign:'center',color:'var(--text-muted)',padding:48 }}>← 請先點選商品</div>}
-              {trackProd && trackBuyers.length===0 && <div style={{ textAlign:'center',color:'var(--text-muted)',padding:48 }}>此商品在選定期間無訂單</div>}
-              {trackProd && trackBuyers.length>0 && (
-                <div className="table-container">
-                  <table>
-                    <thead><tr>
-                      <th>客戶</th>
-                      <th style={{ textAlign:'center' }}>總數</th>
-                      <th style={{ textAlign:'center',color:'var(--rose)' }}>未出</th>
-                      <th style={{ textAlign:'right' }}>金額</th>
-                    </tr></thead>
-                    <tbody>
-                      {trackBuyers.map(b=>(
-                        <tr key={b.name}>
-                          <td style={{ fontWeight:600 }}>{b.name}</td>
-                          <td style={{ textAlign:'center',fontWeight:800,color:'var(--indigo)' }}>{b.qty}</td>
-                          <td style={{ textAlign:'center',fontWeight:800,color:b.pending>0?'var(--rose)':'var(--text-muted)' }}>{b.pending||'—'}</td>
-                          <td style={{ textAlign:'right',fontWeight:700,color:'var(--text-secondary)' }}>NT${b.total.toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+      {activeTab === 'summary' && (
+        <>
+          <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:14, marginBottom:18 }}>
+            <div className="card"><div className="card-header" style={{ fontWeight:700 }}>📈 已出貨營收趨勢</div><div style={{ padding:'16px 8px' }}>{trendData.length === 0 ? <div className="empty-state">此期間無已出貨資料</div> : <ResponsiveContainer width="100%" height={220}><LineChart data={trendData}><XAxis dataKey="date" tick={{ fontSize:11 }}/><YAxis tick={{ fontSize:11 }}/><Tooltip formatter={value => [money(value),'已出貨營收']}/><Line type="monotone" dataKey="amount" stroke="#6366f1" strokeWidth={2.5}/></LineChart></ResponsiveContainer>}</div></div>
+            <div className="card"><div className="card-header" style={{ fontWeight:700 }}>🏷️ 分類佔比</div><div style={{ padding:'16px 8px' }}>{catData.length === 0 ? <div className="empty-state">無資料</div> : <ResponsiveContainer width="100%" height={220}><PieChart><Pie data={catData} cx="50%" cy="50%" outerRadius={76} dataKey="value" label={({name,percent}) => `${name} ${Math.round(percent * 100)}%`} labelLine={false} fontSize={10}>{catData.map((entry,index) => <Cell key={`${entry.name}-${index}`} fill={entry.color}/>)}</Pie><Tooltip formatter={value => [money(value)]}/></PieChart></ResponsiveContainer>}</div></div>
           </div>
-        </div>
+          <div className="card" style={{ marginBottom:18 }}><div className="card-header" style={{ fontWeight:700 }}>🏆 熱銷商品 Top 8</div><div style={{ padding:'16px 8px' }}>{topProds.length === 0 ? <div className="empty-state">無資料</div> : <ResponsiveContainer width="100%" height={230}><BarChart data={topProds} layout="vertical"><XAxis type="number" tick={{ fontSize:11 }}/><YAxis dataKey="chartName" type="category" width={115} tick={{ fontSize:11 }}/><Tooltip formatter={value => [`${value} 件`,'數量']}/><Bar dataKey="qty" fill="#6366f1"/></BarChart></ResponsiveContainer>}</div></div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+            <div className="card"><div className="card-header" style={{ fontWeight:700 }}>🔍 商品買家追蹤</div><div className="card-body"><div className="search-input-wrap" style={{ marginBottom:10 }}><Search size={14}/><input value={prodSearch} onChange={e => setProdSearch(e.target.value)} placeholder="搜尋商品..." style={{ padding:'8px 8px 8px 32px', width:'100%' }}/></div><div style={{ maxHeight:300, overflowY:'auto' }}>{filteredProducts.map(product => <div key={product.id} onClick={() => setTrackProd(product)} style={{ padding:'8px 10px', cursor:'pointer', borderRadius:8, background:trackProd?.id === product.id ? 'var(--indigo-light)' : 'transparent', fontWeight:trackProd?.id === product.id ? 700 : 400 }}>{product.name}</div>)}</div></div></div>
+            <div className="card"><div className="card-header" style={{ fontWeight:700 }}>{trackProd ? `${trackProd.name} — 買家名單` : '請選商品'}</div><div className="table-container"><table><thead><tr><th>客戶</th><th>總數</th><th>未出</th><th>金額</th></tr></thead><tbody>{trackBuyers.map(buyer => <tr key={buyer.name}><td>{buyer.name}</td><td>{buyer.qty}</td><td>{buyer.pending || '—'}</td><td>{money(buyer.total)}</td></tr>)}</tbody></table></div></div>
+          </div>
+        </>
       )}
 
-      {/* ── 買家查詢頁籤 ── */}
-      {activeTab==='buyer' && (
-        <div id="print-buyer-section">
-          {/* 篩選列 */}
-          <div style={{ background:'var(--surface)',borderRadius:'var(--radius)',padding:'14px 16px',marginBottom:16,display:'flex',gap:10,flexWrap:'wrap',alignItems:'center',boxShadow:'var(--shadow-sm)' }}>
-            {/* 姓名搜尋 */}
-            <div className="search-input-wrap" style={{ flex:1,minWidth:160 }}>
-              <Search size={14}/>
-              <input value={buyerSearch} onChange={e=>setBuyerSearch(e.target.value)} placeholder="搜尋客戶姓名、Line、FB..."
-                style={{ padding:'7px 7px 7px 30px',border:'1.5px solid var(--border)',borderRadius:8,fontSize:13,outline:'none',fontFamily:'inherit',background:'var(--surface)',width:'100%' }}/>
-            </div>
+      {activeTab === 'buyer' && (
+        <>
+          <div className="search-input-wrap" style={{ maxWidth:420, marginBottom:14 }}><Search size={14}/><input value={buyerSearch} onChange={e => setBuyerSearch(e.target.value)} placeholder="搜尋姓名、Line、FB..." style={{ padding:'8px 8px 8px 32px', width:'100%' }}/></div>
+          <div className="card"><div className="table-container"><table><thead><tr><th>客戶</th><th>聯絡辨識</th><th>訂單數</th><th>有效金額</th><th>商品明細</th></tr></thead><tbody>{filteredBuyers.map(buyer => <tr key={buyer.id}><td style={{ fontWeight:800 }}>{buyer.name}</td><td style={{ fontSize:12, color:'var(--text-secondary)' }}>{[buyer.line_nick && `Line:${buyer.line_nick}`, buyer.fb_name && `FB:${buyer.fb_name}`].filter(Boolean).join(' / ') || '—'}</td><td>{buyer.orders.length}</td><td style={{ fontWeight:800, color:'var(--indigo)' }}>{money(buyer.orders.reduce((sum,order) => sum + effectiveOrderAmount(order),0))}</td><td style={{ fontSize:12 }}>{buyer.orders.flatMap(order => (order.items || []).map((item,index) => <div key={`${order.id}-${index}`}>{item.product_name || item.name}{specText(item) ? `（${specText(item)}）` : ''} ×{item.qty}</div>))}</td></tr>)}</tbody></table></div></div>
+        </>
+      )}
 
-            {/* 出貨狀態篩選 */}
-            <div style={{ display:'flex',gap:5 }}>
-              {[['all','出貨：全部'],['pending','未出貨'],['shipped','已出貨']].map(([v,l])=>(
-                <button key={v} className={`btn btn-sm ${buyerStatusFilter===v?'btn-primary':'btn-ghost'}`} onClick={()=>setBuyerStatusFilter(v)}>{l}</button>
-              ))}
-            </div>
-
-            {/* 付款狀態篩選 */}
-            <div style={{ display:'flex',gap:5 }}>
-              {[['all','收款：全部'],['unpaid','未收款'],['paid','已收款']].map(([v,l])=>(
-                <button key={v} className={`btn btn-sm ${buyerPayFilter===v?'btn-primary':'btn-ghost'}`} onClick={()=>setBuyerPayFilter(v)}>{l}</button>
-              ))}
-            </div>
-
-            {/* 商品篩選下拉 */}
-            <div className="dropdown" ref={prodDropRef} style={{ minWidth:160 }}>
-              <button type="button" className="btn btn-ghost btn-sm"
-                style={{ width:'100%',justifyContent:'space-between' }}
-                onClick={()=>setProdDropOpen(p=>!p)}>
-                <span style={{ color:buyerProdFilter?'var(--text-primary)':'var(--text-muted)',fontSize:13 }}>
-                  {selectedProd ? selectedProd.name : '商品：全部'}
-                </span>
-                <ChevronDown size={12}/>
-              </button>
-              {prodDropOpen && (
-                <div className="dropdown-menu" style={{ width:220 }}>
-                  <div style={{ padding:'7px 10px',borderBottom:'1px solid var(--border)',position:'sticky',top:0,background:'var(--surface)' }}>
-                    <input autoFocus value={prodDropSearch} onChange={e=>setProdDropSearch(e.target.value)}
-                      placeholder="搜尋商品..." style={{ width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:6,fontSize:12,outline:'none',fontFamily:'inherit' }}
-                      onClick={e=>e.stopPropagation()}/>
-                  </div>
-                  <div className="dropdown-item" onClick={()=>{ setBuyerProdFilter(''); setProdDropOpen(false) }}>
-                    <span style={{ color:'var(--text-muted)' }}>全部商品</span>
-                  </div>
-                  {filtProdsDrop.map(p=>(
-                    <div key={p.id} className="dropdown-item" onClick={()=>{ setBuyerProdFilter(p.id); setProdDropOpen(false) }}>
-                      {p.name}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:'auto' }}>共 {filtBuyers.length} 位</span>
+      {activeTab === 'finance' && (
+        <>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))', gap:12, marginBottom:16 }}>
+            {[
+              ['應收帳款（未收款）', outstandingAmount, WalletCards, 'var(--rose-light)', 'var(--rose)'],
+              ['應付帳款（供應商未付款）', payableOutstanding, Building2, 'var(--amber-light)', '#b45309'],
+              ['已付供應商成本', supplierPaidCost, Building2, 'var(--emerald-light)', 'var(--emerald)'],
+              ['現金流淨額', netCashFlow, DollarSign, 'var(--sky-light)', '#0369a1'],
+            ].map(([label,value,Icon,bg,color]) => <div key={label} style={{ background:bg, borderRadius:10, padding:14, position:'relative' }}><div style={{ fontSize:11, color, fontWeight:700 }}>{label}</div><div style={{ fontSize:20, color, fontWeight:900, marginTop:5 }}>{money(value)}</div><Icon size={24} style={{ position:'absolute', right:12, top:16, color, opacity:.35 }}/></div>)}
           </div>
-
-          {/* 買家表格 */}
-          {filtBuyers.length===0 ? (
-            <div className="card"><div className="empty-state"><Users size={36}/><span>無符合條件的買家</span></div></div>
-          ) : (
-            <div style={{ display:'flex',flexDirection:'column',gap:14 }}>
-              {filtBuyers.map(buyer=>{
-                const buyerOrders = getBuyerOrders(buyer)
-                const buyerTotal  = buyerOrders.reduce((s,o)=>s+(o.total_amount||0),0)
-                return (
-                  <div key={buyer.id} className="card" style={{ overflow:'hidden' }}>
-                    {/* 客戶標題 */}
-                    <div style={{ padding:'10px 16px',background:'var(--surface-2)',borderBottom:'1.5px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8 }}>
-                      <div style={{ display:'flex',alignItems:'center',gap:10 }}>
-                        <div style={{ width:34,height:34,borderRadius:'50%',background:'var(--indigo-light)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:15,color:'var(--indigo)',flexShrink:0 }}>
-                          {buyer.name.charAt(0)}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight:800,fontSize:15 }}>{buyer.name}</div>
-                          <div style={{ fontSize:11,color:'var(--text-muted)',display:'flex',gap:8 }}>
-                            {buyer.line_nick&&<span>Line: {buyer.line_nick}</span>}
-                            {buyer.fb_name&&<span>FB: {buyer.fb_name}</span>}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ display:'flex',gap:8,alignItems:'center',flexWrap:'wrap' }}>
-                        {buyer.pendingCnt>0 && <span className="badge badge-amber">待出貨 {buyer.pendingCnt} 筆</span>}
-                        {buyer.shippedCnt>0 && <span className="badge badge-emerald">已出貨 {buyer.shippedCnt} 筆</span>}
-                        {buyer.unpaidCnt>0  && <span className="badge badge-rose">未收款 NT${buyer.unpaidAmt.toLocaleString()}</span>}
-                        <span style={{ fontWeight:800,fontSize:15,color:'var(--indigo)' }}>合計 NT${buyerTotal.toLocaleString()}</span>
-                      </div>
-                    </div>
-
-                    {/* 訂單明細 */}
-                    <table style={{ width:'100%',fontSize:13,borderCollapse:'collapse' }}>
-                      <thead>
-                        <tr>
-                          <th style={{ padding:'7px 14px',textAlign:'left',fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:'uppercase',color:'var(--text-secondary)',background:'var(--surface-2)',borderBottom:'1px solid var(--border)' }}>日期</th>
-                          <th style={{ padding:'7px 10px',fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:'uppercase',color:'var(--text-secondary)',background:'var(--surface-2)',borderBottom:'1px solid var(--border)' }}>商品</th>
-                          <th style={{ padding:'7px 10px',textAlign:'center',fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:'uppercase',color:'var(--text-secondary)',background:'var(--surface-2)',borderBottom:'1px solid var(--border)' }}>出貨</th>
-                          <th style={{ padding:'7px 10px',textAlign:'center',fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:'uppercase',color:'var(--text-secondary)',background:'var(--surface-2)',borderBottom:'1px solid var(--border)' }}>收款</th>
-                          <th style={{ padding:'7px 14px',textAlign:'right',fontSize:11,fontWeight:700,letterSpacing:.5,textTransform:'uppercase',color:'var(--text-secondary)',background:'var(--surface-2)',borderBottom:'1px solid var(--border)' }}>金額</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {buyerOrders.map(o=>(
-                          <tr key={o.id} style={{ borderBottom:'1px solid var(--border)' }}>
-                            <td style={{ padding:'8px 14px',color:'var(--text-secondary)',whiteSpace:'nowrap' }}>
-                              {o.order_date ? new Date(o.order_date).toLocaleDateString('zh-TW') : '—'}
-                            </td>
-                            <td style={{ padding:'8px 10px' }}>
-                              {(o.items||[]).map((item,i)=>(
-                                <div key={i} style={{ fontSize:13 }}>
-                                  {item.name}{specLabel(item)}×{item.qty}
-                                  {item.note && <span style={{ color:'var(--rose)',fontSize:11 }}> ({item.note})</span>}
-                                </div>
-                              ))}
-                              {o.note && <div style={{ fontSize:11,color:'var(--text-muted)',marginTop:2 }}>備註：{o.note}</div>}
-                            </td>
-                            <td style={{ padding:'8px 10px',textAlign:'center' }}>
-                              <span className={`badge ${o.status==='shipped'?'badge-emerald':o.status==='cancelled'?'badge-rose':'badge-amber'}`}>
-                                {o.status==='shipped'?'已出貨':o.status==='cancelled'?'已取消':'待出貨'}
-                              </span>
-                            </td>
-                            <td style={{ padding:'8px 10px',textAlign:'center' }}>
-                              <span className={`badge ${o.payment_status==='paid'?'badge-emerald':'badge-rose'}`}>
-                                {o.payment_status==='paid'?'已收款':'未收款'}
-                              </span>
-                            </td>
-                            <td style={{ padding:'8px 14px',textAlign:'right',fontWeight:700,color:'var(--indigo)' }}>
-                              NT${(o.total_amount||0).toLocaleString()}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+            <div className="card"><div className="card-header" style={{ fontWeight:700 }}>🏭 供應商應付帳款</div><div className="table-container"><table><thead><tr><th>供應商</th><th>總成本</th><th>已付</th><th>未付</th></tr></thead><tbody>{supplierRows.map(row => <tr key={row.supplier}><td>{row.supplier}</td><td>{money(row.total)}</td><td>{money(row.paid)}</td><td style={{ fontWeight:800, color:row.outstanding ? 'var(--rose)' : 'var(--emerald)' }}>{money(row.outstanding)}</td></tr>)}</tbody></table></div></div>
+            <div className="card"><div className="card-header" style={{ fontWeight:700 }}>📆 月損益（已出貨）</div><div className="table-container"><table><thead><tr><th>月份</th><th>營收</th><th>成本</th><th>毛利</th></tr></thead><tbody>{monthlyRows.map(row => <tr key={row.month}><td>{row.month}</td><td>{money(row.revenue)}</td><td>{money(row.cost)}</td><td style={{ fontWeight:800, color:row.profit >= 0 ? 'var(--emerald)' : 'var(--rose)' }}>{money(row.profit)}</td></tr>)}</tbody></table></div></div>
+          </div>
+        </>
       )}
     </div>
   )
