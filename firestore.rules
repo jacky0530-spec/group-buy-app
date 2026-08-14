@@ -38,12 +38,10 @@ service cloud.firestore {
     }
 
     // 除 accounts 外，所有應用資料共用同一套規則。
-    // 未來新增 suppliers / inventory / purchases / refunds 等 collection
-    // 不需要再修改或重新部署 Firestore Rules。
-    // 歷史資料一律採軟封存，Client 禁止 hard delete。
+    // 一般資料可讀取 / 新增 / 修改；永久刪除只開放 orders 且僅限 owner。
     match /{collection}/{document=**} {
       allow read, create, update: if collection != 'accounts' && hasAccess();
-      allow delete: if false;
+      allow delete: if collection == 'orders' && isOwner();
     }
   }
 }
