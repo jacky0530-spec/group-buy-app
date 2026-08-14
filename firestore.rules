@@ -25,16 +25,21 @@ service cloud.firestore {
       return role == 'owner' || role == 'staff';
     }
 
+    // Business records are intentionally soft-deleted/archived.
+    // Direct document deletion is denied so historical accounting cannot be destroyed by client code.
     match /products/{id} {
-      allow read, write: if hasAccess();
+      allow read, create, update: if hasAccess();
+      allow delete: if false;
     }
 
     match /customers/{id} {
-      allow read, write: if hasAccess();
+      allow read, create, update: if hasAccess();
+      allow delete: if false;
     }
 
     match /orders/{id} {
-      allow read, write: if hasAccess();
+      allow read, create, update: if hasAccess();
+      allow delete: if false;
     }
 
     match /accounts/{uid} {
