@@ -1,6 +1,6 @@
 # 團購百貨管理系統
 
-以 React + Vite + Firebase 建立的內部團購後台，支援商品、客戶、訂單、出貨、收款、退款、供應商應付與銷售/損益報表。
+以 React + Vite + Supabase 建立的內部團購後台，支援商品、客戶、訂單、出貨、收款、退款、供應商應付與銷售/損益報表。
 
 ## 主要功能
 
@@ -12,13 +12,15 @@
 - 客戶管理：姓名可重複，以電話 / Line / FB 輔助辨識；採軟封存。
 - 訂單管理：多商品、多口味/規格、批次開單、批次出貨、出貨單、取消、退款、供應商付款狀態。
 - 報表：有效訂單總額、已出貨營收、已收款、未收款、退款、歷史毛利、熱銷、分類、買家追蹤、應收、應付、現金流、月損益、CSV / Excel 相容匯出。
-- 權限：Firebase Authentication + `accounts/{uid}` 白名單 + `owner/staff` + Firestore Security Rules。
+- 權限：Supabase Auth + `accounts` 白名單 + `owner/staff` + PostgreSQL Row Level Security (RLS)。
 
 ## 技術
 
-React 19、Vite、Firebase Authentication、Cloud Firestore、React Router、Recharts、Vercel。
+React 19、Vite、Supabase Auth、PostgreSQL、PostgREST / supabase-js、React Router、Recharts、Vercel。
 
-## Firestore collections
+## 資料庫
+
+Schema 原始檔：`supabase/schema.sql`。
 
 ### `products`
 
@@ -30,9 +32,9 @@ React 19、Vite、Firebase Authentication、Cloud Firestore、React Router、Rec
 
 ### `orders`
 
-包含客戶、`items[]`、總額、出貨狀態、收款狀態、供應商付款狀態、退款紀錄、取消紀錄與狀態歷史。
+包含客戶、`items` JSONB、總額、出貨狀態、收款狀態、供應商付款狀態、退款紀錄、取消紀錄與狀態歷史。
 
-每個 `items[]` 都保存商品歷史快照：
+每個 `items[]` 保存商品歷史快照：
 
 - `product_id`
 - `product_name`
@@ -49,58 +51,54 @@ React 19、Vite、Firebase Authentication、Cloud Firestore、React Router、Rec
 
 因此日後修改商品價格、成本、供應商或封存商品，不會改變新制訂單的歷史毛利。
 
+商品、客戶、訂單 ID 使用 `text`，新資料預設以 UUID 字串產生，但也能保留舊 Firestore document ID，方便既有資料遷移而不破壞關聯。
+
 ### `accounts`
 
-Document ID 必須等於 Firebase Auth UID，欄位包含 `email`、`display_name`、`role`、`disabled`、`created_at`。
+`id` 必須等於 Supabase Auth `auth.users.id`，欄位包含 `email`、`display_name`、`role`、`disabled`、時間欄位。
 
 ## 環境變數
 
-複製 `.env.example` 為 `.env.local`，填入所有 `VITE_FIREBASE_*`。`.env` / `.env.local` 已被 `.gitignore` 排除。
+複製 `.env.example` 為 `.env.local`：
 
-> Firebase Web API Key 會出現在前端 bundle；真正的資料保護必須依賴 Authentication + Firestore Security Rules，而不是把 Web API Key 當秘密。
-
-## 首次部署：建立第一位 Owner
-
-這一步必須在啟用嚴格 Firestore Rules 前完成：
-
-1. Firebase Console → Authentication → Sign-in method → 啟用 Email/Password。
-2. Authentication → Users → 建立第一位管理員。
-3. 複製 UID。
-4. Firestore 建立 `accounts/{UID}`。
-5. 欄位：
-
-```json
-{
-  "email": "owner@example.com",
-  "display_name": "負責人",
-  "role": "owner",
-  "disabled": false,
-  "created_at": "2026-08-14T00:00:00.000Z"
-}
+```env
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxxxxxxxx
 ```
 
-6. 確認 Owner 可登入後，再部署 Security Rules。
+前端只使用 Supabase **publishable key**；`service_role` 絕對不可放在 Vite / Browser 環境變數。
 
-## Firestore Security Rules
+## 首次 Supabase 設定
 
-Repository 已包含 `firebase.json`、`firestore.rules`、`firestore.indexes.json`。
+完整步驟請看 `SUPABASE_SETUP.md`。核心步驟只有：
 
-```bash
-npm install -g firebase-tools
-firebase login
-firebase use <YOUR_PROJECT_ID>
-firebase deploy --only firestore:rules,firestore:indexes
-```
+1. 建立一個獨立 Supabase Project。
+2. 執行 `supabase/schema.sql` 建立 tables / functions / RLS。
+3. 在 Supabase Auth 建立第一位使用者，並把該 UID 寫入 `accounts` 且角色設為 `owner`。
+4. 部署 `supabase/functions/create-account`；之後 Owner 就能直接在系統內建立員工帳號。
+5. Vercel 只需設定 `VITE_SUPABASE_URL` 與 `VITE_SUPABASE_PUBLISHABLE_KEY`。
 
-規則：未登入拒絕；UID 不在 accounts 拒絕；`disabled=true` 拒絕；staff 可操作商品/客戶/訂單；owner 另可管理 accounts；Client 不允許刪除 accounts 文件。
+不需要 Firebase CLI，也不需要另外部署 Firestore Rules；Supabase RLS 就存在 PostgreSQL 資料庫中。
+
+## 安全模型
+
+- 未登入：無資料表權限。
+- 已登入但 `accounts` 沒有紀錄：無資料權限。
+- `disabled=true`：RLS 直接拒絕資料存取。
+- `staff`：可操作商品、客戶、訂單。
+- `owner`：除上述權限外，可管理帳號角色與停用狀態。
+- 前端沒有任何 `DELETE` grant；商品、客戶、訂單一律軟封存。
+- 建立 Auth User 透過受 JWT 保護的 Edge Function 執行；`service_role` 只存在伺服器端。
 
 ## 舊訂單資料升級
 
-舊版本訂單沒有 `cost_price/category/supplier` 快照，技術上無法還原「當時真正成本」。更新後請用 Owner：
+舊版本訂單若沒有 `cost_price/category/supplier` 快照，可用 Owner：
 
 **帳號與權限 → 升級舊訂單快照**
 
-系統會以目前仍可取得的商品資料補上快照並固定；若歷史真實成本與目前成本不同，重要舊單請人工校正。
+系統會以目前仍可取得的商品資料補上快照並固定；若歷史真正成本與目前成本不同，重要舊單仍需人工校正。
+
+如果已有 Firebase 正式資料，要搬到 Supabase，請先看 `MIGRATION_GUIDE.md`，不要直接切換 production 環境變數。
 
 ## 統一財務定義
 
@@ -125,16 +123,11 @@ npm run build
 
 ## Vercel
 
-`vercel.json` 已設定 SPA rewrite。在 Vercel Project Settings → Environment Variables 設定所有 `VITE_FIREBASE_*`。
+`vercel.json` 已設定 SPA rewrite。在 Vercel Project Settings → Environment Variables 設定：
 
-## 安全注意事項
-
-- 正式環境不要使用 Firestore Test Mode。
-- 不要提交 `.env`、Service Account JSON、Admin SDK 私鑰。
-- 前端按鈕隱藏不是安全控制；真正權限以 `firestore.rules` 為準。
-- 帳號停用會保留 Firebase Auth UID 與稽核資料，但 Firestore 權限會拒絕該帳號。
-- 若未來要真正刪除 Firebase Auth User，應透過 Firebase Admin SDK / Cloud Functions / 受保護 Server API 執行，不能把 Admin 憑證放前端。
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 
 ## CI
 
-`.github/workflows/ci.yml` 在 Pull Request 與 `main` push 時執行 `npm ci`、`npm run lint`、`npm run build`。
+`.github/workflows/ci.yml` 在 Pull Request 與 `main` push 時執行 production dependency audit、`npm ci`、`npm run lint`、`npm run build`。
