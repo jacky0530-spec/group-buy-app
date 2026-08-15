@@ -37,9 +37,6 @@ export function ToastProvider({ children }) {
 
 export const useToast = () => useContext(ToastCtx)
 
-// ── Backdrop ─────────────────────────────────────────────────
-// 用 createPortal 掛在 document.body，完全脫離 sidebar DOM 樹，
-// inset:0 就能正確覆蓋整個視窗並垂直水平置中，不需要任何偏移補償。
 const BACKDROP = {
   position: 'fixed',
   inset: 0,
@@ -52,46 +49,45 @@ const BACKDROP = {
   padding: '20px',
   boxSizing: 'border-box',
   animation: 'fadeIn .15s ease',
-  overflowY: 'auto',       // 超高內容時可捲動
+  overflowY: 'auto',
 }
 
 export function Modal({ title, onClose, children, width = 560 }) {
   return createPortal(
-    <div style={BACKDROP} onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="app-modal-backdrop" style={BACKDROP} onClick={e => e.target === e.currentTarget && onClose()}>
       <div
-        className="card animate-scale"
+        className="card animate-scale modal-card"
         style={{
           width: '100%',
           maxWidth: width,
           maxHeight: 'calc(100vh - 40px)',
           overflowY: 'auto',
-          margin: 'auto',       // 確保 flex 子元素自身置中
+          margin: 'auto',
           flexShrink: 0,
         }}
       >
-        <div className="card-header" style={{ justifyContent: 'space-between' }}>
+        <div className="card-header modal-header" style={{ justifyContent: 'space-between' }}>
           <span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span>
-          <button className="btn-icon btn" onClick={onClose}><X size={16} /></button>
+          <button className="btn-icon btn" onClick={onClose} aria-label="關閉"><X size={16} /></button>
         </div>
-        <div className="card-body">{children}</div>
+        <div className="card-body modal-body">{children}</div>
       </div>
     </div>,
     document.body
   )
 }
 
-// Confirm dialog
 export function ConfirmDialog({ message, onConfirm, onCancel, danger = true }) {
   return createPortal(
-    <div style={BACKDROP} onClick={e => e.target === e.currentTarget && onCancel()}>
+    <div className="app-modal-backdrop" style={BACKDROP} onClick={e => e.target === e.currentTarget && onCancel()}>
       <div
-        className="card animate-scale"
+        className="card animate-scale confirm-card"
         style={{ width: '100%', maxWidth: 380, margin: 'auto', flexShrink: 0 }}
       >
-        <div className="card-body" style={{ textAlign: 'center', padding: '28px 24px' }}>
+        <div className="card-body confirm-body" style={{ textAlign: 'center', padding: '28px 24px' }}>
           <AlertCircle size={40} color={danger ? 'var(--rose)' : 'var(--amber)'} style={{ margin: '0 auto 12px' }} />
           <p style={{ fontSize: 15, color: 'var(--text-primary)', marginBottom: 20, whiteSpace: 'pre-line' }}>{message}</p>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <div className="confirm-actions" style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
             <button className="btn btn-ghost" onClick={onCancel}>取消</button>
             <button className={`btn ${danger ? 'btn-danger' : 'btn-amber'}`} onClick={onConfirm}>確認</button>
           </div>
@@ -102,7 +98,6 @@ export function ConfirmDialog({ message, onConfirm, onCancel, danger = true }) {
   )
 }
 
-// SearchableSelect
 export function SearchableSelect({ options = [], value, onChange, placeholder = '請選擇...' }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -146,7 +141,6 @@ export function SearchableSelect({ options = [], value, onChange, placeholder = 
   )
 }
 
-// Loading screen
 export function PageLoader() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
