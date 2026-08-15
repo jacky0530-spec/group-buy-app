@@ -1,0 +1,55 @@
+/* iOS / mobile drawer visibility fix */
+@media screen and (max-width: 1023px) {
+  .app-sidebar {
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .sidebar-brand,
+  .sidebar-footer {
+    flex: 0 0 auto;
+  }
+
+  .sidebar-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    padding-bottom: 18px;
+  }
+
+  .sidebar-footer {
+    position: relative;
+    z-index: 2;
+    background: #1e293b;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .sidebar-brand {
+    padding: 16px 14px 12px;
+  }
+
+  .sidebar-nav {
+    padding: 8px 10px 20px;
+  }
+
+  .sidebar-nav-link {
+    min-height: 46px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-footer {
+    padding-top: 8px;
+  }
+
+  .sidebar-copyright {
+    display: none;
+  }
+}
