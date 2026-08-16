@@ -3,6 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu } from './AuthGuard'
 
+const APP_VERSION = 'v2026.08.16.1'
+
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
   { to: '/products', icon: ShoppingBag, label: '商品管理' },
@@ -36,7 +38,7 @@ export default function Layout() {
             <div className="sidebar-logo"><ShoppingBag size={18} color="white" /></div>
             <div>
               <div className="sidebar-title">團購百貨</div>
-              <div className="sidebar-subtitle">Order System</div>
+              <div className="sidebar-subtitle">Order System · {APP_VERSION}</div>
             </div>
           </div>
         </div>
@@ -62,7 +64,7 @@ export default function Layout() {
 
         <div className="sidebar-footer">
           <UserMenu />
-          <div className="sidebar-copyright">© 2025 團購百貨管理系統</div>
+          <div className="sidebar-copyright">© 2025 團購百貨管理系統 · {APP_VERSION}</div>
         </div>
       </aside>
 
@@ -89,7 +91,7 @@ export default function Layout() {
           <div className="mobile-brand-logo"><ShoppingBag size={16} color="white" /></div>
           <div className="mobile-brand-text">
             <strong>團購百貨</strong>
-            <span>管理系統</span>
+            <span>管理系統 · {APP_VERSION}</span>
           </div>
         </header>
 
