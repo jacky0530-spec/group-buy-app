@@ -1,13 +1,79 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>group-buy-app</title>
+    <title>團購百貨管理系統</title>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // iPad / Safari：未出貨報表使用獨立列印文件，避免整個 SPA 重新排版造成長時間等待或截入背景畫面。
+      document.addEventListener('click', function (event) {
+        if (!location.pathname.includes('/pending-report')) return
+        const button = event.target.closest('button')
+        if (!button || button.disabled || button.textContent.trim() !== '列印') return
+
+        const source = document.querySelector('.print-only')
+        if (!source || !source.innerHTML.trim()) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        event.stopImmediatePropagation()
+
+        const printWindow = window.open('', '_blank')
+        if (!printWindow) {
+          window.print()
+          return
+        }
+
+        printWindow.document.open()
+        printWindow.document.write(`<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>未出貨查詢報表</title>
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #1e293b; font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif; font-size: 12px; }
+  body { padding: 0; }
+  h2 { font-size: 20px; margin: 0 0 6px; }
+  h3 { font-size: 16px; margin: 14px 0 8px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid #d9e0e8; padding: 6px 7px; text-align: left; vertical-align: top; }
+  th { background: #f5f7fa; font-size: 11px; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  tfoot td { font-weight: 800; }
+  small { color: #64748b; }
+  span[style*="dc2626"] { color: #c81e1e !important; font-weight: 900 !important; }
+  @media print {
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  }
+</style>
+</head>
+<body>${source.innerHTML}</body>
+</html>`)
+        printWindow.document.close()
+
+        const doPrint = () => {
+          try {
+            printWindow.focus()
+            printWindow.print()
+          } catch (error) {
+            console.error('列印失敗', error)
+          }
+        }
+
+        if (printWindow.document.readyState === 'complete') {
+          requestAnimationFrame(() => setTimeout(doPrint, 30))
+        } else {
+          printWindow.addEventListener('load', () => requestAnimationFrame(() => setTimeout(doPrint, 30)), { once:true })
+        }
+      }, true)
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
