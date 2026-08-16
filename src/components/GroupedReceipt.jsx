@@ -15,7 +15,6 @@ function phoneSuffix(order) {
 function customerKey(order) {
   const name = String(order?.customer_name || '').trim().toLocaleLowerCase('zh-TW')
   const suffix = phoneSuffix(order)
-  // 現有客戶資料以「姓名 + 手機末碼」作為領貨辨識；可將分開建立的訂單合併成同一張出貨明細。
   return `${name}__${suffix}`
 }
 
@@ -98,6 +97,62 @@ function phoneLabel(group) {
   return group.customer_phone_last2 ? `末碼 ${group.customer_phone_last2}` : '未留手機'
 }
 
+function printReceiptInIsolatedWindow() {
+  const source = document.getElementById('receipt-area')
+  if (!source) return
+
+  // iPad/Safari 對整個 SPA 呼叫 window.print() 可能會把 modal/backdrop 當成畫面快照。
+  // 從使用者點擊事件同步開啟一個乾淨文件，只放出貨單內容，可大幅降低重新排版成本。
+  const printWindow = window.open('', '_blank')
+  if (!printWindow) {
+    window.print()
+    return
+  }
+
+  const receiptHtml = source.innerHTML
+  printWindow.document.open()
+  printWindow.document.write(`<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>團購百貨 出貨單</title>
+<style>
+  :root {
+    --border:#e2e8f0;
+    --surface-2:#f8f9fc;
+    --text-primary:#1e293b;
+    --text-secondary:#64748b;
+    --indigo:#6366f1;
+    --indigo-light:#eef2ff;
+  }
+  * { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  html,body { margin:0; padding:0; background:#fff; color:var(--text-primary); font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  #receipt-area { width:100%; max-width:186mm; margin:0 auto; }
+  @page { size:A4 portrait; margin:10mm; }
+  @media print {
+    html,body { width:auto; height:auto; }
+    #receipt-area { max-width:none; }
+    #receipt-area > div { break-inside:avoid; page-break-inside:avoid; }
+  }
+</style>
+</head>
+<body><div id="receipt-area">${receiptHtml}</div></body>
+</html>`)
+  printWindow.document.close()
+
+  const launchPrint = () => {
+    printWindow.focus()
+    // 給 WebKit 一個很短的排版週期，不再等待整個主網站重排。
+    window.setTimeout(() => {
+      printWindow.print()
+    }, 120)
+  }
+
+  if (printWindow.document.readyState === 'complete') launchPrint()
+  else printWindow.addEventListener('load', launchPrint, { once:true })
+}
+
 export default function GroupedReceipt({ orders, onClose }) {
   const groups = groupReceiptOrders(orders)
   const grandTotal = groups.reduce((sum,group) => sum + group.subtotal,0)
@@ -144,7 +199,7 @@ export default function GroupedReceipt({ orders, onClose }) {
 
       <div style={{ display:'flex',gap:10,justifyContent:'flex-end',marginTop:14 }}>
         <button className="btn btn-ghost" onClick={onClose}>關閉</button>
-        <button className="btn btn-primary" onClick={() => window.print()}><Printer size={14}/>列印</button>
+        <button className="btn btn-primary" onClick={printReceiptInIsolatedWindow}><Printer size={14}/>列印</button>
       </div>
     </Modal>
   )
