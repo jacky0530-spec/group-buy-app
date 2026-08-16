@@ -9,8 +9,8 @@
   <body>
     <div id="root"></div>
     <script>
-      // iPad / Safari：未出貨報表使用獨立列印文件，並在同一次點擊事件內直接呼叫 print()。
-      // Safari 偶爾仍會攔截自動列印，因此列印頁保留一個手動「再次列印」按鈕作為可靠備援。
+      // iPad / Safari 安全列印：不開新視窗，避免 WebKit 因第二個頁面 + print() 造成高記憶體使用或閃退。
+      // 點未出貨報表「列印」時，在同一頁建立輕量列印根節點，暫時隱藏 React App，列印完再還原。
       document.addEventListener('click', function (event) {
         if (!location.pathname.includes('/pending-report')) return
         const button = event.target.closest('button')
@@ -23,57 +23,73 @@
         event.stopPropagation()
         event.stopImmediatePropagation()
 
-        const printWindow = window.open('', '_blank')
-        if (!printWindow) {
-          window.print()
-          return
+        const oldRoot = document.getElementById('fast-print-root')
+        if (oldRoot) oldRoot.remove()
+        const oldStyle = document.getElementById('fast-print-style')
+        if (oldStyle) oldStyle.remove()
+
+        const printRoot = document.createElement('div')
+        printRoot.id = 'fast-print-root'
+        printRoot.innerHTML = source.innerHTML
+        document.body.appendChild(printRoot)
+
+        const style = document.createElement('style')
+        style.id = 'fast-print-style'
+        style.textContent = `
+          body.fast-pending-print > #root { display: none !important; }
+          body.fast-pending-print > #fast-print-root {
+            display: block !important;
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            color: #1e293b;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+            font-size: 12px;
+          }
+          #fast-print-root { display: none; }
+          #fast-print-root h2 { font-size: 20px; margin: 0 0 6px; }
+          #fast-print-root h3 { font-size: 16px; margin: 14px 0 8px; }
+          #fast-print-root table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+          #fast-print-root th, #fast-print-root td {
+            border: 1px solid #d9e0e8;
+            padding: 6px 7px;
+            text-align: left;
+            vertical-align: top;
+          }
+          #fast-print-root th { background: #f5f7fa; font-size: 11px; }
+          #fast-print-root tr { break-inside: avoid; page-break-inside: avoid; }
+          #fast-print-root tfoot td { font-weight: 800; }
+          #fast-print-root small { color: #64748b; }
+          #fast-print-root span[style*="dc2626"] { color: #c81e1e !important; font-weight: 900 !important; }
+          @media print {
+            @page { size: A4 portrait; margin: 10mm; }
+            html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; }
+            body.fast-pending-print > #root { display: none !important; }
+            body.fast-pending-print > #fast-print-root { display: block !important; }
+            #fast-print-root * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          }
+        `
+        document.head.appendChild(style)
+        document.body.classList.add('fast-pending-print')
+
+        let cleaned = false
+        const cleanup = () => {
+          if (cleaned) return
+          cleaned = true
+          document.body.classList.remove('fast-pending-print')
+          printRoot.remove()
+          style.remove()
         }
 
-        printWindow.document.open()
-        printWindow.document.write(`<!doctype html>
-<html lang="zh-Hant">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>未出貨查詢報表</title>
-<style>
-  @page { size: A4 portrait; margin: 10mm; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: #fff; color: #1e293b; font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif; font-size: 12px; }
-  body { padding: 0; }
-  .print-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 0 0 12px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; color: #3730a3; }
-  .print-toolbar button { border: 0; border-radius: 8px; padding: 9px 16px; background: #4f46e5; color: #fff; font: inherit; font-weight: 800; cursor: pointer; white-space: nowrap; }
-  h2 { font-size: 20px; margin: 0 0 6px; }
-  h3 { font-size: 16px; margin: 14px 0 8px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { border: 1px solid #d9e0e8; padding: 6px 7px; text-align: left; vertical-align: top; }
-  th { background: #f5f7fa; font-size: 11px; }
-  tr { break-inside: avoid; page-break-inside: avoid; }
-  tfoot td { font-weight: 800; }
-  small { color: #64748b; }
-  span[style*="dc2626"] { color: #c81e1e !important; font-weight: 900 !important; }
-  @media print {
-    .print-toolbar { display: none !important; }
-    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-  }
-</style>
-</head>
-<body>
-  <div class="print-toolbar">
-    <span>若列印預覽沒有自動出現，請按右側按鈕。</span>
-    <button type="button" onclick="window.print()">🖨 再次列印</button>
-  </div>
-  ${source.innerHTML}
-</body>
-</html>`)
-        printWindow.document.close()
+        window.addEventListener('afterprint', cleanup, { once: true })
+        // 極端情況 afterprint 未觸發時的保險；列印視窗開啟期間 Safari 會暫停此計時器。
+        setTimeout(cleanup, 120000)
 
         try {
-          // 不使用 setTimeout / requestAnimationFrame，避免 Safari 將 print() 判定為脫離使用者點擊事件。
-          printWindow.focus()
-          printWindow.print()
+          window.print()
         } catch (error) {
-          console.error('自動列印被瀏覽器攔截，可在列印頁按「再次列印」', error)
+          cleanup()
+          console.error('列印失敗', error)
         }
       }, true)
     </script>
