@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ProductsAPI, CustomersAPI, OrdersAPI, snapshotOrderItem } from '../lib/db'
-import { filterCustomers, customerSecondaryLabel } from '../lib/customerSearch'
+import { filterCustomers, customerSecondaryLabel, getCustomerPhoneLast2 } from '../lib/customerSearch'
 import { useToast, Modal, ConfirmDialog } from '../components/UI'
+import QuantityInput from '../components/QuantityInput'
 import { Plus, Pencil, Archive, Search, TrendingUp, X, Tag, RotateCcw } from 'lucide-react'
 
 export const CATEGORIES = [
@@ -13,233 +14,57 @@ export const CATEGORIES = [
   { id:'other', name:'其他', icon:'📦', color:'#6b7280' },
 ]
 export const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.id,c]))
-
 const FLAVOR_CATEGORIES = new Set(['frozen','biscuit','candy'])
 const SPEC_MODES = {
-  clothing:[
-    { id:'color_size', label:'顏色＋尺碼' }, { id:'color_free', label:'顏色＋Free Size' },
-    { id:'color_only', label:'僅顏色' }, { id:'size_only', label:'僅尺碼' }, { id:'none', label:'無規格' },
-  ],
-  daily:[
-    { id:'random', label:'隨機出貨' }, { id:'color_only', label:'僅顏色' },
-    { id:'color_size', label:'顏色＋尺寸' }, { id:'none', label:'無規格' },
-  ],
+  clothing:[{ id:'color_size', label:'顏色＋尺碼' },{ id:'color_free', label:'顏色＋Free Size' },{ id:'color_only', label:'僅顏色' },{ id:'size_only', label:'僅尺碼' },{ id:'none', label:'無規格' }],
+  daily:[{ id:'random', label:'隨機出貨' },{ id:'color_only', label:'僅顏色' },{ id:'color_size', label:'顏色＋尺寸' },{ id:'none', label:'無規格' }],
 }
 const DEFAULT_SIZES = ['XS','S','M','L','XL','XXL','XXXL']
 const PRESET_COLORS = ['黑色','白色','灰色','米白','藏青','紅色','粉色','藍色','綠色','黃色','咖啡','紫色']
-const PRESET_FLAVORS = {
-  frozen:['原味','辣味','黑胡椒','蒜香','起司','海鮮','牛肉','豬肉','雞肉'],
-  biscuit:['原味','巧克力','草莓','抹茶','起司','牛奶','咖啡','花生'],
-  candy:['綜合','葡萄','草莓','檸檬','橘子','水蜜桃','蘋果','薄荷'],
-}
-const EMPTY_FORM = {
-  name:'', price:'', cost:'', category:'other', supplier:'', note:'',
-  spec_mode:'none', spec_colors:[], spec_sizes:[], spec_flavors:[],
-  color_input:'', size_input:'', flavor_input:'',
-}
+const PRESET_FLAVORS = { frozen:['原味','辣味','黑胡椒','蒜香','起司','海鮮','牛肉','豬肉','雞肉'], biscuit:['原味','巧克力','草莓','抹茶','起司','牛奶','咖啡','花生'], candy:['綜合','葡萄','草莓','檸檬','橘子','水蜜桃','蘋果','薄荷'] }
+const EMPTY_FORM = { name:'',price:'',cost:'',category:'other',supplier:'',note:'',spec_mode:'none',spec_colors:[],spec_sizes:[],spec_flavors:[],color_input:'',size_input:'',flavor_input:'' }
 
-function toggleArray(setForm, field, value) {
-  setForm(p => ({ ...p, [field]:(p[field] || []).includes(value) ? (p[field] || []).filter(x => x !== value) : [...(p[field] || []),value] }))
-}
-function addCustom(setForm, field, inputField, transform = v => v) {
-  setForm(p => {
-    const value = transform(String(p[inputField] || '').trim())
-    if (!value || (p[field] || []).includes(value)) return { ...p, [inputField]:'' }
-    return { ...p, [field]:[...(p[field] || []),value], [inputField]:'' }
-  })
-}
+function toggleArray(setForm,field,value){setForm(p=>({...p,[field]:(p[field]||[]).includes(value)?(p[field]||[]).filter(x=>x!==value):[...(p[field]||[]),value]}))}
+function addCustom(setForm,field,inputField,transform=v=>v){setForm(p=>{const value=transform(String(p[inputField]||'').trim());if(!value||(p[field]||[]).includes(value))return{...p,[inputField]:''};return{...p,[field]:[...(p[field]||[]),value],[inputField]:''}})}
+function PillEditor({label,values,presets=[],inputValue,onInput,onAdd,onToggle,onRemove,placeholder}){return <div className="form-group"><label>{label}</label>{presets.length>0&&<div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>{presets.map(v=>{const selected=values.includes(v);return <button key={v} type="button" onClick={()=>onToggle(v)} style={{padding:'4px 10px',borderRadius:99,fontSize:12,fontFamily:'inherit',cursor:'pointer',border:`1.5px solid ${selected?'var(--indigo)':'var(--border)'}`,background:selected?'var(--indigo-light)':'var(--surface)',color:selected?'var(--indigo-dark)':'var(--text-secondary)',fontWeight:600}}>{v}</button>})}</div>}<div style={{display:'flex',gap:8}}><input value={inputValue} onChange={e=>onInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(e.preventDefault(),onAdd())} placeholder={placeholder}/><button type="button" className="btn btn-ghost btn-sm" onClick={onAdd}>加入</button></div>{values.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>{values.map(v=><span key={v} className="badge badge-indigo" style={{display:'inline-flex',alignItems:'center',gap:4}}>{v}<button type="button" onClick={()=>onRemove(v)} style={{background:'none',border:'none',padding:0,cursor:'pointer',color:'inherit',display:'flex'}}><X size={10}/></button></span>)}</div>}</div>}
+function SpecEditor({form,setForm}){const modes=SPEC_MODES[form.category];const mode=form.spec_mode||'none';const showColor=['color_size','color_free','color_only'].includes(mode);const showSize=['color_size','size_only'].includes(mode);const showFlavor=FLAVOR_CATEGORIES.has(form.category);return <div style={{borderTop:'1.5px solid var(--border)',paddingTop:16,marginTop:4}}>{modes&&<div className="form-group"><label>規格模式</label><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{modes.map(m=><button key={m.id} type="button" onClick={()=>setForm(p=>({...p,spec_mode:m.id,spec_colors:[],spec_sizes:[]}))} style={{padding:'6px 12px',borderRadius:8,fontSize:13,fontFamily:'inherit',fontWeight:600,cursor:'pointer',border:`2px solid ${mode===m.id?'var(--indigo)':'var(--border)'}`,background:mode===m.id?'var(--indigo-light)':'var(--surface)',color:mode===m.id?'var(--indigo-dark)':'var(--text-secondary)'}}>{m.label}</button>)}</div></div>}{mode==='random'&&<div style={{background:'var(--sky-light)',borderRadius:8,padding:'10px 14px',fontSize:13,color:'#0369a1',marginBottom:12}}>🎲 隨機出貨：訂單不需選顏色或尺寸。</div>}{showColor&&<PillEditor label="顏色選項" values={form.spec_colors} presets={PRESET_COLORS} inputValue={form.color_input} onInput={v=>setForm(p=>({...p,color_input:v}))} onAdd={()=>addCustom(setForm,'spec_colors','color_input')} onToggle={v=>toggleArray(setForm,'spec_colors',v)} onRemove={v=>setForm(p=>({...p,spec_colors:p.spec_colors.filter(x=>x!==v)}))} placeholder="自訂顏色，按 Enter 加入"/>}{showSize&&<PillEditor label="尺碼選項" values={form.spec_sizes} presets={DEFAULT_SIZES} inputValue={form.size_input} onInput={v=>setForm(p=>({...p,size_input:v}))} onAdd={()=>addCustom(setForm,'spec_sizes','size_input',v=>v.toUpperCase())} onToggle={v=>toggleArray(setForm,'spec_sizes',v)} onRemove={v=>setForm(p=>({...p,spec_sizes:p.spec_sizes.filter(x=>x!==v)}))} placeholder="自訂尺碼（如 26吋、38號）"/>}{showFlavor&&<div style={{background:'var(--amber-light)',border:'1px solid #fde68a',padding:12,borderRadius:10,marginBottom:12}}><div style={{fontSize:12,color:'#92400e',marginBottom:10,fontWeight:700}}>🍽️ 第二層口味：有設定口味時，下單必須選擇口味。</div><PillEditor label="口味選項" values={form.spec_flavors} presets={PRESET_FLAVORS[form.category]||[]} inputValue={form.flavor_input} onInput={v=>setForm(p=>({...p,flavor_input:v}))} onAdd={()=>addCustom(setForm,'spec_flavors','flavor_input')} onToggle={v=>toggleArray(setForm,'spec_flavors',v)} onRemove={v=>setForm(p=>({...p,spec_flavors:p.spec_flavors.filter(x=>x!==v)}))} placeholder="自訂口味，例如：椒鹽、海苔、麻辣"/></div>}{mode==='color_free'&&<div style={{background:'var(--emerald-light)',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#065f46',marginBottom:12}}>✅ Free Size：下單必須選顏色，不需選尺碼。</div>}</div>}
+function SpecBadges({product}){const parts=[];if(product.spec_mode==='random')parts.push(<span key="r" className="badge badge-sky">🎲 隨機</span>);if((product.spec_colors||[]).length)parts.push(<span key="c" className="badge badge-pink">🎨 {product.spec_colors.length} 色</span>);if((product.spec_sizes||[]).length)parts.push(<span key="s" className="badge badge-indigo">📏 {product.spec_sizes.join('/')}</span>);if(product.spec_mode==='color_free')parts.push(<span key="f" className="badge badge-gray">Free Size</span>);if((product.spec_flavors||[]).length)parts.push(<span key="v" className="badge badge-amber">🍽️ {product.spec_flavors.length} 口味</span>);return parts.length?<div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{parts}</div>:<span style={{color:'var(--text-muted)'}}>—</span>}
+function validateSpec(product,spec){const mode=product.spec_mode||'none';if(['color_size','color_only','color_free'].includes(mode)&&!spec.color)return'請選擇顏色';if(['color_size','size_only'].includes(mode)&&!spec.size)return'請選擇尺碼';if((product.spec_flavors||[]).length>0&&!spec.flavor)return'請選擇口味';return''}
 
-function PillEditor({ label, values, presets = [], inputValue, onInput, onAdd, onToggle, onRemove, placeholder }) {
-  return <div className="form-group">
-    <label>{label}</label>
-    {presets.length > 0 && <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:8 }}>
-      {presets.map(v => {
-        const selected = values.includes(v)
-        return <button key={v} type="button" onClick={() => onToggle(v)} style={{ padding:'4px 10px', borderRadius:99, fontSize:12, fontFamily:'inherit', cursor:'pointer', border:`1.5px solid ${selected ? 'var(--indigo)' : 'var(--border)'}`, background:selected ? 'var(--indigo-light)' : 'var(--surface)', color:selected ? 'var(--indigo-dark)' : 'var(--text-secondary)', fontWeight:600 }}>{v}</button>
-      })}
-    </div>}
-    <div style={{ display:'flex', gap:8 }}>
-      <input value={inputValue} onChange={e => onInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(),onAdd())} placeholder={placeholder}/>
-      <button type="button" className="btn btn-ghost btn-sm" onClick={onAdd}>加入</button>
-    </div>
-    {values.length > 0 && <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:8 }}>
-      {values.map(v => <span key={v} className="badge badge-indigo" style={{ display:'inline-flex', alignItems:'center', gap:4 }}>{v}<button type="button" onClick={() => onRemove(v)} style={{ background:'none', border:'none', padding:0, cursor:'pointer', color:'inherit', display:'flex' }}><X size={10}/></button></span>)}
-    </div>}
-  </div>
-}
-
-function SpecEditor({ form, setForm }) {
-  const modes = SPEC_MODES[form.category]
-  const mode = form.spec_mode || 'none'
-  const showColor = ['color_size','color_free','color_only'].includes(mode)
-  const showSize = ['color_size','size_only'].includes(mode)
-  const showFlavor = FLAVOR_CATEGORIES.has(form.category)
-  return <div style={{ borderTop:'1.5px solid var(--border)', paddingTop:16, marginTop:4 }}>
-    {modes && <div className="form-group"><label>規格模式</label><div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-      {modes.map(m => <button key={m.id} type="button" onClick={() => setForm(p => ({ ...p, spec_mode:m.id, spec_colors:[], spec_sizes:[] }))} style={{ padding:'6px 12px', borderRadius:8, fontSize:13, fontFamily:'inherit', fontWeight:600, cursor:'pointer', border:`2px solid ${mode === m.id ? 'var(--indigo)' : 'var(--border)'}`, background:mode === m.id ? 'var(--indigo-light)' : 'var(--surface)', color:mode === m.id ? 'var(--indigo-dark)' : 'var(--text-secondary)' }}>{m.label}</button>)}
-    </div></div>}
-    {mode === 'random' && <div style={{ background:'var(--sky-light)', borderRadius:8, padding:'10px 14px', fontSize:13, color:'#0369a1', marginBottom:12 }}>🎲 隨機出貨：訂單不需選顏色或尺寸。</div>}
-    {showColor && <PillEditor label="顏色選項" values={form.spec_colors} presets={PRESET_COLORS} inputValue={form.color_input} onInput={v => setForm(p => ({ ...p, color_input:v }))} onAdd={() => addCustom(setForm,'spec_colors','color_input')} onToggle={v => toggleArray(setForm,'spec_colors',v)} onRemove={v => setForm(p => ({ ...p, spec_colors:p.spec_colors.filter(x => x !== v) }))} placeholder="自訂顏色，按 Enter 加入"/>}
-    {showSize && <PillEditor label="尺碼選項" values={form.spec_sizes} presets={DEFAULT_SIZES} inputValue={form.size_input} onInput={v => setForm(p => ({ ...p, size_input:v }))} onAdd={() => addCustom(setForm,'spec_sizes','size_input',v => v.toUpperCase())} onToggle={v => toggleArray(setForm,'spec_sizes',v)} onRemove={v => setForm(p => ({ ...p, spec_sizes:p.spec_sizes.filter(x => x !== v) }))} placeholder="自訂尺碼（如 26吋、38號）"/>}
-    {showFlavor && <div style={{ background:'var(--amber-light)', border:'1px solid #fde68a', padding:12, borderRadius:10, marginBottom:12 }}>
-      <div style={{ fontSize:12, color:'#92400e', marginBottom:10, fontWeight:700 }}>🍽️ 第二層口味：有設定口味時，下單必須選擇口味。</div>
-      <PillEditor label="口味選項" values={form.spec_flavors} presets={PRESET_FLAVORS[form.category] || []} inputValue={form.flavor_input} onInput={v => setForm(p => ({ ...p, flavor_input:v }))} onAdd={() => addCustom(setForm,'spec_flavors','flavor_input')} onToggle={v => toggleArray(setForm,'spec_flavors',v)} onRemove={v => setForm(p => ({ ...p, spec_flavors:p.spec_flavors.filter(x => x !== v) }))} placeholder="自訂口味，例如：椒鹽、海苔、麻辣"/>
-    </div>}
-    {mode === 'color_free' && <div style={{ background:'var(--emerald-light)', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#065f46', marginBottom:12 }}>✅ Free Size：下單必須選顏色，不需選尺碼。</div>}
-  </div>
-}
-
-function SpecBadges({ product }) {
-  const parts = []
-  if (product.spec_mode === 'random') parts.push(<span key="r" className="badge badge-sky">🎲 隨機</span>)
-  if ((product.spec_colors || []).length) parts.push(<span key="c" className="badge badge-pink">🎨 {product.spec_colors.length} 色</span>)
-  if ((product.spec_sizes || []).length) parts.push(<span key="s" className="badge badge-indigo">📏 {product.spec_sizes.join('/')}</span>)
-  if (product.spec_mode === 'color_free') parts.push(<span key="f" className="badge badge-gray">Free Size</span>)
-  if ((product.spec_flavors || []).length) parts.push(<span key="v" className="badge badge-amber">🍽️ {product.spec_flavors.length} 口味</span>)
-  return parts.length ? <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>{parts}</div> : <span style={{ color:'var(--text-muted)' }}>—</span>
-}
-function validateSpec(product, spec) {
-  const mode = product.spec_mode || 'none'
-  if (['color_size','color_only','color_free'].includes(mode) && !spec.color) return '請選擇顏色'
-  if (['color_size','size_only'].includes(mode) && !spec.size) return '請選擇尺碼'
-  if ((product.spec_flavors || []).length > 0 && !spec.flavor) return '請選擇口味'
-  return ''
-}
-
-export default function Products() {
-  const toast = useToast()
-  const [products,setProducts] = useState([])
-  const [customers,setCustomers] = useState([])
-  const [loading,setLoading] = useState(true)
-  const [search,setSearch] = useState('')
-  const [filterCat,setFilterCat] = useState('all')
-  const [showArchived,setShowArchived] = useState(false)
-  const [showModal,setShowModal] = useState(false)
-  const [form,setForm] = useState({ ...EMPTY_FORM })
-  const [editId,setEditId] = useState(null)
-  const [saving,setSaving] = useState(false)
-  const [confirmArchive,setConfirmArchive] = useState(null)
-  const [batchBuyers,setBatchBuyers] = useState([])
-  const [custSearch,setCustSearch] = useState('')
-  const [custDropOpen,setCustDropOpen] = useState(false)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [prods,custs] = await Promise.all([ProductsAPI.list({ includeArchived:showArchived }),CustomersAPI.list()])
-      setProducts(prods); setCustomers(custs)
-    } catch (err) { toast('載入失敗：' + err.message,'error') }
-    finally { setLoading(false) }
-  },[showArchived,toast])
-  useEffect(() => { load() },[load])
-
-  const filtered = products.filter(p => {
-    const m = p.name.toLowerCase().includes(search.toLowerCase()) || (p.supplier || '').toLowerCase().includes(search.toLowerCase())
-    return m && (filterCat === 'all' || p.category === filterCat)
-  })
-
-  function resetForm() { setForm({ ...EMPTY_FORM, spec_colors:[], spec_sizes:[], spec_flavors:[] }) }
-  function openAdd() { resetForm(); setEditId(null); setBatchBuyers([]); setShowModal(true) }
-  function openEdit(p) {
-    setForm({ name:p.name, price:p.price, cost:p.cost, category:p.category || 'other', supplier:p.supplier || '', note:p.note || '', spec_mode:p.spec_mode || 'none', spec_colors:[...(p.spec_colors || [])], spec_sizes:[...(p.spec_sizes || [])], spec_flavors:[...(p.spec_flavors || [])], color_input:'', size_input:'', flavor_input:'' })
-    setEditId(p.id); setBatchBuyers([]); setShowModal(true)
-  }
-  function setCategory(category) { setForm(p => ({ ...p, category, spec_mode:'none', spec_colors:[], spec_sizes:[], spec_flavors:[] })) }
-  function addBuyer(c) {
-    if (!batchBuyers.some(b => b.id === c.id)) setBatchBuyers(p => [...p,{ id:c.id, name:c.name, rows:[{ qty:1, spec:{ color:'', size:'', flavor:'' } }] }])
-    setCustSearch(''); setCustDropOpen(false)
-  }
-  function updateBuyerRow(buyerId,rowIdx,field,value) {
-    setBatchBuyers(p => p.map(b => b.id !== buyerId ? b : { ...b, rows:b.rows.map((row,i) => i !== rowIdx ? row : field === 'qty' ? { ...row, qty:Math.max(1,Number(value || 1)) } : { ...row, spec:{ ...row.spec,[field]:value } }) }))
-  }
-  function addBuyerRow(buyerId) { setBatchBuyers(p => p.map(b => b.id === buyerId ? { ...b, rows:[...b.rows,{ qty:1, spec:{ color:'', size:'', flavor:'' } }] } : b)) }
-  function removeBuyerRow(buyerId,rowIdx) { setBatchBuyers(p => p.map(b => b.id !== buyerId || b.rows.length === 1 ? b : { ...b, rows:b.rows.filter((_,i) => i !== rowIdx) })) }
-
-  const profit = p => Number(p.price || 0)-Number(p.cost || 0)
-  const margin = p => Number(p.price || 0)>0 ? Math.round(profit(p)/Number(p.price)*100) : 0
-
-  async function save() {
-    if (!form.name.trim() || form.price === '' || form.cost === '') { toast('請填寫名稱、售價與成本','error'); return }
-    setSaving(true)
-    try {
-      if (await ProductsAPI.isDuplicate(form.name.trim(),editId)) { toast(`商品「${form.name}」已存在`,'error'); return }
-      const payload = { name:form.name.trim(), price:Number(form.price), cost:Number(form.cost), category:form.category, supplier:form.supplier.trim(), note:form.note.trim(), spec_mode:form.spec_mode || 'none', spec_colors:form.spec_colors || [], spec_sizes:form.spec_sizes || [], spec_flavors:form.spec_flavors || [] }
-      let product = { id:editId,...payload }
-      if (editId) { await ProductsAPI.update(editId,payload); toast('商品已更新 ✓') }
-      else { product = await ProductsAPI.create(payload); toast('商品已新增 ✓') }
-
-      if (batchBuyers.length > 0) {
-        for (const buyer of batchBuyers) for (const row of buyer.rows) {
-          const err = validateSpec(product,row.spec)
-          if (err) { toast(`「${buyer.name}」${err}`,'error'); return }
-        }
-        const orderPayloads = batchBuyers.map(buyer => {
-          const items = buyer.rows.map(row => snapshotOrderItem(product,{ qty:row.qty, spec:row.spec }))
-          return { customer_id:buyer.id, customer_name:buyer.name, items, total_amount:items.reduce((s,i) => s+i.subtotal,0), note:'' }
-        })
-        await OrdersAPI.batchCreate(orderPayloads)
-        toast(`已原子化建立 ${batchBuyers.length} 位客戶訂單 ✓`)
-      }
-      setShowModal(false); await load()
-    } catch (err) { toast('儲存失敗：' + err.message,'error') }
-    finally { setSaving(false) }
-  }
-
-  async function archiveProduct(p) { try { await ProductsAPI.archive(p.id); setConfirmArchive(null); toast(`已封存「${p.name}」`,'warning'); await load() } catch (err) { toast('封存失敗：'+err.message,'error') } }
-  async function restoreProduct(p) { try { await ProductsAPI.restore(p.id); toast(`已還原「${p.name}」`); await load() } catch (err) { toast('還原失敗：'+err.message,'error') } }
-
-  const filtCusts = filterCustomers(customers,custSearch)
+export default function Products(){
+  const toast=useToast();const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[loading,setLoading]=useState(true);const[search,setSearch]=useState('');const[filterCat,setFilterCat]=useState('all');const[showArchived,setShowArchived]=useState(false);const[showModal,setShowModal]=useState(false);const[form,setForm]=useState({...EMPTY_FORM});const[editId,setEditId]=useState(null);const[saving,setSaving]=useState(false);const[confirmArchive,setConfirmArchive]=useState(null);const[batchBuyers,setBatchBuyers]=useState([]);const[custSearch,setCustSearch]=useState('');const[custDropOpen,setCustDropOpen]=useState(false)
+  const load=useCallback(async()=>{setLoading(true);try{const[prods,custs]=await Promise.all([ProductsAPI.list({includeArchived:showArchived}),CustomersAPI.list()]);setProducts(prods);setCustomers(custs)}catch(err){toast('載入失敗：'+err.message,'error')}finally{setLoading(false)}},[showArchived,toast]);useEffect(()=>{load()},[load])
+  const filtered=products.filter(p=>{const m=p.name.toLowerCase().includes(search.toLowerCase())||(p.supplier||'').toLowerCase().includes(search.toLowerCase());return m&&(filterCat==='all'||p.category===filterCat)})
+  function resetForm(){setForm({...EMPTY_FORM,spec_colors:[],spec_sizes:[],spec_flavors:[]})}
+  function openAdd(){resetForm();setEditId(null);setBatchBuyers([]);setShowModal(true)}
+  function openEdit(p){setForm({name:p.name,price:p.price,cost:p.cost,category:p.category||'other',supplier:p.supplier||'',note:p.note||'',spec_mode:p.spec_mode||'none',spec_colors:[...(p.spec_colors||[])],spec_sizes:[...(p.spec_sizes||[])],spec_flavors:[...(p.spec_flavors||[])],color_input:'',size_input:'',flavor_input:''});setEditId(p.id);setBatchBuyers([]);setShowModal(true)}
+  function setCategory(category){setForm(p=>({...p,category,spec_mode:'none',spec_colors:[],spec_sizes:[],spec_flavors:[]}))}
+  function addBuyer(c){if(!batchBuyers.some(b=>b.id===c.id))setBatchBuyers(p=>[...p,{id:c.id,name:c.name,phone:c.phone||'',phone_last2:getCustomerPhoneLast2(c),rows:[{qty:1,spec:{color:'',size:'',flavor:''}}]}]);setCustSearch('');setCustDropOpen(false)}
+  function updateBuyerRow(buyerId,rowIdx,field,value){setBatchBuyers(p=>p.map(b=>b.id!==buyerId?b:{...b,rows:b.rows.map((row,i)=>i!==rowIdx?row:field==='qty'?{...row,qty:value}:{...row,spec:{...row.spec,[field]:value}})}))}
+  function addBuyerRow(buyerId){setBatchBuyers(p=>p.map(b=>b.id===buyerId?{...b,rows:[...b.rows,{qty:1,spec:{color:'',size:'',flavor:''}}]}:b))}
+  function removeBuyerRow(buyerId,rowIdx){setBatchBuyers(p=>p.map(b=>b.id!==buyerId||b.rows.length===1?b:{...b,rows:b.rows.filter((_,i)=>i!==rowIdx)}))}
+  const profit=p=>Number(p.price||0)-Number(p.cost||0);const margin=p=>Number(p.price||0)>0?Math.round(profit(p)/Number(p.price)*100):0
+  async function save(){
+    if(!form.name.trim()||form.price===''||form.cost===''){toast('請填寫名稱、售價與成本','error');return}setSaving(true)
+    try{if(await ProductsAPI.isDuplicate(form.name.trim(),editId)){toast(`商品「${form.name}」已存在`,'error');return}const payload={name:form.name.trim(),price:Number(form.price),cost:Number(form.cost),category:form.category,supplier:form.supplier.trim(),note:form.note.trim(),spec_mode:form.spec_mode||'none',spec_colors:form.spec_colors||[],spec_sizes:form.spec_sizes||[],spec_flavors:form.spec_flavors||[]};let product={id:editId,...payload};if(editId){await ProductsAPI.update(editId,payload);toast('商品已更新 ✓')}else{product=await ProductsAPI.create(payload);toast('商品已新增 ✓')}
+      if(batchBuyers.length>0){for(const buyer of batchBuyers)for(const row of buyer.rows){if(!Number.isInteger(Number(row.qty))||Number(row.qty)<1){toast(`「${buyer.name}」數量至少為 1`,'error');return}const err=validateSpec(product,row.spec);if(err){toast(`「${buyer.name}」${err}`,'error');return}}const orderPayloads=batchBuyers.map(buyer=>{const items=buyer.rows.map(row=>snapshotOrderItem(product,{qty:row.qty,spec:row.spec}));return{customer_id:buyer.id,customer_name:buyer.name,customer_phone:buyer.phone,customer_phone_last2:buyer.phone_last2,items,total_amount:items.reduce((s,i)=>s+i.subtotal,0),note:''}});await OrdersAPI.batchCreate(orderPayloads);toast(`已原子化建立 ${batchBuyers.length} 位客戶訂單 ✓`)}setShowModal(false);await load()
+    }catch(err){toast('儲存失敗：'+err.message,'error')}finally{setSaving(false)}}
+  async function archiveProduct(p){try{await ProductsAPI.archive(p.id);setConfirmArchive(null);toast(`已封存「${p.name}」`,'warning');await load()}catch(err){toast('封存失敗：'+err.message,'error')}}
+  async function restoreProduct(p){try{await ProductsAPI.restore(p.id);toast(`已還原「${p.name}」`);await load()}catch(err){toast('還原失敗：'+err.message,'error')}}
+  const filtCusts=filterCustomers(customers,custSearch)
 
   return <div className="animate-fade">
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
-      <div><h2 style={{ fontSize:22, fontWeight:800 }}>商品管理</h2><p style={{ color:'var(--text-secondary)', fontSize:13, marginTop:2 }}>共 {products.length} 項　{showArchived ? '含封存商品' : '僅顯示使用中商品'}</p></div>
-      <div style={{ display:'flex', gap:8 }}><button className="btn btn-ghost" onClick={() => setShowArchived(v => !v)}>{showArchived ? '隱藏封存' : '顯示封存'}</button><button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>新增商品</button></div>
-    </div>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12}}><div><h2 style={{fontSize:22,fontWeight:800}}>商品管理</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>共 {products.length} 項　{showArchived?'含封存商品':'僅顯示使用中商品'}</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" onClick={()=>setShowArchived(v=>!v)}>{showArchived?'隱藏封存':'顯示封存'}</button><button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>新增商品</button></div></div>
+    <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}><div className="search-input-wrap" style={{flex:1,minWidth:180}}><Search size={14}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋商品名稱或供應商..." style={{padding:'8px 8px 8px 32px',border:'1.5px solid var(--border)',borderRadius:8,fontSize:14,outline:'none',fontFamily:'inherit',background:'var(--surface)',width:'100%'}}/></div><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><button className={`btn btn-sm ${filterCat==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat('all')}>全部</button>{CATEGORIES.map(c=><button key={c.id} className={`btn btn-sm ${filterCat===c.id?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat(c.id)}>{c.icon} {c.name}</button>)}</div></div>
+    <div className="card"><div className="table-container"><table><thead><tr><th>商品名稱</th><th>分類</th><th>規格</th><th>供應商</th><th>售價</th><th>成本</th><th>毛利</th><th>利潤率</th><th style={{textAlign:'right'}}>操作</th></tr></thead><tbody>{loading&&<tr><td colSpan={9} style={{textAlign:'center',padding:40}}><div className="loading-spinner" style={{margin:'0 auto'}}/></td></tr>}{!loading&&filtered.length===0&&<tr><td colSpan={9}><div className="empty-state"><Tag size={36}/><span>尚無商品</span></div></td></tr>}{filtered.map(p=>{const cat=CAT_MAP[p.category]||CAT_MAP.other;const archived=p.active===false;return <tr key={p.id} style={{opacity:archived?.55:1}}><td><div style={{fontWeight:700}}>{p.name}</div>{archived&&<span className="badge badge-gray">已封存</span>}</td><td><span className="badge" style={{background:cat.color+'22',color:cat.color}}>{cat.icon} {cat.name}</span></td><td><SpecBadges product={p}/></td><td style={{color:'var(--text-secondary)',fontSize:13}}>{p.supplier||'—'}</td><td style={{fontWeight:700}}>NT${Number(p.price||0).toLocaleString()}</td><td>NT${Number(p.cost||0).toLocaleString()}</td><td style={{fontWeight:700,color:profit(p)>=0?'var(--emerald)':'var(--rose)'}}>NT${profit(p).toLocaleString()}</td><td>{margin(p)}%</td><td style={{textAlign:'right'}}><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}>{!archived&&<button className="btn-icon btn" onClick={()=>openEdit(p)}><Pencil size={13}/></button>}{!archived?<button className="btn-icon btn" onClick={()=>setConfirmArchive(p)} style={{color:'var(--rose)'}}><Archive size={13}/></button>:<button className="btn-icon btn" onClick={()=>restoreProduct(p)}><RotateCcw size={13}/></button>}</div></td></tr>})}</tbody></table></div></div>
 
-    <div style={{ display:'flex', gap:10, marginBottom:14, flexWrap:'wrap', alignItems:'center' }}>
-      <div className="search-input-wrap" style={{ flex:1, minWidth:180 }}><Search size={14}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋商品名稱或供應商..." style={{ padding:'8px 8px 8px 32px', border:'1.5px solid var(--border)', borderRadius:8, fontSize:14, outline:'none', fontFamily:'inherit', background:'var(--surface)', width:'100%' }}/></div>
-      <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}><button className={`btn btn-sm ${filterCat === 'all' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterCat('all')}>全部</button>{CATEGORIES.map(c => <button key={c.id} className={`btn btn-sm ${filterCat === c.id ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterCat(c.id)}>{c.icon} {c.name}</button>)}</div>
-    </div>
-
-    <div className="card"><div className="table-container"><table><thead><tr><th>商品名稱</th><th>分類</th><th>規格</th><th>供應商</th><th>售價</th><th>成本</th><th>毛利</th><th>利潤率</th><th style={{ textAlign:'right' }}>操作</th></tr></thead><tbody>
-      {loading && <tr><td colSpan={9} style={{ textAlign:'center', padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
-      {!loading && filtered.length === 0 && <tr><td colSpan={9}><div className="empty-state"><Tag size={36}/><span>尚無商品</span></div></td></tr>}
-      {filtered.map(p => {
-        const cat = CAT_MAP[p.category] || CAT_MAP.other; const archived = p.active === false
-        return <tr key={p.id} style={{ opacity:archived ? .55 : 1 }}>
-          <td><div style={{ fontWeight:700 }}>{p.name}</div>{archived && <span className="badge badge-gray">已封存</span>}</td>
-          <td><span className="badge" style={{ background:cat.color+'22', color:cat.color }}>{cat.icon} {cat.name}</span></td><td><SpecBadges product={p}/></td><td style={{ color:'var(--text-secondary)', fontSize:13 }}>{p.supplier || '—'}</td>
-          <td style={{ fontWeight:700 }}>NT${Number(p.price || 0).toLocaleString()}</td><td style={{ color:'var(--text-secondary)' }}>NT${Number(p.cost || 0).toLocaleString()}</td><td style={{ fontWeight:700, color:profit(p)>=0 ? 'var(--emerald)' : 'var(--rose)' }}>NT${profit(p).toLocaleString()}</td><td>{margin(p)}%</td>
-          <td style={{ textAlign:'right' }}><div style={{ display:'flex', gap:6, justifyContent:'flex-end' }}>{!archived && <button className="btn-icon btn" onClick={() => openEdit(p)}><Pencil size={13}/></button>}{!archived ? <button className="btn-icon btn" onClick={() => setConfirmArchive(p)} style={{ color:'var(--rose)' }} title="封存"><Archive size={13}/></button> : <button className="btn-icon btn" onClick={() => restoreProduct(p)} title="還原"><RotateCcw size={13}/></button>}</div></td>
-        </tr>
-      })}
-    </tbody></table></div></div>
-
-    {showModal && <Modal title={editId ? '編輯商品' : '新增商品'} onClose={() => setShowModal(false)} width={680}>
-      <div className="form-group"><label>商品名稱 *</label><input value={form.name} onChange={e => setForm(p => ({ ...p,name:e.target.value }))} placeholder="例如：韓國海苔禮盒"/></div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}><div className="form-group"><label>售價 (NT$) *</label><input type="number" min="0" value={form.price} onChange={e => setForm(p => ({ ...p,price:e.target.value }))}/></div><div className="form-group"><label>成本 (NT$) *</label><input type="number" min="0" value={form.cost} onChange={e => setForm(p => ({ ...p,cost:e.target.value }))}/></div></div>
-      {form.price !== '' && form.cost !== '' && <div style={{ background:profit(form)>=0 ? 'var(--emerald-light)' : 'var(--rose-light)', borderRadius:8, padding:'8px 12px', marginBottom:14, fontSize:13, display:'flex', gap:16 }}><TrendingUp size={14}/><span>毛利：<strong>NT${profit(form)}</strong></span><span>利潤率：<strong>{margin(form)}%</strong></span></div>}
-      <div className="form-group"><label>商品分類</label><div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>{CATEGORIES.map(c => <button key={c.id} type="button" onClick={() => setCategory(c.id)} style={{ padding:8, borderRadius:8, border:`2px solid ${form.category === c.id ? c.color : 'var(--border)'}`, background:form.category === c.id ? c.color+'18' : 'var(--surface)', cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>{c.icon} {c.name}</button>)}</div></div>
-      <SpecEditor form={form} setForm={setForm}/>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}><div className="form-group"><label>供應商</label><input value={form.supplier} onChange={e => setForm(p => ({ ...p,supplier:e.target.value }))} placeholder="例如：ABC 食品"/></div><div className="form-group"><label>備註</label><input value={form.note} onChange={e => setForm(p => ({ ...p,note:e.target.value }))}/></div></div>
-
-      <div style={{ borderTop:'1.5px solid var(--border)', paddingTop:16, marginTop:4 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>🛒 一鍵批次開單（選填）</div>
-        <div style={{ position:'relative', marginBottom:10 }}><input value={custSearch} onFocus={() => setCustDropOpen(true)} onChange={e => { setCustSearch(e.target.value); setCustDropOpen(true) }} placeholder="搜尋姓名／完整手機／手機末兩碼／Line／FB..."/>{custDropOpen && custSearch && <div className="dropdown-menu" style={{ width:'100%', maxHeight:200, overflowY:'auto' }}>{filtCusts.slice(0,20).map(c => <div key={c.id} className="dropdown-item" onClick={() => addBuyer(c)}><strong>{c.name}</strong>{customerSecondaryLabel(c) && <span style={{ color:'var(--text-muted)', marginLeft:8 }}>{customerSecondaryLabel(c)}</span>}</div>)}</div>}</div>
-        {batchBuyers.map(b => <div key={b.id} style={{ border:'1px solid var(--border)', borderRadius:10, padding:10, marginBottom:8 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}><strong>👤 {b.name}</strong><button type="button" onClick={() => setBatchBuyers(p => p.filter(x => x.id !== b.id))} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--rose)' }}><X size={14}/></button></div>
-          {b.rows.map((row,idx) => <div key={idx} style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:6 }}>
-            {(form.spec_flavors || []).length > 0 && <select value={row.spec.flavor} onChange={e => updateBuyerRow(b.id,idx,'flavor',e.target.value)}><option value="">選口味 *</option>{form.spec_flavors.map(v => <option key={v}>{v}</option>)}</select>}
-            {['color_size','color_only','color_free'].includes(form.spec_mode) && <select value={row.spec.color} onChange={e => updateBuyerRow(b.id,idx,'color',e.target.value)}><option value="">選顏色 *</option>{form.spec_colors.map(v => <option key={v}>{v}</option>)}</select>}
-            {['color_size','size_only'].includes(form.spec_mode) && <select value={row.spec.size} onChange={e => updateBuyerRow(b.id,idx,'size',e.target.value)}><option value="">選尺碼 *</option>{form.spec_sizes.map(v => <option key={v}>{v}</option>)}</select>}
-            <input type="number" min="1" value={row.qty} onChange={e => updateBuyerRow(b.id,idx,'qty',e.target.value)} style={{ width:70 }}/>{b.rows.length > 1 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeBuyerRow(b.id,idx)}>移除</button>}
-          </div>)}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => addBuyerRow(b.id)}><Plus size={12}/>同客戶新增另一規格/口味</button>
-        </div>)}
-      </div>
-      <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:16 }}><button className="btn btn-ghost" onClick={() => setShowModal(false)}>取消</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? '儲存中...' : editId ? '確認更新' : '新增商品'}</button></div>
+    {showModal&&<Modal title={editId?'編輯商品':'新增商品'} onClose={()=>setShowModal(false)} width={680}>
+      <div className="form-group"><label>商品名稱 *</label><input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}><div className="form-group"><label>售價 (NT$) *</label><input type="number" min="0" value={form.price} onChange={e=>setForm(p=>({...p,price:e.target.value}))}/></div><div className="form-group"><label>成本 (NT$) *</label><input type="number" min="0" value={form.cost} onChange={e=>setForm(p=>({...p,cost:e.target.value}))}/></div></div>{form.price!==''&&form.cost!==''&&<div style={{background:profit(form)>=0?'var(--emerald-light)':'var(--rose-light)',borderRadius:8,padding:'8px 12px',marginBottom:14,fontSize:13,display:'flex',gap:16}}><TrendingUp size={14}/><span>毛利：<strong>NT${profit(form)}</strong></span><span>利潤率：<strong>{margin(form)}%</strong></span></div>}
+      <div className="form-group"><label>商品分類</label><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>{CATEGORIES.map(c=><button key={c.id} type="button" onClick={()=>setCategory(c.id)} style={{padding:8,borderRadius:8,border:`2px solid ${form.category===c.id?c.color:'var(--border)'}`,background:form.category===c.id?c.color+'18':'var(--surface)',cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>{c.icon} {c.name}</button>)}</div></div><SpecEditor form={form} setForm={setForm}/><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}><div className="form-group"><label>供應商</label><input value={form.supplier} onChange={e=>setForm(p=>({...p,supplier:e.target.value}))}/></div><div className="form-group"><label>備註</label><input value={form.note} onChange={e=>setForm(p=>({...p,note:e.target.value}))}/></div></div>
+      <div style={{borderTop:'1.5px solid var(--border)',paddingTop:16,marginTop:4}}><div style={{fontWeight:700,fontSize:13,marginBottom:10}}>🛒 一鍵批次開單（選填）</div><div style={{position:'relative',marginBottom:10}}><input value={custSearch} onFocus={()=>setCustDropOpen(true)} onChange={e=>{setCustSearch(e.target.value);setCustDropOpen(true)}} placeholder="搜尋姓名／完整手機／手機末兩碼／Line／FB..."/>{custDropOpen&&custSearch&&<div className="dropdown-menu" style={{width:'100%',maxHeight:200,overflowY:'auto'}}>{filtCusts.slice(0,20).map(c=><div key={c.id} className="dropdown-item" onClick={()=>addBuyer(c)}><strong>{c.name}</strong>{customerSecondaryLabel(c)&&<span style={{color:'var(--text-muted)',marginLeft:8}}>{customerSecondaryLabel(c)}</span>}</div>)}</div>}</div>
+        {batchBuyers.map(b=><div key={b.id} style={{border:'1px solid var(--border)',borderRadius:10,padding:10,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><strong>👤 {b.name}{b.phone_last2?`（末碼 ${b.phone_last2}）`:''}</strong><button type="button" onClick={()=>setBatchBuyers(p=>p.filter(x=>x.id!==b.id))} style={{background:'none',border:'none',cursor:'pointer',color:'var(--rose)'}}><X size={14}/></button></div>{b.rows.map((row,idx)=><div key={idx} style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>{(form.spec_flavors||[]).length>0&&<select value={row.spec.flavor} onChange={e=>updateBuyerRow(b.id,idx,'flavor',e.target.value)}><option value="">選口味 *</option>{form.spec_flavors.map(v=><option key={v}>{v}</option>)}</select>}{['color_size','color_only','color_free'].includes(form.spec_mode)&&<select value={row.spec.color} onChange={e=>updateBuyerRow(b.id,idx,'color',e.target.value)}><option value="">選顏色 *</option>{form.spec_colors.map(v=><option key={v}>{v}</option>)}</select>}{['color_size','size_only'].includes(form.spec_mode)&&<select value={row.spec.size} onChange={e=>updateBuyerRow(b.id,idx,'size',e.target.value)}><option value="">選尺碼 *</option>{form.spec_sizes.map(v=><option key={v}>{v}</option>)}</select>}<QuantityInput value={row.qty} min={1} onChange={value=>updateBuyerRow(b.id,idx,'qty',value)} ariaLabel={`${b.name}數量`} style={{width:75}}/>{b.rows.length>1&&<button type="button" className="btn btn-ghost btn-sm" onClick={()=>removeBuyerRow(b.id,idx)}>移除</button>}</div>)}<button type="button" className="btn btn-ghost btn-sm" onClick={()=>addBuyerRow(b.id)}><Plus size={12}/>同客戶新增另一規格/口味</button></div>)}
+      </div><div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}><button className="btn btn-ghost" onClick={()=>setShowModal(false)}>取消</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving?'儲存中...':editId?'確認更新':'新增商品'}</button></div>
     </Modal>}
-
-    {confirmArchive && <ConfirmDialog message={`確定要封存「${confirmArchive.name}」？\n歷史訂單與報表會保留，不會刪除資料。`} onConfirm={() => archiveProduct(confirmArchive)} onCancel={() => setConfirmArchive(null)}/>} 
+    {confirmArchive&&<ConfirmDialog message={`確定要封存「${confirmArchive.name}」？\n歷史訂單與報表會保留，不會刪除資料。`} onConfirm={()=>archiveProduct(confirmArchive)} onCancel={()=>setConfirmArchive(null)}/>} 
   </div>
 }
