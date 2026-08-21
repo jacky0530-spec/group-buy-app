@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ProductsAPI, CustomersAPI, OrdersAPI, snapshotOrderItem } from '../lib/db'
+import { filterCustomers, customerSecondaryLabel } from '../lib/customerSearch'
 import { useToast, Modal, ConfirmDialog } from '../components/UI'
 import { Plus, Pencil, Archive, Search, TrendingUp, X, Tag, RotateCcw } from 'lucide-react'
 
@@ -187,7 +188,7 @@ export default function Products() {
   async function archiveProduct(p) { try { await ProductsAPI.archive(p.id); setConfirmArchive(null); toast(`已封存「${p.name}」`,'warning'); await load() } catch (err) { toast('封存失敗：'+err.message,'error') } }
   async function restoreProduct(p) { try { await ProductsAPI.restore(p.id); toast(`已還原「${p.name}」`); await load() } catch (err) { toast('還原失敗：'+err.message,'error') } }
 
-  const filtCusts = customers.filter(c => c.name.toLowerCase().includes(custSearch.toLowerCase()) || (c.line_nick || '').toLowerCase().includes(custSearch.toLowerCase()))
+  const filtCusts = filterCustomers(customers,custSearch)
 
   return <div className="animate-fade">
     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
@@ -224,7 +225,7 @@ export default function Products() {
 
       <div style={{ borderTop:'1.5px solid var(--border)', paddingTop:16, marginTop:4 }}>
         <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>🛒 一鍵批次開單（選填）</div>
-        <div style={{ position:'relative', marginBottom:10 }}><input value={custSearch} onFocus={() => setCustDropOpen(true)} onChange={e => { setCustSearch(e.target.value); setCustDropOpen(true) }} placeholder="搜尋客戶姓名或 Line 暱稱..."/>{custDropOpen && custSearch && <div className="dropdown-menu" style={{ width:'100%', maxHeight:200, overflowY:'auto' }}>{filtCusts.slice(0,20).map(c => <div key={c.id} className="dropdown-item" onClick={() => addBuyer(c)}><strong>{c.name}</strong>{c.line_nick && <span style={{ color:'var(--text-muted)', marginLeft:8 }}>Line: {c.line_nick}</span>}</div>)}</div>}</div>
+        <div style={{ position:'relative', marginBottom:10 }}><input value={custSearch} onFocus={() => setCustDropOpen(true)} onChange={e => { setCustSearch(e.target.value); setCustDropOpen(true) }} placeholder="搜尋姓名／完整手機／手機末兩碼／Line／FB..."/>{custDropOpen && custSearch && <div className="dropdown-menu" style={{ width:'100%', maxHeight:200, overflowY:'auto' }}>{filtCusts.slice(0,20).map(c => <div key={c.id} className="dropdown-item" onClick={() => addBuyer(c)}><strong>{c.name}</strong>{customerSecondaryLabel(c) && <span style={{ color:'var(--text-muted)', marginLeft:8 }}>{customerSecondaryLabel(c)}</span>}</div>)}</div>}</div>
         {batchBuyers.map(b => <div key={b.id} style={{ border:'1px solid var(--border)', borderRadius:10, padding:10, marginBottom:8 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}><strong>👤 {b.name}</strong><button type="button" onClick={() => setBatchBuyers(p => p.filter(x => x.id !== b.id))} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--rose)' }}><X size={14}/></button></div>
           {b.rows.map((row,idx) => <div key={idx} style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:6 }}>
