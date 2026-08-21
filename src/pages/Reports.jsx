@@ -1,247 +1,52 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { OrdersAPI, ProductsAPI, effectiveOrderAmount, orderSnapshotCost } from '../lib/db'
+import { ExpensesAPI, expenseSignedAmount, EXPENSE_TYPES } from '../lib/expenses'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
-import { TrendingUp, DollarSign, Package, Search, Printer, Download, WalletCards, ReceiptText, Building2 } from 'lucide-react'
+import { TrendingUp, DollarSign, Package, Search, Printer, Download, WalletCards, ReceiptText, Truck } from 'lucide-react'
 
 const CAT_COLORS = { daily:'#3b82f6', frozen:'#06b6d4', clothing:'#ec4899', biscuit:'#f59e0b', candy:'#8b5cf6', other:'#6b7280' }
 const CAT_LABELS = { daily:'日用品', frozen:'冷凍食品', clothing:'服飾', biscuit:'餅乾', candy:'糖果', other:'其他' }
 const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
 const dateText = value => value ? new Date(value).toLocaleDateString('zh-TW') : '—'
+const monthKey = value => { const d = new Date(value); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` }
 
-function specText(item) {
-  const spec = item?.spec || {}
-  return [spec.flavor && `口味:${spec.flavor}`, spec.color, spec.size].filter(Boolean).join(' / ')
-}
+function specText(item) { const spec=item?.spec||{}; return [spec.flavor&&`口味:${spec.flavor}`,spec.color,spec.size].filter(Boolean).join(' / ') }
+function periodBounds(mode,month,start,end){if(mode==='month'&&month){const[y,m]=month.split('-').map(Number);return[new Date(y,m-1,1).toISOString(),new Date(y,m,0,23,59,59,999).toISOString()]}if(mode==='range'&&start&&end)return[new Date(`${start}T00:00:00`).toISOString(),new Date(`${end}T23:59:59`).toISOString()];return[null,null]}
+function expenseInPeriod(row,mode,month,start,end){if(mode==='all')return true;if(mode==='month')return row.month===month;if(mode==='range'){if(!start||!end)return false;const first=`${row.month}-01`;const[y,m]=row.month.split('-').map(Number);const last=`${row.month}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;return last>=start&&first<=end}return false}
+function downloadBlob(filename,content,type){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
+function escapeCsv(value){return `"${String(value??'').replaceAll('"','""')}"`}
+function exportCsv(orders,expenses,filename){const rows=[['類別','日期/月','客戶/廠商','商品/費用類型','規格/備註','數量','收入','成本/費用']];orders.forEach(o=>(o.items||[]).forEach(i=>rows.push(['訂單',dateText(o.order_date),o.customer_name,i.product_name||i.name,specText(i),i.qty,Number(i.sale_price??i.price??0)*Number(i.qty||0),Number(i.cost_price||0)*Number(i.qty||0)])));expenses.forEach(r=>rows.push(['其他費用',r.month,r.supplier,EXPENSE_TYPES.find(t=>t.id===r.type)?.label||r.type,r.note||'',1,'',expenseSignedAmount(r)]));downloadBlob(filename,'\ufeff'+rows.map(r=>r.map(escapeCsv).join(',')).join('\n'),'text/csv;charset=utf-8')}
 
-function periodBounds(mode, month, start, end) {
-  if (mode === 'month' && month) {
-    const [year, mon] = month.split('-').map(Number)
-    return [new Date(year, mon - 1, 1, 0, 0, 0).toISOString(), new Date(year, mon, 0, 23, 59, 59, 999).toISOString()]
-  }
-  if (mode === 'range' && start && end) return [new Date(`${start}T00:00:00`).toISOString(), new Date(`${end}T23:59:59`).toISOString()]
-  return [null, null]
-}
+export default function Reports(){
+  const currentMonth=useMemo(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`},[])
+  const[orders,setOrders]=useState([]),[products,setProducts]=useState([]),[expenses,setExpenses]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState('')
+  const[filterMode,setFilterMode]=useState('month'),[inputMonth,setInputMonth]=useState(currentMonth),[inputStart,setInputStart]=useState(''),[inputEnd,setInputEnd]=useState(''),[activeTab,setActiveTab]=useState('summary'),[trackProd,setTrackProd]=useState(null),[prodSearch,setProdSearch]=useState('')
+  const loadBase=useCallback(async()=>{try{const[p,e]=await Promise.all([ProductsAPI.list({includeArchived:true}),ExpensesAPI.list()]);setProducts(p);setExpenses(e)}catch(err){setError(`報表基礎資料載入失敗：${err.message}`)}},[])
+  const loadOrders=useCallback(async()=>{if(filterMode==='range'&&(!inputStart||!inputEnd))return;setLoading(true);setError('');try{const[start,end]=periodBounds(filterMode,inputMonth,inputStart,inputEnd);setOrders(start&&end?await OrdersAPI.listByDateRange(start,end):await OrdersAPI.list())}catch(err){setError(`訂單報表載入失敗：${err.message}`)}finally{setLoading(false)}},[filterMode,inputMonth,inputStart,inputEnd])
+  useEffect(()=>{loadBase()},[loadBase]);useEffect(()=>{loadOrders()},[loadOrders])
 
-function downloadBlob(filename, content, type) {
-  const blob = new Blob([content], { type })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
-}
-
-function escapeCsv(value) {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
-function exportCsv(orders, filename) {
-  const rows = [['日期','客戶','商品','規格/口味','數量','售價','成本','狀態','收款','退款','有效訂單金額']]
-  orders.forEach(order => (order.items || []).forEach(item => rows.push([
-    dateText(order.order_date), order.customer_name, item.product_name || item.name, specText(item), item.qty,
-    item.sale_price ?? item.price ?? 0, item.cost_price ?? '', order.status, order.payment_status,
-    order.refund_amount || 0, effectiveOrderAmount(order),
-  ])))
-  downloadBlob(filename, '\ufeff' + rows.map(row => row.map(escapeCsv).join(',')).join('\n'), 'text/csv;charset=utf-8')
-}
-
-function exportExcel(orders, filename) {
-  const body = orders.flatMap(order => (order.items || []).map(item => `<tr><td>${dateText(order.order_date)}</td><td>${order.customer_name || ''}</td><td>${item.product_name || item.name || ''}</td><td>${specText(item)}</td><td>${item.qty || 0}</td><td>${item.sale_price ?? item.price ?? 0}</td><td>${item.cost_price ?? ''}</td><td>${order.status || ''}</td><td>${order.payment_status || ''}</td><td>${order.refund_amount || 0}</td><td>${effectiveOrderAmount(order)}</td></tr>`)).join('')
-  const html = `\ufeff<html><head><meta charset="utf-8"></head><body><table border="1"><tr><th>日期</th><th>客戶</th><th>商品</th><th>規格/口味</th><th>數量</th><th>售價</th><th>成本</th><th>狀態</th><th>收款</th><th>退款</th><th>有效訂單金額</th></tr>${body}</table></body></html>`
-  downloadBlob(filename, html, 'application/vnd.ms-excel;charset=utf-8')
-}
-
-export default function Reports() {
-  const currentMonth = useMemo(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-  }, [])
-
-  const [orders, setOrders] = useState([])
-  const [products, setProducts] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [filterMode, setFilterMode] = useState('month')
-  const [inputMonth, setInputMonth] = useState(currentMonth)
-  const [inputStart, setInputStart] = useState('')
-  const [inputEnd, setInputEnd] = useState('')
-  const [activeTab, setActiveTab] = useState('summary')
-  const [trackProd, setTrackProd] = useState(null)
-  const [prodSearch, setProdSearch] = useState('')
-
-  const loadProducts = useCallback(async () => {
-    try { setProducts(await ProductsAPI.list({ includeArchived:true })) }
-    catch (err) { setError(`商品主檔載入失敗：${err.message}`) }
-  }, [])
-
-  const loadOrders = useCallback(async () => {
-    if (filterMode === 'range' && (!inputStart || !inputEnd)) return
-    setLoading(true)
-    setError('')
-    try {
-      const [start, end] = periodBounds(filterMode, inputMonth, inputStart, inputEnd)
-      setOrders(start && end ? await OrdersAPI.listByDateRange(start, end) : await OrdersAPI.list())
-    } catch (err) {
-      setError(`訂單報表載入失敗：${err.message}`)
-    } finally {
-      setLoading(false)
-    }
-  }, [filterMode, inputMonth, inputStart, inputEnd])
-
-  useEffect(() => { loadProducts() }, [loadProducts])
-  useEffect(() => { loadOrders() }, [loadOrders])
-
-  const currentCostMap = Object.fromEntries(products.map(p => [p.id, Number(p.cost || 0)]))
-  const currentCatMap = Object.fromEntries(products.map(p => [p.id, p.category || 'other']))
-  const validOrders = orders.filter(order => order.status !== 'cancelled')
-  const shippedOrders = validOrders.filter(order => order.status === 'shipped')
-  const cancelledOrders = orders.filter(order => order.status === 'cancelled')
-
-  const orderValue = validOrders.reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
-  const shippedRevenue = shippedOrders.reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
-  const shippedCost = shippedOrders.reduce((sum, order) => sum + orderSnapshotCost(order, currentCostMap), 0)
-  const shippedProfit = shippedRevenue - shippedCost
-  const collectedAmount = validOrders.filter(order => ['paid','partial_refund','refunded'].includes(order.payment_status)).reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
-  const outstandingAmount = validOrders.filter(order => order.payment_status === 'unpaid').reduce((sum, order) => sum + effectiveOrderAmount(order), 0)
-  const refundAmount = validOrders.reduce((sum, order) => sum + Number(order.refund_amount || 0), 0)
-  const cancelledAmount = cancelledOrders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0)
-  const supplierPaidCost = validOrders.filter(order => order.payable_status === 'paid').reduce((sum, order) => sum + orderSnapshotCost(order, currentCostMap), 0)
-  const payableOutstanding = validOrders.filter(order => order.payable_status !== 'paid').reduce((sum, order) => sum + orderSnapshotCost(order, currentCostMap), 0)
-  const netCashFlow = collectedAmount - supplierPaidCost
-
-  const trendData = useMemo(() => {
-    const map = {}
-    shippedOrders.forEach(order => {
-      const d = new Date(order.order_date)
-      const key = filterMode === 'all' ? `${d.getFullYear()}/${d.getMonth() + 1}月` : `${d.getMonth() + 1}/${d.getDate()}`
-      map[key] = (map[key] || 0) + effectiveOrderAmount(order)
-    })
-    return Object.entries(map).map(([date, amount]) => ({ date, amount }))
-  }, [shippedOrders, filterMode])
-
-  const topProds = useMemo(() => {
-    const map = {}
-    validOrders.forEach(order => (order.items || []).forEach(item => {
-      const key = item.product_id || item.id || item.product_name || item.name
-      if (!map[key]) map[key] = { name:item.product_name || item.name || '未命名商品', qty:0, revenue:0 }
-      map[key].qty += Number(item.qty || 0)
-      map[key].revenue += Number(item.sale_price ?? item.price ?? 0) * Number(item.qty || 0)
-    }))
-    return Object.values(map).sort((a,b) => b.qty - a.qty).slice(0, 8).map(row => ({ ...row, chartName:row.name.length > 12 ? `${row.name.slice(0,12)}…` : row.name }))
-  }, [validOrders])
-
-  const catData = useMemo(() => {
-    const map = {}
-    validOrders.forEach(order => (order.items || []).forEach(item => {
-      const category = item.category || currentCatMap[item.product_id || item.id] || 'other'
-      map[category] = (map[category] || 0) + Number(item.sale_price ?? item.price ?? 0) * Number(item.qty || 0)
-    }))
-    return Object.entries(map).map(([category, value]) => ({ name:CAT_LABELS[category] || category, value, color:CAT_COLORS[category] || '#999' }))
-  }, [validOrders, currentCatMap])
-
-  const filteredProducts = products.filter(p => p.active !== false && p.name.toLowerCase().includes(prodSearch.toLowerCase()))
-  const trackBuyers = useMemo(() => {
-    if (!trackProd) return []
-    const map = {}
-    validOrders.forEach(order => {
-      const matches = (order.items || []).filter(item => (item.product_id || item.id) === trackProd.id || (item.product_name || item.name) === trackProd.name)
-      if (!matches.length) return
-      const key = order.customer_id || `${order.customer_name}|${order.customer_phone_last2 || ''}`
-      if (!map[key]) map[key] = { name:order.customer_name, phone_last2:order.customer_phone_last2 || '', qty:0, pending:0, total:0 }
-      matches.forEach(item => {
-        const qty = Number(item.qty || 0)
-        map[key].qty += qty
-        if (order.status === 'pending') map[key].pending += qty
-        map[key].total += Number(item.sale_price ?? item.price ?? 0) * qty
-      })
-    })
-    return Object.values(map).sort((a,b) => b.qty - a.qty)
-  }, [trackProd, validOrders])
-
-  const supplierRows = useMemo(() => {
-    const map = {}
-    validOrders.forEach(order => (order.items || []).forEach(item => {
-      const supplier = item.supplier || '未指定供應商'
-      if (!map[supplier]) map[supplier] = { supplier, total:0, paid:0, outstanding:0 }
-      const fallback = currentCostMap[item.product_id || item.id] || 0
-      const cost = Number(item.cost_price ?? fallback) * Number(item.qty || 0)
-      map[supplier].total += cost
-      if (order.payable_status === 'paid') map[supplier].paid += cost
-      else map[supplier].outstanding += cost
-    }))
-    return Object.values(map).sort((a,b) => b.outstanding - a.outstanding)
-  }, [validOrders, currentCostMap])
-
-  const monthlyRows = useMemo(() => {
-    const map = {}
-    shippedOrders.forEach(order => {
-      const d = new Date(order.order_date)
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}`
-      if (!map[key]) map[key] = { month:key, revenue:0, cost:0 }
-      map[key].revenue += effectiveOrderAmount(order)
-      map[key].cost += orderSnapshotCost(order, currentCostMap)
-    })
-    return Object.values(map).sort((a,b) => a.month.localeCompare(b.month)).map(row => ({ ...row, profit:row.revenue - row.cost }))
-  }, [shippedOrders, currentCostMap])
-
-  const periodLabel = filterMode === 'all' ? '全部期間' : filterMode === 'month' ? inputMonth : `${inputStart || '?'}-${inputEnd || '?'}`
+  const periodExpenses=expenses.filter(r=>expenseInPeriod(r,filterMode,inputMonth,inputStart,inputEnd)),expenseNet=periodExpenses.reduce((s,r)=>s+expenseSignedAmount(r),0),expenseShipping=periodExpenses.filter(r=>r.type==='shipping').reduce((s,r)=>s+Number(r.amount||0),0),expenseOther=periodExpenses.filter(r=>r.type==='other').reduce((s,r)=>s+Number(r.amount||0),0),expenseDiscount=periodExpenses.filter(r=>r.type==='discount').reduce((s,r)=>s+Number(r.amount||0),0)
+  const currentCostMap=Object.fromEntries(products.map(p=>[p.id,Number(p.cost||0)])),currentCatMap=Object.fromEntries(products.map(p=>[p.id,p.category||'other']))
+  const validOrders=orders.filter(o=>o.status!=='cancelled'),shippedOrders=validOrders.filter(o=>o.status==='shipped'),cancelledOrders=orders.filter(o=>o.status==='cancelled')
+  const orderValue=validOrders.reduce((s,o)=>s+effectiveOrderAmount(o),0),shippedRevenue=shippedOrders.reduce((s,o)=>s+effectiveOrderAmount(o),0),shippedCost=shippedOrders.reduce((s,o)=>s+orderSnapshotCost(o,currentCostMap),0),baseProfit=shippedRevenue-shippedCost,adjustedProfit=baseProfit-expenseNet
+  const collectedAmount=validOrders.filter(o=>['paid','partial_refund','refunded'].includes(o.payment_status)).reduce((s,o)=>s+effectiveOrderAmount(o),0),outstandingAmount=validOrders.filter(o=>o.payment_status==='unpaid').reduce((s,o)=>s+effectiveOrderAmount(o),0),refundAmount=validOrders.reduce((s,o)=>s+Number(o.refund_amount||0),0),cancelledAmount=cancelledOrders.reduce((s,o)=>s+Number(o.total_amount||0),0),supplierPaidCost=validOrders.filter(o=>o.payable_status==='paid').reduce((s,o)=>s+orderSnapshotCost(o,currentCostMap),0),payableOutstanding=validOrders.filter(o=>o.payable_status!=='paid').reduce((s,o)=>s+orderSnapshotCost(o,currentCostMap),0),netCashFlow=collectedAmount-supplierPaidCost-expenseNet
+  const trendData=useMemo(()=>{const map={};shippedOrders.forEach(o=>{const d=new Date(o.order_date),k=filterMode==='all'?`${d.getFullYear()}/${d.getMonth()+1}月`:`${d.getMonth()+1}/${d.getDate()}`;map[k]=(map[k]||0)+effectiveOrderAmount(o)});return Object.entries(map).map(([date,amount])=>({date,amount}))},[shippedOrders,filterMode])
+  const topProds=useMemo(()=>{const map={};validOrders.forEach(o=>(o.items||[]).forEach(i=>{const k=i.product_id||i.id||i.product_name||i.name;if(!map[k])map[k]={name:i.product_name||i.name||'未命名商品',qty:0};map[k].qty+=Number(i.qty||0)}));return Object.values(map).sort((a,b)=>b.qty-a.qty).slice(0,8).map(r=>({...r,chartName:r.name.length>12?`${r.name.slice(0,12)}…`:r.name}))},[validOrders])
+  const catData=useMemo(()=>{const map={};validOrders.forEach(o=>(o.items||[]).forEach(i=>{const c=i.category||currentCatMap[i.product_id||i.id]||'other';map[c]=(map[c]||0)+Number(i.sale_price??i.price??0)*Number(i.qty||0)}));return Object.entries(map).map(([c,value])=>({name:CAT_LABELS[c]||c,value,color:CAT_COLORS[c]||'#999'}))},[validOrders,currentCatMap])
+  const filteredProducts=products.filter(p=>p.active!==false&&p.name.toLowerCase().includes(prodSearch.toLowerCase()))
+  const trackBuyers=useMemo(()=>{if(!trackProd)return[];const map={};validOrders.forEach(o=>{const matches=(o.items||[]).filter(i=>(i.product_id||i.id)===trackProd.id||(i.product_name||i.name)===trackProd.name);if(!matches.length)return;const k=o.customer_id||`${o.customer_name}|${o.customer_phone_last2||''}`;if(!map[k])map[k]={name:o.customer_name,phone_last2:o.customer_phone_last2||'',qty:0,pending:0,total:0};matches.forEach(i=>{const q=Number(i.qty||0);map[k].qty+=q;if(o.status==='pending')map[k].pending+=q;map[k].total+=Number(i.sale_price??i.price??0)*q})});return Object.values(map).sort((a,b)=>b.qty-a.qty)},[trackProd,validOrders])
+  const supplierRows=useMemo(()=>{const map={};validOrders.forEach(o=>(o.items||[]).forEach(i=>{const supplier=i.supplier||'未指定供應商';if(!map[supplier])map[supplier]={supplier,total:0,outstanding:0,adjustments:0};const fallback=currentCostMap[i.product_id||i.id]??0,cost=Number(i.cost_price??fallback)*Number(i.qty||0);map[supplier].total+=cost;if(o.payable_status!=='paid')map[supplier].outstanding+=cost}));periodExpenses.forEach(e=>{if(!map[e.supplier])map[e.supplier]={supplier:e.supplier,total:0,outstanding:0,adjustments:0};map[e.supplier].adjustments+=expenseSignedAmount(e)});return Object.values(map).sort((a,b)=>(b.outstanding+b.adjustments)-(a.outstanding+a.adjustments))},[validOrders,currentCostMap,periodExpenses])
+  const monthlyRows=useMemo(()=>{const map={};shippedOrders.forEach(o=>{const k=monthKey(o.order_date);if(!map[k])map[k]={month:k,revenue:0,cost:0,adjustments:0};map[k].revenue+=effectiveOrderAmount(o);map[k].cost+=orderSnapshotCost(o,currentCostMap)});expenses.forEach(e=>{if(!map[e.month])map[e.month]={month:e.month,revenue:0,cost:0,adjustments:0};map[e.month].adjustments+=expenseSignedAmount(e)});return Object.values(map).sort((a,b)=>a.month.localeCompare(b.month)).map(r=>({...r,profit:r.revenue-r.cost-r.adjustments}))},[shippedOrders,currentCostMap,expenses])
+  const periodLabel=filterMode==='all'?'全部期間':filterMode==='month'?inputMonth:`${inputStart||'?'}-${inputEnd||'?'}`
 
   return <div className="animate-fade">
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
-      <div><h2 style={{ fontSize:22, fontWeight:800 }}>銷售與財務報表</h2><p style={{ color:'var(--text-secondary)', fontSize:13, marginTop:2 }}>取消單排除、退款扣除、成本採下單時快照</p></div>
-      <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}><button className="btn btn-ghost" onClick={() => exportCsv(validOrders, `group-buy-${periodLabel}.csv`)}><Download size={13}/>CSV</button><button className="btn btn-ghost" onClick={() => exportExcel(validOrders, `group-buy-${periodLabel}.xls`)}><Download size={13}/>Excel</button><button className="btn btn-ghost" onClick={() => window.print()}><Printer size={14}/>列印</button></div>
-    </div>
-
-    <div style={{ background:'var(--surface)', borderRadius:'var(--radius)', padding:'14px 16px', marginBottom:18, display:'flex', gap:12, flexWrap:'wrap', alignItems:'center', boxShadow:'var(--shadow-sm)' }}>
-      {[['month','指定月份'],['range','自訂區間'],['all','全部歷史']].map(([value,label]) => <button key={value} className={`btn btn-sm ${filterMode === value ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterMode(value)}>{label}</button>)}
-      {filterMode === 'month' && <input type="month" value={inputMonth} onChange={e => setInputMonth(e.target.value)}/>} 
-      {filterMode === 'range' && <><input type="date" value={inputStart} onChange={e => setInputStart(e.target.value)}/><span>〜</span><input type="date" value={inputEnd} onChange={e => setInputEnd(e.target.value)}/></>}
-      <span style={{ marginLeft:'auto', color:'var(--text-muted)', fontSize:12 }}>{loading ? '讀取中...' : `${orders.length} 筆`}</span>
-    </div>
-
-    {error && <div style={{ background:'var(--rose-light)', color:'var(--rose)', padding:12, borderRadius:8, marginBottom:14 }}>{error}</div>}
-
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:12, marginBottom:18 }}>
-      {[
-        { label:'有效訂單總額', value:orderValue, icon:ReceiptText, bg:'linear-gradient(135deg,#6366f1,#4338ca)' },
-        { label:'已出貨營收', value:shippedRevenue, icon:DollarSign, bg:'linear-gradient(135deg,#10b981,#059669)' },
-        { label:'已收款淨額', value:collectedAmount, icon:WalletCards, bg:'linear-gradient(135deg,#0ea5e9,#0284c7)' },
-        { label:'未收款', value:outstandingAmount, icon:ReceiptText, bg:'linear-gradient(135deg,#f59e0b,#d97706)' },
-        { label:'已出貨毛利', value:shippedProfit, icon:TrendingUp, bg:'linear-gradient(135deg,#14b8a6,#0f766e)' },
-        { label:'退款', value:refundAmount, icon:Package, bg:'linear-gradient(135deg,#f43f5e,#be123c)' },
-      ].map(card => { const Icon = card.icon; return <div key={card.label} className="stat-card" style={{ background:card.bg }}><div style={{ fontSize:11, fontWeight:700, opacity:.8 }}>{card.label}</div><div style={{ fontSize:21, fontWeight:900, marginTop:5 }}>{loading ? '—' : money(card.value)}</div><Icon size={27} style={{ position:'absolute', right:14, top:'50%', transform:'translateY(-50%)', opacity:.22 }}/></div> })}
-    </div>
-
-    <div style={{ background:'var(--surface-2)', borderRadius:10, padding:'9px 12px', marginBottom:18, fontSize:12, color:'var(--text-secondary)' }}>有效訂單＝非取消訂單－退款；已出貨毛利＝已出貨營收－歷史成本快照。取消金額 {money(cancelledAmount)} 不計入營收、毛利、應收與應付。買家未出貨查詢已整合至「未出貨報表」。</div>
-
-    <div className="tabs" style={{ marginBottom:18 }}><button className={`tab ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}>📊 銷售分析</button><button className={`tab ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => setActiveTab('finance')}>💰 財務 / 損益</button></div>
-
-    {activeTab === 'summary' && <>
-      <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:14, marginBottom:18 }}>
-        <div className="card"><div className="card-header" style={{ fontWeight:700 }}>📈 已出貨營收趨勢</div><div style={{ padding:'16px 8px' }}>{trendData.length === 0 ? <div className="empty-state">此期間無已出貨資料</div> : <ResponsiveContainer width="100%" height={220}><LineChart data={trendData}><XAxis dataKey="date" tick={{ fontSize:11 }}/><YAxis tick={{ fontSize:11 }}/><Tooltip formatter={value => [money(value),'已出貨營收']}/><Line type="monotone" dataKey="amount" stroke="#6366f1" strokeWidth={2.5}/></LineChart></ResponsiveContainer>}</div></div>
-        <div className="card"><div className="card-header" style={{ fontWeight:700 }}>🏷️ 分類佔比</div><div style={{ padding:'16px 8px' }}>{catData.length === 0 ? <div className="empty-state">無資料</div> : <ResponsiveContainer width="100%" height={220}><PieChart><Pie data={catData} cx="50%" cy="50%" outerRadius={76} dataKey="value" label={({name,percent}) => `${name} ${Math.round(percent * 100)}%`} labelLine={false} fontSize={10}>{catData.map((entry,index) => <Cell key={`${entry.name}-${index}`} fill={entry.color}/>)}</Pie><Tooltip formatter={value => [money(value)]}/></PieChart></ResponsiveContainer>}</div></div>
-      </div>
-      <div className="card" style={{ marginBottom:18 }}><div className="card-header" style={{ fontWeight:700 }}>🏆 熱銷商品 Top 8</div><div style={{ padding:'16px 8px' }}>{topProds.length === 0 ? <div className="empty-state">無資料</div> : <ResponsiveContainer width="100%" height={230}><BarChart data={topProds} layout="vertical"><XAxis type="number" tick={{ fontSize:11 }}/><YAxis dataKey="chartName" type="category" width={115} tick={{ fontSize:11 }}/><Tooltip formatter={value => [`${value} 件`,'數量']}/><Bar dataKey="qty" fill="#6366f1"/></BarChart></ResponsiveContainer>}</div></div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-        <div className="card"><div className="card-header" style={{ fontWeight:700 }}>🔍 商品買家追蹤</div><div className="card-body"><div className="search-input-wrap" style={{ marginBottom:10 }}><Search size={14}/><input value={prodSearch} onChange={e => setProdSearch(e.target.value)} placeholder="搜尋商品..." style={{ padding:'8px 8px 8px 32px', width:'100%' }}/></div><div style={{ maxHeight:300, overflowY:'auto' }}>{filteredProducts.map(product => <div key={product.id} onClick={() => setTrackProd(product)} style={{ padding:'8px 10px', cursor:'pointer', borderRadius:8, background:trackProd?.id === product.id ? 'var(--indigo-light)' : 'transparent', fontWeight:trackProd?.id === product.id ? 700 : 400 }}>{product.name}</div>)}</div></div></div>
-        <div className="card"><div className="card-header" style={{ fontWeight:700 }}>{trackProd ? `${trackProd.name} — 買家名單` : '請選商品'}</div><div className="table-container"><table><thead><tr><th>客戶</th><th>末碼</th><th>總數</th><th>未出</th><th>金額</th></tr></thead><tbody>{trackBuyers.map((buyer,index) => <tr key={`${buyer.name}-${index}`}><td>{buyer.name}</td><td>{buyer.phone_last2 || '—'}</td><td>{buyer.qty}</td><td>{buyer.pending || '—'}</td><td>{money(buyer.total)}</td></tr>)}</tbody></table></div></div>
-      </div>
-    </>}
-
-    {activeTab === 'finance' && <>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))', gap:12, marginBottom:16 }}>{[
-        ['應收帳款（未收款）', outstandingAmount, WalletCards, 'var(--rose-light)', 'var(--rose)'],
-        ['應付帳款（供應商未付款）', payableOutstanding, Building2, 'var(--amber-light)', '#b45309'],
-        ['已付供應商成本', supplierPaidCost, Building2, 'var(--emerald-light)', 'var(--emerald)'],
-        ['現金流淨額', netCashFlow, DollarSign, 'var(--sky-light)', '#0369a1'],
-      ].map(([label,value,Icon,bg,color]) => <div key={label} style={{ background:bg, borderRadius:10, padding:14, position:'relative' }}><div style={{ fontSize:11, color, fontWeight:700 }}>{label}</div><div style={{ fontSize:20, color, fontWeight:900, marginTop:5 }}>{money(value)}</div><Icon size={24} style={{ position:'absolute', right:12, top:16, color, opacity:.35 }}/></div>)}</div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-        <div className="card"><div className="card-header" style={{ fontWeight:700 }}>🏭 供應商應付帳款</div><div className="table-container"><table><thead><tr><th>供應商</th><th>總成本</th><th>已付</th><th>未付</th></tr></thead><tbody>{supplierRows.map(row => <tr key={row.supplier}><td>{row.supplier}</td><td>{money(row.total)}</td><td>{money(row.paid)}</td><td style={{ fontWeight:800, color:row.outstanding ? 'var(--rose)' : 'var(--emerald)' }}>{money(row.outstanding)}</td></tr>)}</tbody></table></div></div>
-        <div className="card"><div className="card-header" style={{ fontWeight:700 }}>📆 月損益（已出貨）</div><div className="table-container"><table><thead><tr><th>月份</th><th>營收</th><th>成本</th><th>毛利</th></tr></thead><tbody>{monthlyRows.map(row => <tr key={row.month}><td>{row.month}</td><td>{money(row.revenue)}</td><td>{money(row.cost)}</td><td style={{ fontWeight:800, color:row.profit >= 0 ? 'var(--emerald)' : 'var(--rose)' }}>{money(row.profit)}</td></tr>)}</tbody></table></div></div>
-      </div>
-    </>}
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12}}><div><h2 style={{fontSize:22,fontWeight:800}}>銷售與財務報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>已納入每月運費、其他費用與退費折讓</p></div><div style={{display:'flex',gap:7}}><button className="btn btn-ghost" onClick={()=>exportCsv(validOrders,periodExpenses,`group-buy-${periodLabel}.csv`)}><Download size={13}/>CSV</button><button className="btn btn-ghost" onClick={()=>window.print()}><Printer size={14}/>列印</button></div></div>
+    <div style={{background:'var(--surface)',borderRadius:'var(--radius)',padding:'14px 16px',marginBottom:18,display:'flex',gap:12,flexWrap:'wrap',alignItems:'center',boxShadow:'var(--shadow-sm)'}}>{[['month','指定月份'],['range','自訂區間'],['all','全部歷史']].map(([v,l])=><button key={v} className={`btn btn-sm ${filterMode===v?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterMode(v)}>{l}</button>)}{filterMode==='month'&&<input type="month" value={inputMonth} onChange={e=>setInputMonth(e.target.value)}/>} {filterMode==='range'&&<><input type="date" value={inputStart} onChange={e=>setInputStart(e.target.value)}/><span>〜</span><input type="date" value={inputEnd} onChange={e=>setInputEnd(e.target.value)}/></>}<span style={{marginLeft:'auto',color:'var(--text-muted)',fontSize:12}}>{loading?'讀取中...':`${orders.length} 筆訂單／${periodExpenses.length} 筆其他費用`}</span></div>
+    {error&&<div style={{background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:14}}>{error}</div>}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(165px,1fr))',gap:12,marginBottom:18}}>{[['有效訂單總額',orderValue,ReceiptText,'linear-gradient(135deg,#6366f1,#4338ca)'],['已出貨營收',shippedRevenue,DollarSign,'linear-gradient(135deg,#10b981,#059669)'],['未收款',outstandingAmount,WalletCards,'linear-gradient(135deg,#f59e0b,#d97706)'],['商品毛利',baseProfit,TrendingUp,'linear-gradient(135deg,#14b8a6,#0f766e)'],['其他費用淨額',expenseNet,Truck,'linear-gradient(135deg,#64748b,#475569)'],['調整後毛利',adjustedProfit,TrendingUp,'linear-gradient(135deg,#8b5cf6,#6d28d9)'],['退款',refundAmount,Package,'linear-gradient(135deg,#f43f5e,#be123c)']].map(([label,value,Icon,bg])=><div key={label} className="stat-card" style={{background:bg}}><div style={{fontSize:11,fontWeight:700,opacity:.8}}>{label}</div><div style={{fontSize:21,fontWeight:900,marginTop:5}}>{loading?'—':money(value)}</div><Icon size={27} style={{position:'absolute',right:14,top:'50%',transform:'translateY(-50%)',opacity:.22}}/></div>)}</div>
+    <div style={{background:'var(--surface-2)',borderRadius:10,padding:'10px 12px',marginBottom:18,fontSize:12,color:'var(--text-secondary)'}}>調整後毛利＝已出貨營收－商品成本－運費－其他費用＋退費折讓。本期：運費 {money(expenseShipping)}、其他費用 {money(expenseOther)}、退費折讓 {money(expenseDiscount)}。取消金額 {money(cancelledAmount)} 不計入。</div>
+    <div className="tabs" style={{marginBottom:18}}><button className={`tab ${activeTab==='summary'?'active':''}`} onClick={()=>setActiveTab('summary')}>📊 銷售分析</button><button className={`tab ${activeTab==='finance'?'active':''}`} onClick={()=>setActiveTab('finance')}>💰 財務 / 損益</button></div>
+    {activeTab==='summary'&&<><div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:18}}><div className="card"><div className="card-header" style={{fontWeight:700}}>📈 已出貨營收趨勢</div><div style={{padding:'16px 8px'}}>{trendData.length===0?<div className="empty-state">此期間無已出貨資料</div>:<ResponsiveContainer width="100%" height={220}><LineChart data={trendData}><XAxis dataKey="date" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}}/><Tooltip formatter={v=>[money(v),'已出貨營收']}/><Line type="monotone" dataKey="amount" stroke="#6366f1" strokeWidth={2.5}/></LineChart></ResponsiveContainer>}</div></div><div className="card"><div className="card-header" style={{fontWeight:700}}>🏷️ 分類佔比</div><div style={{padding:'16px 8px'}}>{catData.length===0?<div className="empty-state">無資料</div>:<ResponsiveContainer width="100%" height={220}><PieChart><Pie data={catData} cx="50%" cy="50%" outerRadius={76} dataKey="value" label={({name,percent})=>`${name} ${Math.round(percent*100)}%`} labelLine={false} fontSize={10}>{catData.map((e,i)=><Cell key={`${e.name}-${i}`} fill={e.color}/>)}</Pie><Tooltip formatter={v=>[money(v)]}/></PieChart></ResponsiveContainer>}</div></div></div><div className="card" style={{marginBottom:18}}><div className="card-header" style={{fontWeight:700}}>🏆 熱銷商品 Top 8</div><div style={{padding:'16px 8px'}}>{topProds.length===0?<div className="empty-state">無資料</div>:<ResponsiveContainer width="100%" height={230}><BarChart data={topProds} layout="vertical"><XAxis type="number"/><YAxis dataKey="chartName" type="category" width={115}/><Tooltip/><Bar dataKey="qty" fill="#6366f1"/></BarChart></ResponsiveContainer>}</div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}><div className="card"><div className="card-header" style={{fontWeight:700}}>🔍 商品買家追蹤</div><div className="card-body"><div className="search-input-wrap"><Search size={14}/><input value={prodSearch} onChange={e=>setProdSearch(e.target.value)} placeholder="搜尋商品..." style={{padding:'8px 8px 8px 32px',width:'100%'}}/></div><div style={{maxHeight:300,overflowY:'auto'}}>{filteredProducts.map(p=><div key={p.id} onClick={()=>setTrackProd(p)} style={{padding:'8px 10px',cursor:'pointer',background:trackProd?.id===p.id?'var(--indigo-light)':'transparent'}}>{p.name}</div>)}</div></div></div><div className="card"><div className="card-header" style={{fontWeight:700}}>{trackProd?`${trackProd.name} — 買家名單`:'請選商品'}</div><div className="table-container"><table><thead><tr><th>客戶</th><th>末碼</th><th>總數</th><th>未出</th><th>金額</th></tr></thead><tbody>{trackBuyers.map((b,i)=><tr key={`${b.name}-${i}`}><td>{b.name}</td><td>{b.phone_last2||'—'}</td><td>{b.qty}</td><td>{b.pending||'—'}</td><td>{money(b.total)}</td></tr>)}</tbody></table></div></div></div></>}
+    {activeTab==='finance'&&<><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:12,marginBottom:16}}>{[['應收帳款（未收款）',outstandingAmount],['應付商品成本',payableOutstanding],['已付供應商商品成本',supplierPaidCost],['其他費用淨額',expenseNet],['現金流淨額',netCashFlow]].map(([l,v])=><div key={l} style={{background:'var(--surface-2)',borderRadius:10,padding:14}}><div style={{fontSize:11,fontWeight:700}}>{l}</div><div style={{fontSize:20,fontWeight:900,marginTop:5}}>{money(v)}</div></div>)}</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}><div className="card"><div className="card-header" style={{fontWeight:700}}>🏭 供應商成本與其他費用</div><div className="table-container"><table><thead><tr><th>供應商</th><th>商品成本</th><th>未付商品</th><th>其他費用淨額</th></tr></thead><tbody>{supplierRows.map(r=><tr key={r.supplier}><td>{r.supplier}</td><td>{money(r.total)}</td><td>{money(r.outstanding)}</td><td style={{fontWeight:800,color:r.adjustments>0?'var(--rose)':'var(--emerald)'}}>{money(r.adjustments)}</td></tr>)}</tbody></table></div></div><div className="card"><div className="card-header" style={{fontWeight:700}}>📆 月損益（已出貨）</div><div className="table-container"><table><thead><tr><th>月份</th><th>營收</th><th>商品成本</th><th>其他費用</th><th>調整後毛利</th></tr></thead><tbody>{monthlyRows.map(r=><tr key={r.month}><td>{r.month}</td><td>{money(r.revenue)}</td><td>{money(r.cost)}</td><td>{money(r.adjustments)}</td><td style={{fontWeight:800,color:r.profit>=0?'var(--emerald)':'var(--rose)'}}>{money(r.profit)}</td></tr>)}</tbody></table></div></div></div></>}
   </div>
 }
