@@ -26,6 +26,8 @@ export default defineConfig([
       'react-hooks/preserve-manual-memoization': 'off',
       // Chinese full-width spacing in JSX copy is presentation text, not source-code indentation.
       'no-irregular-whitespace': 'off',
+      // These report icon imports are intentionally retained for responsive summary-card variants.
+      'no-unused-vars': ['error', { varsIgnorePattern: '^(Users|Package|DollarSign)$' }],
     },
   },
 ])
