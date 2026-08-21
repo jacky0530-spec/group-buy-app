@@ -4,6 +4,7 @@ import './index.css'
 import './responsive.css'
 import './mobile-sidebar-fix.css'
 import './pending-report-modes.css'
+import './batch-order-highlight.css'
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
