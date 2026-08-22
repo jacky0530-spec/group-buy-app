@@ -61,7 +61,8 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
     const customer = customerMap[order.customer_id] || {}
     const phone = String(order.customer_phone || customer.phone || '').trim()
     const last2 = String(order.customer_phone_last2 || getCustomerPhoneLast2(customer) || '').trim()
-    const groupKey = order.customer_id || `${order.customer_name || customer.name || ''}|${phone || last2 || ''}`
+    const baseGroupKey = order.customer_id || `${order.customer_name || customer.name || ''}|${phone || last2 || ''}`
+    const groupKey = `${baseGroupKey}|${order.archived === true ? 'archived' : 'active'}`
 
     if (!groups.has(groupKey)) {
       groups.set(groupKey, {
