@@ -26,6 +26,7 @@ function displayQtyForMode(item, arrivalView) {
 function specText(item) {
   const spec = item?.spec || {}
   return [
+    spec.package && `組合：${spec.package}`,
     spec.flavor && `口味：${spec.flavor}`,
     spec.color && `顏色：${spec.color}`,
     spec.size && `尺寸：${spec.size}`,

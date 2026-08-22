@@ -17,12 +17,14 @@ const PAYABLE_CFG = { unpaid:{ label:'供應商未付款',badge:'badge-amber' },
 
 function specLabel(item) {
   const s = item?.spec || {}; const parts = []
+  if (s.package) parts.push(`組合：${s.package}`)
   if (s.flavor) parts.push(`口味：${s.flavor}`)
   if (s.color) parts.push(s.color)
   if (s.size) parts.push(s.size)
   return parts.length ? `（${parts.join('／')}）` : ''
 }
-function validateSpec(product,spec={}) {
+function validateSpec(product,spec={},priceOptionLabel='') {
+  if ((product?.price_options || []).length > 0 && !priceOptionLabel) return `「${product.name}」請選擇組合／包裝價`
   const mode = product?.spec_mode || 'none'
   if (['color_size','color_only','color_free'].includes(mode) && !spec.color) return `「${product.name}」請選擇顏色`
   if (['color_size','size_only'].includes(mode) && !spec.size) return `「${product.name}」請選擇尺碼`
@@ -58,7 +60,8 @@ function snapshotForCartItem(item) {
     category:item.snapshot.category ?? item.product.category ?? 'other',
     supplier:item.snapshot.supplier ?? item.product.supplier ?? '',
   } : item.product
-  const snap = snapshotOrderItem(base,{ qty:item.qty,note:item.note,spec:item.spec })
+  const priceOption = item.snapshot ? (item.snapshot.spec?.package ? { label:item.snapshot.spec.package, price:item.snapshot.sale_price ?? item.snapshot.price, cost:item.snapshot.cost_price } : null) : ((item.product.price_options || []).find(option => option.label === item.price_option) || null)
+  const snap = snapshotOrderItem(base,{ qty:item.qty,note:item.note,spec:item.spec,priceOption })
   snap.arrived_qty = Math.min(Number(snap.qty || 0), Math.max(0, Number(item.snapshot?.arrived_qty || 0)))
   if (item.snapshot?.arrived_at) snap.arrived_at = item.snapshot.arrived_at
   return snap
@@ -84,20 +87,21 @@ export default function Orders() {
   const filtProds = products.filter(p => p.name.toLowerCase().includes(prodSearch.toLowerCase()))
 
   function openAdd() { setEditId(null); setFormCustomer(null); setCartItems([]); setOrderNote(''); setCustSearch(''); setProdSearch(''); setShowForm(true) }
-  function productFromSnapshot(item) { const id = item.product_id || item.id; return prodMap[id] || { id,name:item.product_name || item.name,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? 0,category:item.category || 'other',supplier:item.supplier || '',spec_mode:'none',spec_flavors:item.spec?.flavor ? [item.spec.flavor] : [],spec_colors:item.spec?.color ? [item.spec.color] : [],spec_sizes:item.spec?.size ? [item.spec.size] : [] } }
-  function openEdit(o) { const customer = customers.find(c => c.id === o.customer_id) || { id:o.customer_id,name:o.customer_name,phone:o.customer_phone || '',phone_last2:o.customer_phone_last2 || '' }; setEditId(o.id); setFormCustomer(customer); setCartItems((o.items || []).map(item => ({ product:productFromSnapshot(item),qty:item.qty,note:item.note || '',spec:item.spec || {},snapshot:item }))); setOrderNote(o.note || ''); setShowForm(true) }
-  function addToCart(product) { setCartItems(prev => [...prev,{ product,qty:1,note:'',spec:{ color:'',size:'',flavor:'' },snapshot:null }]); setProdOpen(false); setProdSearch('') }
-  function addSameProduct(idx) { setCartItems(prev => { const source = prev[idx]; if (!source) return prev; const copy = { product:source.product,qty:1,note:'',spec:{ color:'',size:'',flavor:'' },snapshot:null }; return [...prev.slice(0,idx+1),copy,...prev.slice(idx+1)] }) }
+  function productFromSnapshot(item) { const id = item.product_id || item.id; return prodMap[id] || { id,name:item.product_name || item.name,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? 0,category:item.category || 'other',supplier:item.supplier || '',spec_mode:'none',spec_flavors:item.spec?.flavor ? [item.spec.flavor] : [],spec_colors:item.spec?.color ? [item.spec.color] : [],spec_sizes:item.spec?.size ? [item.spec.size] : [],price_options:item.spec?.package ? [{label:item.spec.package,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? ''}] : [] } }
+  function openEdit(o) { const customer = customers.find(c => c.id === o.customer_id) || { id:o.customer_id,name:o.customer_name,phone:o.customer_phone || '',phone_last2:o.customer_phone_last2 || '' }; setEditId(o.id); setFormCustomer(customer); setCartItems((o.items || []).map(item => ({ product:productFromSnapshot(item),qty:item.qty,note:item.note || '',spec:item.spec || {},price_option:item.spec?.package || '',snapshot:item }))); setOrderNote(o.note || ''); setShowForm(true) }
+  function addToCart(product) { setCartItems(prev => [...prev,{ product,qty:1,note:'',spec:{ color:'',size:'',flavor:'' },price_option:'',snapshot:null }]); setProdOpen(false); setProdSearch('') }
+  function addSameProduct(idx) { setCartItems(prev => { const source = prev[idx]; if (!source) return prev; const copy = { product:source.product,qty:1,note:'',spec:{ color:'',size:'',flavor:'' },price_option:'',snapshot:null }; return [...prev.slice(0,idx+1),copy,...prev.slice(idx+1)] }) }
   function updateCart(idx,patch) { setCartItems(p => p.map((item,i) => i === idx ? { ...item,...patch } : item)) }
   function updateQty(idx,value) { updateCart(idx,{ qty:value }) }
-  const total = cartItems.reduce((sum,item) => sum + Number(item.snapshot?.sale_price ?? item.snapshot?.price ?? item.product.price ?? 0)*Number(item.qty || 0),0)
+  const itemPrice = item => Number(item.snapshot?.sale_price ?? item.snapshot?.price ?? (item.product.price_options||[]).find(o=>o.label===item.price_option)?.price ?? item.product.price ?? 0)
+  const total = cartItems.reduce((sum,item) => sum + itemPrice(item)*Number(item.qty || 0),0)
 
   async function save() {
     if (!formCustomer) { toast('請選擇客戶','error'); return }
     if (!cartItems.length) { toast('請加入至少一項商品','error'); return }
     for (const item of cartItems) {
       if (!Number.isInteger(Number(item.qty)) || Number(item.qty) < 1) { toast(`「${item.product.name}」數量至少為 1`,'error'); return }
-      const err = validateSpec(item.product,item.spec); if (err) { toast(err,'error'); return }
+      const err = validateSpec(item.product,item.spec,item.price_option); if (err) { toast(err,'error'); return }
     }
     setSaving(true)
     try {
@@ -185,7 +189,7 @@ export default function Orders() {
     {showForm && <Modal title={editId ? '編輯訂單' : '開立新訂單'} onClose={() => setShowForm(false)} width={700}>
       <div className="form-group"><label>客戶 *</label><div className="dropdown" ref={custRef}><button type="button" className="btn btn-ghost" style={{ width:'100%',justifyContent:'space-between' }} onClick={() => setCustOpen(v => !v)}><span>{formCustomer ? `${formCustomer.name}${getCustomerPhoneLast2(formCustomer) ? `（末碼 ${getCustomerPhoneLast2(formCustomer)}）` : ''}` : '搜尋並選擇客戶...'}</span><ChevronDown size={14}/></button>{custOpen && <div className="dropdown-menu" style={{ width:'100%',maxHeight:320,overflowY:'auto' }}><div style={{ padding:8 }}><input autoFocus value={custSearch} onChange={e => setCustSearch(e.target.value)} placeholder="姓名 / 手機末兩碼 / 完整電話 / Line / FB"/></div>{filtCusts.slice(0,50).map(c => <div key={c.id} className="dropdown-item" onClick={() => { setFormCustomer(c); setCustOpen(false) }}><div style={{ flex:1 }}><strong>{c.name}</strong><div style={{ fontSize:11,color:'var(--text-muted)',marginTop:2 }}>{customerSecondaryLabel(c) || '無其他辨識資料'}</div></div></div>)}</div>}</div></div>
       <div className="form-group"><label>加入商品</label><div className="dropdown" ref={prodRef}><button type="button" className="btn btn-ghost" style={{ width:'100%',justifyContent:'space-between' }} onClick={() => setProdOpen(v => !v)}><span>搜尋並加入商品（同商品可加入多次不同口味/規格）</span><ChevronDown size={14}/></button>{prodOpen && <div className="dropdown-menu" style={{ width:'100%' }}><div style={{ padding:8 }}><input autoFocus value={prodSearch} onChange={e => setProdSearch(e.target.value)} placeholder="商品名稱"/></div>{filtProds.slice(0,40).map(p => <div key={p.id} className="dropdown-item" onClick={() => addToCart(p)}><span style={{ flex:1 }}>{p.name}</span><strong style={{ color:'var(--indigo)' }}>NT${p.price}</strong></div>)}</div>}</div></div>
-      {cartItems.map((item,idx) => { const price = item.snapshot?.sale_price ?? item.snapshot?.price ?? item.product.price ?? 0; return <div key={idx} style={{ borderBottom:'1px dashed var(--border)',padding:'10px 0' }}><div style={{ display:'flex',gap:8,alignItems:'center',flexWrap:'wrap' }}><strong style={{ flex:1,minWidth:140 }}>{item.product.name}</strong><button type="button" className="btn btn-sm btn-ghost" onClick={() => addSameProduct(idx)} title="再加入一筆相同商品"><Plus size={12}/>同商品</button><input value={item.note} onChange={e => updateCart(idx,{ note:e.target.value })} placeholder="備註" style={{ maxWidth:150 }}/><span>NT${Number(price).toLocaleString()}</span><QuantityInput value={item.qty} min={1} onChange={value => updateQty(idx,value)} ariaLabel={`${item.product.name}數量`} style={{ width:75 }}/><strong style={{ minWidth:90,textAlign:'right',color:'var(--indigo)' }}>NT${(Number(price)*Number(item.qty || 0)).toLocaleString()}</strong><button type="button" onClick={() => setCartItems(p => p.filter((_,i) => i !== idx))} style={{ border:'none',background:'none',color:'var(--rose)',cursor:'pointer' }}><X size={14}/></button></div><SpecSelector product={item.product} value={item.spec} onChange={spec => updateCart(idx,{ spec })}/>{item.snapshot && <div style={{ fontSize:10,color:'var(--text-muted)',marginTop:4 }}>歷史快照：售價 NT${Number(price).toLocaleString()}／成本 NT${Number(item.snapshot.cost_price ?? 0).toLocaleString()}／到貨 {arrivedQty(item.snapshot)}/{itemQty(item.snapshot)}</div>}</div> })}
+      {cartItems.map((item,idx) => { const price = itemPrice(item); return <div key={idx} style={{ borderBottom:'1px dashed var(--border)',padding:'10px 0' }}><div style={{ display:'flex',gap:8,alignItems:'center',flexWrap:'wrap' }}><strong style={{ flex:1,minWidth:140 }}>{item.product.name}</strong>{(item.product.price_options||[]).length>0&&<select value={item.price_option||''} onChange={e=>updateCart(idx,{price_option:e.target.value})} disabled={Boolean(item.snapshot)} style={{fontWeight:800,border:'1.5px solid var(--emerald)'}}><option value="">💰 選組合／包裝 *</option>{item.product.price_options.map(opt=><option key={opt.label} value={opt.label}>{opt.label}｜NT${Number(opt.price||0).toLocaleString()}</option>)}</select>}<button type="button" className="btn btn-sm btn-ghost" onClick={() => addSameProduct(idx)} title="再加入一筆相同商品"><Plus size={12}/>同商品</button><input value={item.note} onChange={e => updateCart(idx,{ note:e.target.value })} placeholder="備註" style={{ maxWidth:150 }}/><span>NT${Number(price).toLocaleString()}</span><QuantityInput value={item.qty} min={1} onChange={value => updateQty(idx,value)} ariaLabel={`${item.product.name}數量`} style={{ width:75 }}/><strong style={{ minWidth:90,textAlign:'right',color:'var(--indigo)' }}>NT${(Number(price)*Number(item.qty || 0)).toLocaleString()}</strong><button type="button" onClick={() => setCartItems(p => p.filter((_,i) => i !== idx))} style={{ border:'none',background:'none',color:'var(--rose)',cursor:'pointer' }}><X size={14}/></button></div><SpecSelector product={item.product} value={item.spec} onChange={spec => updateCart(idx,{ spec })}/>{item.snapshot && <div style={{ fontSize:10,color:'var(--text-muted)',marginTop:4 }}>歷史快照：售價 NT${Number(price).toLocaleString()}／成本 NT${Number(item.snapshot.cost_price ?? 0).toLocaleString()}／到貨 {arrivedQty(item.snapshot)}/{itemQty(item.snapshot)}</div>}</div> })}
       {cartItems.length > 0 && <div style={{ textAlign:'right',fontSize:18,fontWeight:900,color:'var(--indigo)',margin:'12px 0' }}>合計：NT${total.toLocaleString()}</div>}<div className="form-group"><label>訂單備註</label><input value={orderNote} onChange={e => setOrderNote(e.target.value)}/></div><div style={{ display:'flex',gap:10,justifyContent:'flex-end' }}><button className="btn btn-ghost" onClick={() => setShowForm(false)}>取消</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? '處理中...' : '儲存訂單'}</button></div>
     </Modal>}
 

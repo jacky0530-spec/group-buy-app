@@ -48,9 +48,9 @@ function mergedNote(current, incoming) {
   return `${oldText}；${newText}`
 }
 
-export function snapshotOrderItem(product, { qty = 1, note = '', spec = {} } = {}) {
-  const price = Number(product.price || 0)
-  const cost = Number(product.cost || 0)
+export function snapshotOrderItem(product, { qty = 1, note = '', spec = {}, priceOption = null } = {}) {
+  const price = Number(priceOption?.price ?? product.price ?? 0)
+  const cost = Number(priceOption?.cost === '' || priceOption?.cost == null ? (product.cost || 0) : priceOption.cost)
   const quantity = Math.max(1, Number(qty || 1))
   return {
     id: product.id,
@@ -70,6 +70,7 @@ export function snapshotOrderItem(product, { qty = 1, note = '', spec = {} } = {
       color: spec?.color || '',
       size: spec?.size || '',
       flavor: spec?.flavor || '',
+      package: priceOption?.label || spec?.package || '',
     },
   }
 }

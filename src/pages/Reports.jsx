@@ -10,7 +10,7 @@ const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
 const dateText = value => value ? new Date(value).toLocaleDateString('zh-TW') : '—'
 const monthKey = value => { const d = new Date(value); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` }
 
-function specText(item) { const spec=item?.spec||{}; return [spec.flavor&&`口味:${spec.flavor}`,spec.color,spec.size].filter(Boolean).join(' / ') }
+function specText(item) { const spec=item?.spec||{}; return [spec.package&&`組合:${spec.package}`,spec.flavor&&`口味:${spec.flavor}`,spec.color,spec.size].filter(Boolean).join(' / ') }
 function periodBounds(mode,month,start,end){if(mode==='month'&&month){const[y,m]=month.split('-').map(Number);return[new Date(y,m-1,1).toISOString(),new Date(y,m,0,23,59,59,999).toISOString()]}if(mode==='range'&&start&&end)return[new Date(`${start}T00:00:00`).toISOString(),new Date(`${end}T23:59:59`).toISOString()];return[null,null]}
 function expenseInPeriod(row,mode,month,start,end){if(mode==='all')return true;if(mode==='month')return row.month===month;if(mode==='range'){if(!start||!end)return false;const first=`${row.month}-01`;const[y,m]=row.month.split('-').map(Number);const last=`${row.month}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;return last>=start&&first<=end}return false}
 function downloadBlob(filename,content,type){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
