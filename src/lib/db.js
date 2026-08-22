@@ -334,6 +334,9 @@ export const OrdersAPI = {
   async archive(id) {
     await updateDoc(doc(db,'orders',id), { archived:true, archived_at:now(), updated_at:now() })
   },
+  async unarchive(id) {
+    await updateDoc(doc(db,'orders',id), { archived:false, archived_at:null, updated_at:now() })
+  },
   async batchUpdateStatus(ids, status) {
     const batch = writeBatch(db)
     ids.forEach(id => {
