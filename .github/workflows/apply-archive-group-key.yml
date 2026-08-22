@@ -1,0 +1,31 @@
+name: Apply archive grouping safeguard
+
+on:
+  push:
+    branches:
+      - agent/shipped-report-archive
+    paths:
+      - 'scripts/trigger_archive_group_key.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/shipped-report-archive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply safeguard
+        run: python scripts/patch_archive_group_key.py
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/pages/PendingProductReport.jsx
+          git diff --cached --quiet || git commit -m 'Keep archived shipped orders in separate rows'
+          git push
