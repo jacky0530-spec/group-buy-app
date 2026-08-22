@@ -21,6 +21,7 @@ function customerKey(order) {
 function specText(item) {
   const spec = item?.spec || {}
   const parts = []
+  if (spec.package) parts.push(`組合：${spec.package}`)
   if (spec.flavor) parts.push(`口味：${spec.flavor}`)
   if (spec.color) parts.push(spec.color)
   if (spec.size) parts.push(spec.size)
@@ -34,6 +35,7 @@ function itemKey(item) {
     item.product_id || item.id || '',
     item.product_name || item.name || '',
     price,
+    spec.package || '',
     spec.flavor || '',
     spec.color || '',
     spec.size || '',
