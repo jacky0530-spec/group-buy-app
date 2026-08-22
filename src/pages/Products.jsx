@@ -39,7 +39,7 @@ export default function Products(){
   function openAdd(){resetForm();setEditId(null);setBatchBuyers([]);setShowModal(true)}
   function openEdit(p){setForm({name:p.name,price:p.price,cost:p.cost,category:p.category||'other',supplier:p.supplier||'',note:p.note||'',spec_mode:p.spec_mode||'none',spec_colors:[...(p.spec_colors||[])],spec_sizes:[...(p.spec_sizes||[])],spec_flavors:[...(p.spec_flavors||[])],color_input:'',size_input:'',flavor_input:''});setEditId(p.id);setBatchBuyers([]);setShowModal(true)}
   function setCategory(category){setForm(p=>({...p,category,spec_mode:'none',spec_colors:[],spec_sizes:[],spec_flavors:[]}))}
-  function addBuyer(c){if(!batchBuyers.some(b=>b.id===c.id))setBatchBuyers(p=>[...p,{id:c.id,name:c.name,phone:c.phone||'',phone_last2:getCustomerPhoneLast2(c),rows:[{qty:1,spec:{color:'',size:'',flavor:''}}]}]);setCustSearch('');setCustDropOpen(false)}
+  function addBuyer(c){if(!batchBuyers.some(b=>b.id===c.id))setBatchBuyers(p=>[{id:c.id,name:c.name,phone:c.phone||'',phone_last2:getCustomerPhoneLast2(c),rows:[{qty:1,spec:{color:'',size:'',flavor:''}}]},...p]);setCustSearch('');setCustDropOpen(false)}
   function updateBuyerRow(buyerId,rowIdx,field,value){setBatchBuyers(p=>p.map(b=>b.id!==buyerId?b:{...b,rows:b.rows.map((row,i)=>i!==rowIdx?row:field==='qty'?{...row,qty:value}:{...row,spec:{...row.spec,[field]:value}})}))}
   function addBuyerRow(buyerId){setBatchBuyers(p=>p.map(b=>b.id===buyerId?{...b,rows:[...b.rows,{qty:1,spec:{color:'',size:'',flavor:''}}]}:b))}
   function removeBuyerRow(buyerId,rowIdx){setBatchBuyers(p=>p.map(b=>b.id!==buyerId||b.rows.length===1?b:{...b,rows:b.rows.filter((_,i)=>i!==rowIdx)}))}
