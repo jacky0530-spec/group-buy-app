@@ -1,0 +1,36 @@
+name: Apply collapsible price options patch
+
+on:
+  push:
+    branches:
+      - agent/collapsible-price-options
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/collapsible-price-options
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply source patch
+        run: python scripts/patch_collapsible_price_options.py
+      - name: Validate
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run lint
+          npm run build
+      - name: Commit patched source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Products.jsx src/components/Layout.jsx
+          git commit -m "Improve combo pricing and batch quantity UI"
+          git push origin HEAD:agent/collapsible-price-options
