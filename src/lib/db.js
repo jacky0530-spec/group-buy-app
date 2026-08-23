@@ -124,7 +124,7 @@ export const ProductsAPI = {
 export const SupplierPaymentsAPI = {
   async list() {
     const snap = await getDocs(query(collection(db,'supplier_payments'), orderBy('created_at','desc')))
-    return snap.docs.map(normalize)
+    return snap.docs.map(normalize).filter(row => row.voided !== true)
   },
   async createPayment({ supplier, payment_date, amount, note = '', lines = [] }) {
     const cleanSupplier = String(supplier || '').trim()
@@ -427,6 +427,56 @@ export const OrdersAPI = {
   },
   async unarchive(id) {
     await updateDoc(doc(db,'orders',id), { archived:false, archived_at:null, updated_at:now() })
+  },
+
+  async bulkHardDelete(ids = []) {
+    const targetIds = [...new Set((ids || []).filter(Boolean))]
+    if (!targetIds.length) return { deleted:0, adjusted_payments:0, voided_payments:0 }
+    const targetSet = new Set(targetIds)
+    const paymentsSnap = await getDocs(collection(db,'supplier_payments'))
+    const paymentOps = []
+    let adjustedPayments = 0
+    let voidedPayments = 0
+
+    paymentsSnap.docs.forEach(paymentDoc => {
+      const data = paymentDoc.data()
+      if (data.voided === true) return
+      const allocations = Array.isArray(data.allocations) ? data.allocations : []
+      const removed = allocations.filter(a => targetSet.has(a.order_id))
+      if (!removed.length) return
+      const kept = allocations.filter(a => !targetSet.has(a.order_id))
+      const removedAmount = removed.reduce((sum,a) => sum + Number(a.amount || 0),0)
+      const nextAmount = Math.max(0,Number(data.amount || 0) - removedAmount)
+      const voided = kept.length === 0 || nextAmount <= 0.001
+      paymentOps.push({
+        type:'update',
+        ref:paymentDoc.ref,
+        data:{
+          allocations:kept,
+          amount:voided ? 0 : nextAmount,
+          voided,
+          voided_at:voided ? now() : null,
+          void_reason:voided ? '相關測試訂單已永久刪除' : '',
+          updated_at:now(),
+        },
+      })
+      adjustedPayments += 1
+      if (voided) voidedPayments += 1
+    })
+
+    const operations = [
+      ...paymentOps,
+      ...targetIds.map(id => ({ type:'delete', ref:doc(db,'orders',id) })),
+    ]
+    for (let i=0; i<operations.length; i+=400) {
+      const batch = writeBatch(db)
+      operations.slice(i,i+400).forEach(op => {
+        if (op.type === 'delete') batch.delete(op.ref)
+        else batch.update(op.ref,op.data)
+      })
+      await batch.commit()
+    }
+    return { deleted:targetIds.length, adjusted_payments:adjustedPayments, voided_payments:voidedPayments }
   },
   async batchUpdateStatus(ids, status) {
     const refs = ids.map(id => doc(db,'orders',id))
