@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { OrdersAPI, SupplierPaymentsAPI } from '../lib/db'
 import { useToast } from '../components/UI'
-import { CheckCircle, CreditCard, RefreshCw, Search, WalletCards } from 'lucide-react'
+import { CreditCard, RefreshCw, Search, WalletCards } from 'lucide-react'
 
 const money = v => `NT$${Math.round(Number(v || 0)).toLocaleString()}`
 const today = () => new Date().toISOString().slice(0,10)
