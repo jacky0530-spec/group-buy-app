@@ -2,9 +2,29 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { CustomersAPI, OrdersAPI } from '../lib/db'
 import { useToast, Modal, ConfirmDialog } from '../components/UI'
 import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from '../lib/customerSearch'
-import { Plus, Pencil, Archive, Search, Users, RotateCcw, Upload } from 'lucide-react'
+import { Plus, Pencil, Archive, Search, Users, RotateCcw, Upload, ArrowUpDown } from 'lucide-react'
 
 const EMPTY = { name:'', line_nick:'', fb_name:'', phone:'', phone_last2:'', note:'' }
+
+const SORT_OPTIONS = [
+  { value:'last2_asc', label:'末兩碼：小 → 大' },
+  { value:'last2_desc', label:'末兩碼：大 → 小' },
+  { value:'name_asc', label:'姓名：A → Z / 筆畫' },
+  { value:'orders_desc', label:'有效訂單數：多 → 少' },
+]
+
+function compareLast2(a,b,direction='asc') {
+  const aRaw = getCustomerPhoneLast2(a)
+  const bRaw = getCustomerPhoneLast2(b)
+  const aMissing = !aRaw
+  const bMissing = !bRaw
+  if (aMissing !== bMissing) return aMissing ? 1 : -1
+  if (aMissing && bMissing) return (a.name || '').localeCompare(b.name || '','zh-Hant',{ numeric:true })
+  const aNum = Number(aRaw)
+  const bNum = Number(bRaw)
+  if (aNum !== bNum) return direction === 'desc' ? bNum - aNum : aNum - bNum
+  return (a.name || '').localeCompare(b.name || '','zh-Hant',{ numeric:true })
+}
 
 export default function Customers() {
   const toast = useToast()
@@ -12,6 +32,7 @@ export default function Customers() {
   const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState('last2_asc')
   const [showArchived, setShowArchived] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState({ ...EMPTY })
@@ -50,7 +71,15 @@ export default function Customers() {
     (c.fb_name || '').toLowerCase().includes(q) ||
     (c.phone || '').includes(search.trim()) ||
     getCustomerPhoneLast2(c).toLowerCase().includes(q)
-  )
+  ).sort((a,b) => {
+    if (sortBy === 'last2_desc') return compareLast2(a,b,'desc')
+    if (sortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '','zh-Hant',{ numeric:true })
+    if (sortBy === 'orders_desc') {
+      const diff = Number(orderCounts[b.id] || 0) - Number(orderCounts[a.id] || 0)
+      return diff || compareLast2(a,b,'asc')
+    }
+    return compareLast2(a,b,'asc')
+  })
 
   function openAdd() {
     setForm({ ...EMPTY })
@@ -161,11 +190,18 @@ export default function Customers() {
         📱 手機末兩碼可重複，例如末碼「12」可以有多位客戶；開單時會列出所有符合的人名供你挑選。完整電話填入後會自動帶出末兩碼。
       </div>
 
-      <div style={{ marginBottom:14 }}>
-        <div className="search-input-wrap" style={{ maxWidth:520 }}>
+      <div style={{ marginBottom:14, display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+        <div className="search-input-wrap" style={{ flex:'1 1 360px', maxWidth:520 }}>
           <Search size={14}/>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋姓名、手機末兩碼、完整電話、Line、FB..."
             style={{ padding:'8px 8px 8px 32px', border:'1.5px solid var(--border)', borderRadius:8, fontSize:14, outline:'none', fontFamily:'inherit', background:'var(--surface)', width:'100%' }}/>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:7, background:'var(--surface)', border:'1.5px solid var(--border)', borderRadius:8, padding:'0 10px', minHeight:38 }}>
+          <ArrowUpDown size={14} style={{ color:'var(--indigo)' }}/>
+          <span style={{ fontSize:12, fontWeight:800, color:'var(--text-secondary)', whiteSpace:'nowrap' }}>排序</span>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ border:0, outline:'none', background:'transparent', fontWeight:700, fontFamily:'inherit', minWidth:165 }} aria-label="客戶排序方式">
+            {SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
         </div>
       </div>
 
