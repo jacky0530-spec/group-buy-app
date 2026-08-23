@@ -82,12 +82,17 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
         total_arrived_qty:0,
         total_missing_qty:0,
         order_ids:new Set(),
+        real_order_ids:new Set(),
+        virtual_order_ids:new Set(),
+        has_virtual:false,
+        all_virtual:true,
         archived:true,
       })
     }
 
     const group = groups.get(groupKey)
     group.order_ids.add(order.id)
+    if (order.is_virtual) { group.virtual_order_ids.add(order.id); group.has_virtual = true } else { group.real_order_ids.add(order.id); group.all_virtual = false }
     if (order.archived !== true) group.archived = false
 
     matches.forEach(item => {
@@ -117,6 +122,7 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
           arrival_key:status.key,
           arrival_label:status.label,
           arrival_color:status.color,
+          sources:[],
         })
       }
       const detail = group.items.get(detailKey)
@@ -126,6 +132,7 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
       detail.missing_qty += missing
       detail.amount += price * shown
       detail.dates.add(dateText(order.order_date))
+      detail.sources.push({ order_id:order.id,item_index:(order.items || []).indexOf(item),qty:ordered,date:dateText(order.order_date),is_virtual:Boolean(order.is_virtual) })
       group.total_qty += shown
       group.total_amount += price * shown
       group.total_ordered_qty += ordered
@@ -138,6 +145,8 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
     ...group,
     items:Array.from(group.items.values()).map(item => ({ ...item, dates:Array.from(item.dates) })),
     order_ids:Array.from(group.order_ids),
+    real_order_ids:Array.from(group.real_order_ids),
+    virtual_order_ids:Array.from(group.virtual_order_ids),
     order_count:group.order_ids.size,
     all_arrived:group.total_missing_qty === 0,
   })).sort((a,b) => a.name.localeCompare(b.name,'zh-Hant'))
@@ -147,19 +156,15 @@ function mapToRows(map) {
   return Array.from(map.entries()).map(([label,qty]) => ({ label,qty })).sort((a,b) => a.label.localeCompare(b.label,'zh-Hant',{ numeric:true }))
 }
 function buildOrderingSummary(orderRows, selectedProduct) {
-  if (!selectedProduct) return { combos:[],packages:[],colors:[],sizes:[],flavors:[],totalQty:0,totalArrived:0,totalMissing:0,totalAmount:0 }
+  if (!selectedProduct) return { combos:[],packages:[],colors:[],sizes:[],flavors:[],totalQty:0,totalArrived:0,totalMissing:0,totalAmount:0,virtualQty:0 }
   const combos = new Map(), packages = new Map(), colors = new Map(), sizes = new Map(), flavors = new Map()
-  let totalQty=0, totalArrived=0, totalMissing=0, totalAmount=0
+  let totalQty=0, totalArrived=0, totalMissing=0, totalAmount=0, virtualQty=0
   orderRows.forEach(order => (order.items || []).filter(item => matchesProduct(item, selectedProduct)).forEach(item => {
-    const spec = item.spec || {}
-    const packageName = String(spec.package || '').trim()
-    const flavor = String(spec.flavor || '').trim()
-    const color = String(spec.color || '').trim()
-    const size = String(spec.size || '').trim()
     const qty = itemQty(item)
-    const arrived = arrivedQty(item)
-    const missing = missingQty(item)
-    const price = Number(item.sale_price ?? item.price ?? 0)
+    if (order.is_virtual) { virtualQty += qty; return }
+    const spec = item.spec || {}
+    const packageName = String(spec.package || '').trim(), flavor = String(spec.flavor || '').trim(), color = String(spec.color || '').trim(), size = String(spec.size || '').trim()
+    const arrived = arrivedQty(item), missing = missingQty(item), price = Number(item.sale_price ?? item.price ?? 0)
     const comboKey = [packageName,flavor,color,size].join('|')
     const comboLabel = [packageName && `組合：${packageName}`,flavor && `口味：${flavor}`,color && `顏色：${color}`,size && `尺寸：${size}`].filter(Boolean).join('／') || '一般規格'
     if (!combos.has(comboKey)) combos.set(comboKey,{ label:comboLabel,packageName,flavor,color,size,qty:0,arrived:0,missing:0,amount:0 })
@@ -168,7 +173,7 @@ function buildOrderingSummary(orderRows, selectedProduct) {
     increment(packages,packageName,qty); increment(flavors,flavor,qty); increment(colors,color,qty); increment(sizes,size,qty)
     totalQty += qty; totalArrived += arrived; totalMissing += missing; totalAmount += price * qty
   }))
-  return { combos:Array.from(combos.values()).sort((a,b)=>a.label.localeCompare(b.label,'zh-Hant',{numeric:true})),packages:mapToRows(packages),colors:mapToRows(colors),sizes:mapToRows(sizes),flavors:mapToRows(flavors),totalQty,totalArrived,totalMissing,totalAmount }
+  return { combos:Array.from(combos.values()).sort((a,b)=>a.label.localeCompare(b.label,'zh-Hant',{numeric:true})),packages:mapToRows(packages),colors:mapToRows(colors),sizes:mapToRows(sizes),flavors:mapToRows(flavors),totalQty,totalArrived,totalMissing,totalAmount,virtualQty }
 }
 function matchesBuyer(row,search) {
   const q = String(search || '').trim().toLowerCase()
@@ -243,7 +248,7 @@ export default function PendingProductReport() {
     if (!selectedProduct || marking || shipmentView !== 'pending') return
     setMarking(true)
     try {
-      const changed = sourceOrders.filter(order => (order.items || []).some(item => matchesProduct(item,selectedProduct) && missingQty(item)>0)); const now = new Date().toISOString()
+      const changed = sourceOrders.filter(order => !order.is_virtual && (order.items || []).some(item => matchesProduct(item,selectedProduct) && missingQty(item)>0)); const now = new Date().toISOString()
       await Promise.all(changed.map(order => { const items=(order.items || []).map(item => matchesProduct(item,selectedProduct) ? { ...item,arrived_qty:itemQty(item),arrived_at:now } : item); return OrdersAPI.updateArrival(order.id,items) }))
       toast(`「${selectedProduct.name}」已更新到貨；供應商付款狀態維持獨立，不會自動變更 ✓`); await load()
     } catch(err) { toast('批次到貨失敗：'+err.message,'error') }
@@ -251,11 +256,12 @@ export default function PendingProductReport() {
   }
 
   async function changeRowShipment(row,nextStatus) {
-    if (!row.order_ids?.length || shippingKey) return
+    const targetIds = nextStatus === 'shipped' ? (row.real_order_ids || []) : (row.order_ids || [])
+    if (!targetIds.length || shippingKey) return
     const key = `${row.key}-${nextStatus}`; setShippingKey(key)
     try {
-      await OrdersAPI.batchUpdateStatus(row.order_ids,nextStatus)
-      toast(nextStatus === 'shipped' ? `✅ ${row.name} 的 ${row.order_ids.length} 筆訂單已出貨並自動標記已收款` : `↩️ ${row.name} 的 ${row.order_ids.length} 筆訂單已恢復待出貨`)
+      await OrdersAPI.batchUpdateStatus(targetIds,nextStatus)
+      toast(nextStatus === 'shipped' ? `✅ ${row.name} 的 ${targetIds.length} 筆正式訂單已出貨並自動標記已收款` : `↩️ ${row.name} 的 ${targetIds.length} 筆訂單已恢復待出貨`)
       await load()
     } catch(err) { toast('更新出貨狀態失敗：'+err.message,'error') }
     finally { setShippingKey('') }
@@ -282,8 +288,22 @@ export default function PendingProductReport() {
     downloadCsv(rows,`${statusLabel}-${mode === 'product' ? selectedProduct.name : '買家'}-${viewLabel}.csv`)
   }
 
+  async function setVirtualState(row,isVirtual) {
+    const ids = isVirtual ? (row.real_order_ids || []) : (row.virtual_order_ids || [])
+    if (!ids.length) return
+    try { await OrdersAPI.updateVirtual(ids,isVirtual); toast(isVirtual?'已改為虛擬訂單':'✅ 已轉為正式訂單，現在會計入實際訂貨與財務'); await load() }
+    catch(err) { toast('訂單類型更新失敗：'+err.message,'error') }
+  }
+  async function changeSourceQty(source,value) {
+    const qty = Number(value)
+    if (!Number.isInteger(qty) || qty < 1 || qty === Number(source.qty)) return
+    try { await OrdersAPI.updateItemQty(source.order_id,source.item_index,qty); toast(`訂購量已更新為 ${qty}，訂單與彙總同步完成 ✓`); await load() }
+    catch(err) { toast('修改訂購量失敗：'+err.message,'error') }
+  }
+
   function renderContact(c) { return <>{c.phone ? <div>{c.phone}</div> : c.phone_last2 ? <div>末碼 {c.phone_last2}</div> : <div>—</div>}{c.phone && c.phone_last2 && <div style={{color:'var(--text-muted)'}}>末碼 {c.phone_last2}</div>}{c.line_nick && <div style={{color:'var(--text-muted)'}}>Line：{c.line_nick}</div>}{c.fb_name && <div style={{color:'var(--text-muted)'}}>FB：{c.fb_name}</div>}</> }
-  function renderDetails(c,showProduct) { return c.items.map((item,index) => <div key={`${c.key}-${index}`} style={{padding:'6px 0',borderBottom:index<c.items.length-1?'1px dashed var(--border)':'none'}}>{showProduct && <strong style={{color:'var(--indigo)'}}>{item.product_name}　</strong>}<span style={specDisplayStyle(item.spec)}>{item.spec}</span> ×<strong>{item.qty}</strong>{shipmentView === 'pending' ? <>　<span style={{fontWeight:800,color:item.arrival_color}}>{item.arrival_label}</span>{arrivalView==='all' && item.arrival_key==='partial' && <span>（尚欠 {item.missing_qty}）</span>}</> : <span style={{fontWeight:800,color:'var(--emerald)'}}>　✅ 已出貨</span>}　{money(item.price)}／件{item.note && <span style={{color:'var(--text-secondary)'}}>　備註：{item.note}</span>}<div style={{color:'var(--text-muted)',fontSize:11}}>訂購：{item.dates.join('、')}</div></div>) }
+  function renderDetails(c,showProduct) { return c.items.map((item,index) => <div key={`${c.key}-${index}`} style={{padding:'7px 0',borderBottom:index<c.items.length-1?'1px dashed var(--border)':'none'}}>{showProduct && <strong style={{color:'var(--indigo)'}}>{item.product_name}　</strong>}<span style={specDisplayStyle(item.spec)}>{item.spec}</span> ×<strong>{item.qty}</strong>{shipmentView === 'pending' ? <>　<span style={{fontWeight:800,color:item.arrival_color}}>{item.arrival_label}</span>{arrivalView==='all' && item.arrival_key==='partial' && <span>（尚欠 {item.missing_qty}）</span>}</> : <span style={{fontWeight:800,color:'var(--emerald)'}}>　✅ 已出貨</span>}　{money(item.price)}／件{item.note && <span style={{color:'var(--text-secondary)'}}>　備註：{item.note}</span>}<div style={{color:'var(--text-muted)',fontSize:11}}>訂購：{item.dates.join('、')}</div>{shipmentView==='pending'&&item.sources?.map(source=><div key={`${source.order_id}-${source.item_index}`} style={{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap',marginTop:5,padding:'5px 7px',borderRadius:7,background:source.is_virtual?'#fff1f2':'#f8fafc'}}><span className={`badge ${source.is_virtual?'badge-rose':'badge-gray'}`}>{source.is_virtual?'⚠ 虛擬':'正式'}</span><span style={{fontSize:10,color:'var(--text-muted)'}}>{source.date}</span><span style={{fontSize:11}}>訂購量</span><input type="number" min="1" defaultValue={source.qty} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}} onBlur={e=>changeSourceQty(source,e.target.value)} style={{width:70,padding:'5px 7px',fontWeight:900,textAlign:'center'}}/><span style={{fontSize:10,color:'var(--text-muted)'}}>離開欄位即儲存</span></div>)}</div>) }
+
 
   const modeCardStyle = active => ({ flex:1,minWidth:220,borderRadius:14,padding:'14px 16px',cursor:'pointer',textAlign:'left',border:`2px solid ${active ? 'var(--indigo)' : 'var(--border)'}`,background:active ? 'var(--indigo-light)' : 'var(--surface)',boxShadow:active ? '0 8px 22px rgba(79,70,229,.14)' : 'none',fontFamily:'inherit' })
 
@@ -307,9 +327,9 @@ export default function PendingProductReport() {
 
       {mode==='product' && <div className="search-input-wrap no-print" style={{maxWidth:500,marginBottom:14}}><Search size={14}/><input value={productBuyerSearch} onChange={e => setProductBuyerSearch(e.target.value)} placeholder="搜尋姓名、手機、末兩碼、Line、FB..." style={{padding:'8px 8px 8px 32px',width:'100%'}}/></div>}
 
-      <div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><PackageSearch size={15}/> {reportLabel}</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>共 {summary.customers} 位／{summary.qty} 件</span></div><div className="table-container"><table><thead><tr><th>客戶</th><th>手機辨識</th><th>訂購／到貨明細</th><th>訂單數</th><th>數量</th><th>小計</th><th>出貨操作</th></tr></thead><tbody>{!loading && currentRows.length===0 && <tr><td colSpan={7} style={{textAlign:'center',padding:32,color:'var(--text-muted)'}}>目前沒有符合「{viewLabel}」的資料</td></tr>}{currentRows.map(c => { const actionKey = `${c.key}-${shipmentView==='pending'?'shipped':'pending'}`; return <tr key={c.key} style={{opacity:c.archived?.62:1,background:c.archived?'#f8fafc':undefined}}><td style={{fontWeight:800,minWidth:120}}>{c.name}{c.archived&&<span className="badge badge-gray" style={{marginLeft:6}}>已封存</span>}<div style={{fontSize:11,marginTop:4,color:c.archived?'#64748b':shipmentView==='shipped'?'var(--emerald)':c.all_arrived?'var(--emerald)':'#b45309'}}>{c.archived?'📦 已封存':shipmentView==='shipped'?'✅ 已出貨':c.all_arrived?'✅ 商品全部到齊，可取貨':`⚠️ 尚未到貨 ${c.total_missing_qty} 件`}</div></td><td style={{minWidth:140,fontSize:12}}>{renderContact(c)}</td><td style={{minWidth:340,fontSize:12}}>{renderDetails(c,mode==='buyer')}</td><td>{c.order_count}</td><td style={{fontWeight:800}}>{c.total_qty}</td><td style={{fontWeight:900,color:'var(--indigo)'}}>{money(c.total_amount)}</td><td style={{minWidth:130}}>{shipmentView==='pending' ? <button className="btn btn-sm btn-primary" disabled={Boolean(shippingKey)} onClick={() => changeRowShipment(c,'shipped')}><Truck size={13}/>{shippingKey===actionKey?'更新中...':'標記已出貨'}</button> : <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{!c.archived&&<button className="btn btn-sm btn-ghost" disabled={Boolean(shippingKey)} onClick={() => changeRowShipment(c,'pending')}><Undo2 size={13}/>{shippingKey===actionKey?'更新中...':'恢復待出貨'}</button>}{c.archived?<button className="btn btn-sm btn-ghost" disabled={Boolean(archivingKey)} onClick={() => changeRowArchive(c,false)}><ArchiveRestore size={13}/>{archivingKey===`${c.key}-restore`?'更新中...':'解除封存'}</button>:<button className="btn btn-sm btn-ghost" style={{color:'#64748b'}} disabled={Boolean(archivingKey)} onClick={() => changeRowArchive(c,true)}><Archive size={13}/>{archivingKey===`${c.key}-archive`?'封存中...':'封存訂單'}</button>}</div>}</td></tr> })}</tbody>{currentRows.length>0 && <tfoot><tr><td colSpan={4} style={{textAlign:'right',fontWeight:800}}>合計</td><td style={{fontWeight:900}}>{summary.qty}</td><td style={{fontWeight:900}}>{money(summary.amount)}</td><td/></tr></tfoot>}</table></div></div>
+      <div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><PackageSearch size={15}/> {reportLabel}</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>共 {summary.customers} 位／{summary.qty} 件</span></div><div className="table-container"><table><thead><tr><th>客戶</th><th>手機辨識</th><th>訂購／到貨明細</th><th>訂單數</th><th>數量</th><th>小計</th><th>出貨操作</th></tr></thead><tbody>{!loading && currentRows.length===0 && <tr><td colSpan={7} style={{textAlign:'center',padding:32,color:'var(--text-muted)'}}>目前沒有符合「{viewLabel}」的資料</td></tr>}{currentRows.map(c => { const actionKey = `${c.key}-${shipmentView==='pending'?'shipped':'pending'}`; return <tr key={c.key} style={{opacity:c.archived?.62:1,background:c.archived?'#f8fafc':c.has_virtual?'#fff1f2':undefined,boxShadow:c.has_virtual?'inset 5px 0 #e11d48':undefined}}><td style={{fontWeight:800,minWidth:120}}>{c.name}{c.has_virtual&&<span className="badge badge-rose" style={{marginLeft:6,fontWeight:900}}>⚠ 虛擬訂單</span>}{c.archived&&<span className="badge badge-gray" style={{marginLeft:6}}>已封存</span>}<div style={{fontSize:11,marginTop:4,color:c.has_virtual?'#be123c':c.archived?'#64748b':shipmentView==='shipped'?'var(--emerald)':c.all_arrived?'var(--emerald)':'#b45309'}}>{c.archived?'📦 已封存':c.all_virtual?'⚠ 虛擬數量不計入實際訂貨':c.has_virtual?'⚠ 含虛擬訂單，虛擬數量已排除訂貨':shipmentView==='shipped'?'✅ 已出貨':c.all_arrived?'✅ 商品全部到齊，可取貨':`⚠️ 尚未到貨 ${c.total_missing_qty} 件`}</div></td><td style={{minWidth:140,fontSize:12}}>{renderContact(c)}</td><td style={{minWidth:340,fontSize:12}}>{renderDetails(c,mode==='buyer')}</td><td>{c.order_count}</td><td style={{fontWeight:800}}>{c.total_qty}</td><td style={{fontWeight:900,color:'var(--indigo)'}}>{money(c.total_amount)}</td><td style={{minWidth:130}}>{shipmentView==='pending' ? <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{c.has_virtual&&<button className="btn btn-sm" style={{background:'#e11d48',color:'white'}} onClick={()=>setVirtualState(c,false)}>✓ 轉正式</button>}<button className="btn btn-sm btn-primary" disabled={Boolean(shippingKey)||!c.real_order_ids?.length} onClick={() => changeRowShipment(c,'shipped')}><Truck size={13}/>{!c.real_order_ids?.length?'先轉正式':shippingKey===actionKey?'更新中...':'標記已出貨'}</button></div> : <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{!c.archived&&<button className="btn btn-sm btn-ghost" disabled={Boolean(shippingKey)} onClick={() => changeRowShipment(c,'pending')}><Undo2 size={13}/>{shippingKey===actionKey?'更新中...':'恢復待出貨'}</button>}{c.archived?<button className="btn btn-sm btn-ghost" disabled={Boolean(archivingKey)} onClick={() => changeRowArchive(c,false)}><ArchiveRestore size={13}/>{archivingKey===`${c.key}-restore`?'更新中...':'解除封存'}</button>:<button className="btn btn-sm btn-ghost" style={{color:'#64748b'}} disabled={Boolean(archivingKey)} onClick={() => changeRowArchive(c,true)}><Archive size={13}/>{archivingKey===`${c.key}-archive`?'封存中...':'封存訂單'}</button>}</div>}</td></tr> })}</tbody>{currentRows.length>0 && <tfoot><tr><td colSpan={4} style={{textAlign:'right',fontWeight:800}}>合計</td><td style={{fontWeight:900}}>{summary.qty}</td><td style={{fontWeight:900}}>{money(summary.amount)}</td><td/></tr></tfoot>}</table></div></div>
 
-      {mode==='product' && shipmentView==='pending' && orderingSummary.combos.length>0 && <div className="card no-print"><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><Boxes size={16}/> 團購訂貨／到貨彙總</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>訂購 {orderingSummary.totalQty}／已到 {orderingSummary.totalArrived}／未到 {orderingSummary.totalMissing}</span></div><div className="card-body"><div className="table-container" style={{marginBottom:16}}><table><thead><tr><th>規格組合</th><th>組合</th><th>口味</th><th>顏色</th><th>尺寸</th><th>訂購</th><th>已到</th><th>未到</th></tr></thead><tbody>{orderingSummary.combos.map(r => <tr key={r.label}><td><span style={r.packageName?COMBO_STYLE:SPEC_STYLE}>{r.label}</span></td><td><span style={r.packageName?COMBO_STYLE:undefined}>{r.packageName||'—'}</span></td><td><span style={r.flavor?SPEC_STYLE:undefined}>{r.flavor||'—'}</span></td><td><span style={r.color?SPEC_STYLE:undefined}>{r.color||'—'}</span></td><td><span style={r.size?SPEC_STYLE:undefined}>{r.size||'—'}</span></td><td><strong>{r.qty}</strong></td><td style={{fontWeight:900,color:'var(--emerald)'}}>{r.arrived}</td><td style={{fontWeight:900,color:r.missing?'var(--rose)':'var(--text-muted)'}}>{r.missing}</td></tr>)}</tbody></table></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}}><DimensionSummary title="組合小計" rows={orderingSummary.packages}/><DimensionSummary title="口味小計" rows={orderingSummary.flavors}/><DimensionSummary title="顏色小計" rows={orderingSummary.colors}/><DimensionSummary title="尺寸小計" rows={orderingSummary.sizes}/></div></div></div>}
+      {mode==='product' && shipmentView==='pending' && orderingSummary.combos.length>0 && <div className="card no-print"><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><Boxes size={16}/> 團購訂貨／到貨彙總</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>實際應訂 {orderingSummary.totalQty}／虛擬 {orderingSummary.virtualQty}／已到 {orderingSummary.totalArrived}／未到 {orderingSummary.totalMissing}</span></div><div className="card-body">{orderingSummary.virtualQty>0&&<div style={{background:'#fff1f2',border:'1px solid #fda4af',color:'#9f1239',padding:'10px 12px',borderRadius:9,marginBottom:12,fontSize:12,fontWeight:800}}>⚠ 虛擬訂單共 {orderingSummary.virtualQty} 件，僅供參考，已自動排除「實際應訂數量」與下方規格訂貨彙總。</div>}<div className="table-container" style={{marginBottom:16}}><table><thead><tr><th>規格組合</th><th>組合</th><th>口味</th><th>顏色</th><th>尺寸</th><th>訂購</th><th>已到</th><th>未到</th></tr></thead><tbody>{orderingSummary.combos.map(r => <tr key={r.label}><td><span style={r.packageName?COMBO_STYLE:SPEC_STYLE}>{r.label}</span></td><td><span style={r.packageName?COMBO_STYLE:undefined}>{r.packageName||'—'}</span></td><td><span style={r.flavor?SPEC_STYLE:undefined}>{r.flavor||'—'}</span></td><td><span style={r.color?SPEC_STYLE:undefined}>{r.color||'—'}</span></td><td><span style={r.size?SPEC_STYLE:undefined}>{r.size||'—'}</span></td><td><strong>{r.qty}</strong></td><td style={{fontWeight:900,color:'var(--emerald)'}}>{r.arrived}</td><td style={{fontWeight:900,color:r.missing?'var(--rose)':'var(--text-muted)'}}>{r.missing}</td></tr>)}</tbody></table></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}}><DimensionSummary title="組合小計" rows={orderingSummary.packages}/><DimensionSummary title="口味小計" rows={orderingSummary.flavors}/><DimensionSummary title="顏色小計" rows={orderingSummary.colors}/><DimensionSummary title="尺寸小計" rows={orderingSummary.sizes}/></div></div></div>}
     </>}
   </div>
 }

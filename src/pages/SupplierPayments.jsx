@@ -26,7 +26,7 @@ export default function SupplierPayments(){
   const load=useCallback(async()=>{setLoading(true);try{const[o,p]=await Promise.all([OrdersAPI.list(),SupplierPaymentsAPI.list()]);setOrders(o);setPayments(p)}catch(e){toast('供應商付款資料載入失敗：'+e.message,'error')}finally{setLoading(false)}},[toast])
   useEffect(()=>{load()},[load])
 
-  const lines=useMemo(()=>orders.filter(o=>o.status!=='cancelled'&&!o.archived).flatMap(o=>(o.items||[]).map((item,index)=>({
+  const lines=useMemo(()=>orders.filter(o=>o.status!=='cancelled'&&!o.archived&&!o.is_virtual).flatMap(o=>(o.items||[]).map((item,index)=>({
     key:`${o.id}:${index}`,order_id:o.id,item_index:index,customer_name:o.customer_name||'',order_date:o.order_date,
     supplier:item.supplier||'未指定供應商',product_name:item.product_name||item.name||'未命名商品',spec:specText(item),qty:Number(item.qty||0),
     cost:itemCost(item),paid:itemPaid(item),outstanding:itemOutstanding(item),term:item.supplier_payment_term||'manual',arrived:itemArrived(item),isEligible:eligible(item),item
@@ -38,7 +38,7 @@ export default function SupplierPayments(){
   const selectedLines=useMemo(()=>readyLines.filter(l=>selected.includes(l.key)),[readyLines,selected])
   const selectedTotal=selectedLines.reduce((s,l)=>s+l.outstanding,0)
   const allPaid=payments.reduce((s,p)=>s+Number(p.amount||0),0)
-  const paidNotArrived=useMemo(()=>orders.filter(o=>o.status!=='cancelled').flatMap(o=>o.items||[]).reduce((s,i)=>s+(itemPaid(i)>0&&!itemArrived(i)?itemPaid(i):0),0),[orders])
+  const paidNotArrived=useMemo(()=>orders.filter(o=>o.status!=='cancelled'&&!o.is_virtual).flatMap(o=>o.items||[]).reduce((s,i)=>s+(itemPaid(i)>0&&!itemArrived(i)?itemPaid(i):0),0),[orders])
 
   function chooseSupplier(name){setSelectedSupplier(name);const keys=lines.filter(l=>l.supplier===name&&l.isEligible).map(l=>l.key);setSelected(keys);const total=lines.filter(l=>l.supplier===name&&l.isEligible).reduce((s,l)=>s+l.outstanding,0);setPaymentAmount(total?String(Math.round(total)):'');setNote('')}
   function toggle(key){setSelected(p=>p.includes(key)?p.filter(x=>x!==key):[...p,key])}

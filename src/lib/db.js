@@ -478,6 +478,39 @@ export const OrdersAPI = {
     }
     return { deleted:targetIds.length, adjusted_payments:adjustedPayments, voided_payments:voidedPayments }
   },
+  async updateVirtual(ids = [], isVirtual = false) {
+    const targetIds = [...new Set((ids || []).filter(Boolean))]
+    for (let i=0; i<targetIds.length; i+=400) {
+      const batch = writeBatch(db)
+      targetIds.slice(i,i+400).forEach(id => batch.update(doc(db,'orders',id), { is_virtual:Boolean(isVirtual), updated_at:now() }))
+      await batch.commit()
+    }
+  },
+  async updateItemQty(id, itemIndex, qty) {
+    const nextQty = Number(qty)
+    if (!Number.isInteger(nextQty) || nextQty < 1) throw new Error('訂購量至少為 1')
+    const ref = doc(db,'orders',id)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) throw new Error('找不到訂單')
+    const data = snap.data()
+    const items = [...(data.items || [])]
+    if (!items[itemIndex]) throw new Error('找不到訂單商品')
+    const item = { ...items[itemIndex] }
+    const costPrice = Number(item.cost_price || 0)
+    const paid = Math.max(0,Number(item.supplier_paid_amount || 0))
+    const nextCost = costPrice * nextQty
+    if (paid > nextCost + 0.01) throw new Error(`此品項已付供應商 ${paid} 元，數量不可降到已付款成本以下`)
+    item.qty = nextQty
+    item.subtotal = Number(item.sale_price ?? item.price ?? 0) * nextQty
+    item.cost_subtotal = nextCost
+    item.arrived_qty = Math.min(nextQty,Math.max(0,Number(item.arrived_qty || 0)))
+    if (item.arrived_qty < nextQty) item.arrived_at = null
+    if (paid > 0) item.supplier_payment_status = paid >= nextCost - 0.01 ? 'paid' : 'partial'
+    items[itemIndex] = item
+    const total_amount = items.reduce((sum,row)=>sum + Number(row.subtotal ?? Number(row.sale_price ?? row.price ?? 0)*Number(row.qty||0)),0)
+    await updateDoc(ref,{ items,total_amount,updated_at:now() })
+    return { items,total_amount }
+  },
   async batchUpdateStatus(ids, status) {
     const refs = ids.map(id => doc(db,'orders',id))
     const current = status === 'shipped' ? await Promise.all(refs.map(ref => getDoc(ref))) : []
@@ -500,7 +533,7 @@ export const OrdersAPI = {
 export const StatsAPI = {
   async getSummary() {
     const [products,customers,orders] = await Promise.all([ProductsAPI.list(),CustomersAPI.list(),OrdersAPI.list()])
-    const activeOrders = orders.filter(o => o.status !== 'cancelled' && !o.archived)
+    const activeOrders = orders.filter(o => o.status !== 'cancelled' && !o.archived && !o.is_virtual)
     const shippedOrders = activeOrders.filter(o => o.status === 'shipped')
     const paidOrders = activeOrders.filter(o => ['paid','partial_refund','refunded'].includes(o.payment_status))
     return {
