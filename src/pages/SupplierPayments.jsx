@@ -69,7 +69,7 @@ export default function SupplierPayments(){
       <div className="stat-card" style={{background:'linear-gradient(135deg,#3b82f6,#2563eb)'}}><div style={{fontSize:11,fontWeight:800}}>已付未到貨</div><div style={{fontSize:22,fontWeight:900,marginTop:5}}>{money(paidNotArrived)}</div></div>
     </div>
 
-    <div style={{display:'grid',gridTemplateColumns:'minmax(240px,320px) minmax(0,1fr)',gap:14,alignItems:'start'}}>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14,alignItems:'start'}}>
       <div className="card"><div className="card-header" style={{fontWeight:900}}>🏭 選擇供應商</div><div className="card-body"><div className="search-input-wrap" style={{marginBottom:10}}><Search size={14}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋供應商..." style={{paddingLeft:32,width:'100%'}}/></div>{loading?<div className="empty-state">讀取中...</div>:suppliers.length===0?<div className="empty-state">目前沒有待付款資料</div>:suppliers.map(g=><button key={g.supplier} onClick={()=>chooseSupplier(g.supplier)} style={{width:'100%',textAlign:'left',padding:'11px 12px',marginBottom:7,borderRadius:10,border:`2px solid ${selectedSupplier===g.supplier?'var(--indigo)':'var(--border)'}`,background:selectedSupplier===g.supplier?'var(--indigo-light)':'var(--surface)',cursor:'pointer',fontFamily:'inherit'}}><div style={{fontWeight:900}}>{g.supplier}</div><div style={{fontSize:12,marginTop:4,color:'var(--text-secondary)'}}>可付款 <strong style={{color:'#b45309'}}>{money(g.ready)}</strong>{g.waiting>0&&<>　等待條件 {money(g.waiting)}</>}</div></button>)}</div></div>
 
       <div>{!selectedSupplier?<div className="card"><div className="empty-state" style={{padding:50}}>請先選擇左側供應商</div></div>:<>

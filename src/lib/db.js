@@ -63,6 +63,9 @@ export function snapshotOrderItem(product, { qty = 1, note = '', spec = {}, pric
     category: product.category || 'other',
     supplier: product.supplier || '',
     supplier_payment_term: product.supplier_payment_term || 'manual',
+    supplier_paid_amount: 0,
+    supplier_payment_status: 'unpaid',
+    supplier_payment_refs: [],
     qty: quantity,
     subtotal: price * quantity,
     cost_subtotal: cost * quantity,
@@ -114,6 +117,79 @@ export const ProductsAPI = {
   async isDuplicate(name, excludeId = null) {
     const snap = await getDocs(query(collection(db,'products'), where('name','==',name)))
     return snap.docs.some(d => d.id !== excludeId && d.data().active !== false)
+  },
+}
+
+
+export const SupplierPaymentsAPI = {
+  async list() {
+    const snap = await getDocs(query(collection(db,'supplier_payments'), orderBy('created_at','desc')))
+    return snap.docs.map(normalize)
+  },
+  async createPayment({ supplier, payment_date, amount, note = '', lines = [] }) {
+    const cleanSupplier = String(supplier || '').trim()
+    const totalAmount = Number(amount || 0)
+    if (!cleanSupplier) throw new Error('請選擇供應商')
+    if (!(totalAmount > 0)) throw new Error('付款金額必須大於 0')
+    if (!Array.isArray(lines) || !lines.length) throw new Error('請選擇付款明細')
+
+    let remaining = totalAmount
+    const allocations = []
+    for (const line of lines) {
+      if (remaining <= 0.0001) break
+      const outstanding = Math.max(0, Number(line.outstanding || 0))
+      if (!(outstanding > 0)) continue
+      const allocated = Math.min(outstanding, remaining)
+      allocations.push({
+        order_id:line.order_id,
+        item_index:Number(line.item_index),
+        customer_name:line.customer_name || '',
+        product_name:line.product_name || '',
+        supplier:cleanSupplier,
+        amount:allocated,
+      })
+      remaining -= allocated
+    }
+    if (!allocations.length || remaining > 0.01) throw new Error('付款金額超過可分配的待付款金額')
+
+    const paymentRef = doc(collection(db,'supplier_payments'))
+    const byOrder = new Map()
+    allocations.forEach(a => {
+      if (!byOrder.has(a.order_id)) byOrder.set(a.order_id,[])
+      byOrder.get(a.order_id).push(a)
+    })
+    if (byOrder.size > 450) throw new Error('單次付款涵蓋訂單過多，請分批處理')
+
+    const batch = writeBatch(db)
+    for (const [orderId,orderAllocations] of byOrder.entries()) {
+      const ref = doc(db,'orders',orderId)
+      const snap = await getDoc(ref)
+      if (!snap.exists()) throw new Error(`找不到訂單 ${orderId}`)
+      const items = [...(snap.data().items || [])]
+      orderAllocations.forEach(a => {
+        const item = { ...(items[a.item_index] || {}) }
+        const costTotal = Number(item.cost_price || 0) * Number(item.qty || 0)
+        const oldPaid = Math.max(0, Number(item.supplier_paid_amount || 0))
+        const nextPaid = Math.min(costTotal, oldPaid + Number(a.amount || 0))
+        item.supplier_paid_amount = nextPaid
+        item.supplier_payment_status = nextPaid >= costTotal - 0.01 ? 'paid' : nextPaid > 0 ? 'partial' : 'unpaid'
+        item.supplier_payment_refs = [...new Set([...(item.supplier_payment_refs || []),paymentRef.id])]
+        item.supplier_paid_at = payment_date || nowISO().slice(0,10)
+        items[a.item_index] = item
+      })
+      batch.update(ref,{ items, updated_at:now() })
+    }
+    batch.set(paymentRef,{
+      supplier:cleanSupplier,
+      payment_date:payment_date || nowISO().slice(0,10),
+      amount:totalAmount,
+      note:String(note || '').trim(),
+      allocations,
+      created_at:now(),
+      updated_at:now(),
+    })
+    await batch.commit()
+    return { id:paymentRef.id, amount:totalAmount, allocation_count:allocations.length }
   },
 }
 

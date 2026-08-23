@@ -1,9 +1,9 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText } from 'lucide-react'
+import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { UserMenu } from './AuthGuard'
 
-const APP_VERSION = 'v2026.08.23.7'
+const APP_VERSION = 'v2026.08.23.8'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/reports', icon: BarChart2, label: '銷售報表' },
   { to: '/pending-report', icon: ClipboardList, label: '未出貨報表' },
   { to: '/expenses', icon: ReceiptText, label: '其他費用' },
+  { to: '/supplier-payments', icon: CreditCard, label: '供應商付款' },
   { to: '/accounts', icon: UserCog, label: '帳號管理' },
 ]
 
