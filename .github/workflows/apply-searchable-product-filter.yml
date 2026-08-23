@@ -1,0 +1,29 @@
+name: Apply searchable product filter patch
+
+on:
+  push:
+    branches:
+      - agent/searchable-product-filter
+    paths:
+      - scripts/trigger_searchable_product_filter.txt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/searchable-product-filter
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/patch_searchable_product_filter.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Orders.jsx src/components/Layout.jsx
+          git commit -m "Use text search for order product filter"
+          git push origin agent/searchable-product-filter
