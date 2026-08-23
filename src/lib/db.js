@@ -285,20 +285,36 @@ export const OrdersAPI = {
   async update(id, data) {
     await updateDoc(doc(db,'orders',id), { ...data, updated_at:now() })
   },
+  async updateArrival(id, items) {
+    const normalizedItems = Array.isArray(items) ? items : []
+    const allArrived = normalizedItems.length > 0 && normalizedItems.every(item => {
+      const qty = Math.max(0, Number(item?.qty || 0))
+      const arrived = Math.max(0, Number(item?.arrived_qty || 0))
+      return qty > 0 && arrived >= qty
+    })
+    const patch = { items:normalizedItems, updated_at:now() }
+    if (allArrived) patch.payable_status = 'paid'
+    await updateDoc(doc(db,'orders',id), patch)
+    return { allArrived, payable_status:allArrived ? 'paid' : null }
+  },
   async updateStatus(id, status, { reason = '' } = {}) {
+    const ref = doc(db,'orders',id)
     const patch = {
       status,
       updated_at:now(),
       status_history:arrayUnion({ status, at:nowISO(), note:reason || '' }),
     }
     if (status === 'shipped') {
+      const snap = await getDoc(ref)
+      const currentPayment = snap.exists() ? snap.data().payment_status : 'unpaid'
       patch.shipped_at = now(); patch.cancelled_at = null; patch.cancellation_reason = ''
+      if (!['partial_refund','refunded'].includes(currentPayment)) patch.payment_status = 'paid'
     } else if (status === 'cancelled') {
       patch.cancelled_at = now(); patch.cancellation_reason = reason || ''
     } else if (status === 'pending') {
       patch.shipped_at = null; patch.cancelled_at = null; patch.cancellation_reason = ''
     }
-    await updateDoc(doc(db,'orders',id), patch)
+    await updateDoc(ref, patch)
   },
   async updatePayment(id, payment_status) {
     await updateDoc(doc(db,'orders',id), { payment_status, updated_at:now() })
@@ -338,11 +354,19 @@ export const OrdersAPI = {
     await updateDoc(doc(db,'orders',id), { archived:false, archived_at:null, updated_at:now() })
   },
   async batchUpdateStatus(ids, status) {
+    const refs = ids.map(id => doc(db,'orders',id))
+    const current = status === 'shipped' ? await Promise.all(refs.map(ref => getDoc(ref))) : []
     const batch = writeBatch(db)
-    ids.forEach(id => {
+    refs.forEach((ref,index) => {
       const patch = { status, updated_at:now(), status_history:arrayUnion({ status, at:nowISO(), note:'批次更新' }) }
-      if (status === 'shipped') patch.shipped_at = now()
-      batch.update(doc(db,'orders',id),patch)
+      if (status === 'shipped') {
+        patch.shipped_at = now()
+        const payment = current[index]?.exists() ? current[index].data().payment_status : 'unpaid'
+        if (!['partial_refund','refunded'].includes(payment)) patch.payment_status = 'paid'
+      } else if (status === 'pending') {
+        patch.shipped_at = null
+      }
+      batch.update(ref,patch)
     })
     await batch.commit()
   },

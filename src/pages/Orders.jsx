@@ -115,14 +115,14 @@ export default function Orders() {
   async function setItemArrival(order,itemIndex,value) {
     try {
       const items = (order.items || []).map((item,index) => index !== itemIndex ? item : { ...item, arrived_qty:Math.min(itemQty(item),Math.max(0,Number(value || 0))), arrived_at:Number(value || 0) >= itemQty(item) ? new Date().toISOString() : null })
-      await OrdersAPI.update(order.id,{ items })
-      setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items } : o))
+      const result = await OrdersAPI.updateArrival(order.id,items)
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items,...(result.allArrived ? { payable_status:'paid' } : {}) } : o))
     } catch (err) { toast('到貨狀態更新失敗：'+err.message,'error') }
   }
   async function markAllArrived(order) {
     try {
       const now = new Date().toISOString(); const items = (order.items || []).map(item => ({ ...item, arrived_qty:itemQty(item), arrived_at:now }))
-      await OrdersAPI.update(order.id,{ items }); setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items } : o)); toast('此訂單商品已全部標記到貨 ✓')
+      await OrdersAPI.updateArrival(order.id,items); setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items,payable_status:'paid' } : o)); toast('此訂單商品已全部到貨，供應商款已自動標記付款完成 ✓')
     } catch (err) { toast('到貨狀態更新失敗：'+err.message,'error') }
   }
   async function batchMarkAllArrived() {
@@ -135,14 +135,14 @@ export default function Orders() {
         order,
         items:(order.items || []).map(item => ({ ...item, arrived_qty:itemQty(item), arrived_at:at })),
       }))
-      await Promise.all(updates.map(({ order,items }) => OrdersAPI.update(order.id,{ items })))
+      await Promise.all(updates.map(({ order,items }) => OrdersAPI.updateArrival(order.id,items)))
       const itemMap = Object.fromEntries(updates.map(({ order,items }) => [order.id,items]))
-      setOrders(prev => prev.map(order => itemMap[order.id] ? { ...order,items:itemMap[order.id] } : order))
-      toast(`📦 ${targets.length} 筆選取訂單已全部標記到貨 ✓`)
+      setOrders(prev => prev.map(order => itemMap[order.id] ? { ...order,items:itemMap[order.id],payable_status:'paid' } : order))
+      toast(`📦 ${targets.length} 筆選取訂單已全部到貨，供應商款已自動標記付款完成 ✓`)
     } catch (err) { toast('批次到貨更新失敗：'+err.message,'error') }
   }
-  async function batchShip() { if (!selected.length) return; try { await OrdersAPI.batchUpdateStatus(selected,'shipped'); toast(`✅ ${selected.length} 筆訂單已原子化批次出貨`); setSelected([]); await load() } catch (err) { toast('批次出貨失敗：'+err.message,'error') } }
-  async function toggleShip(o) { try { await OrdersAPI.updateStatus(o.id,o.status === 'shipped' ? 'pending' : 'shipped'); await load() } catch (err) { toast('更新失敗：'+err.message,'error') } }
+  async function batchShip() { if (!selected.length) return; try { await OrdersAPI.batchUpdateStatus(selected,'shipped'); toast(`✅ ${selected.length} 筆訂單已出貨並自動標記已收款`); setSelected([]); await load() } catch (err) { toast('批次出貨失敗：'+err.message,'error') } }
+  async function toggleShip(o) { try { const next=o.status === 'shipped' ? 'pending' : 'shipped'; await OrdersAPI.updateStatus(o.id,next); if(next==='shipped') toast('✅ 已出貨，收款狀態已自動改為已收款'); await load() } catch (err) { toast('更新失敗：'+err.message,'error') } }
   async function togglePayment(o) { try { if (['partial_refund','refunded'].includes(o.payment_status)) { toast('此訂單已有退款紀錄，如需重設請先使用「清除退款」','error'); return } const next = o.payment_status === 'unpaid' ? 'paid' : 'unpaid'; await OrdersAPI.updatePayment(o.id,next); toast(next === 'paid' ? '💰 已標記收款' : '↩️ 已取消收款'); await load() } catch (err) { toast('更新失敗：'+err.message,'error') } }
   async function togglePayable(o) { try { const next = o.payable_status === 'paid' ? 'unpaid' : 'paid'; await OrdersAPI.updatePayable(o.id,next); toast(next === 'paid' ? '✅ 已標記供應商付款' : '↩️ 已恢復供應商未付款'); await load() } catch (err) { toast('更新失敗：'+err.message,'error') } }
   async function confirmCancel() { if (!cancelOrder) return; try { await OrdersAPI.updateStatus(cancelOrder.id,'cancelled',{ reason:cancelReason.trim() }); toast('訂單已取消；報表將自動排除'); setCancelOrder(null); setCancelReason(''); await load() } catch (err) { toast('取消失敗：'+err.message,'error') } }
@@ -157,7 +157,7 @@ export default function Orders() {
   const outstanding = visibleOrders.filter(o => o.status !== 'cancelled' && o.payment_status === 'unpaid').reduce((s,o) => s+effectiveOrderAmount(o),0)
 
   return <div className="animate-fade">
-    <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12 }}><div><h2 style={{ fontSize:22,fontWeight:800 }}>訂單管理</h2><p style={{ color:'var(--text-secondary)',fontSize:13,marginTop:2 }}>到貨＝供應商商品已到；出貨＝客戶已取貨，兩者分開管理</p></div><div style={{ display:'flex',gap:8,flexWrap:'wrap' }}><button className="btn btn-ghost btn-sm" onClick={() => setShowArchived(v => !v)}>{showArchived ? '隱藏封存' : '顯示封存'}</button>{selected.length > 0 && <><button className="btn btn-success btn-sm" onClick={batchMarkAllArrived} title="只更新到貨狀態，不會變更出貨、收款或供應商付款"><PackageCheck size={13}/>選取全部到貨 {selected.length}</button><button className="btn btn-primary btn-sm" onClick={batchShip}><CheckCircle size={13}/>批次出貨 {selected.length}</button><button className="btn btn-ghost btn-sm" onClick={() => setReceiptOrders(filtered.filter(o => selected.includes(o.id)))}><Printer size={13}/>出貨單</button></>}<button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>開立訂單</button></div></div>
+    <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12 }}><div><h2 style={{ fontSize:22,fontWeight:800 }}>訂單管理</h2><p style={{ color:'var(--text-secondary)',fontSize:13,marginTop:2 }}>全部到貨→自動供應商付款完成；已出貨→自動已收款；兩者仍可手動調整</p></div><div style={{ display:'flex',gap:8,flexWrap:'wrap' }}><button className="btn btn-ghost btn-sm" onClick={() => setShowArchived(v => !v)}>{showArchived ? '隱藏封存' : '顯示封存'}</button>{selected.length > 0 && <><button className="btn btn-success btn-sm" onClick={batchMarkAllArrived} title="將選取訂單全部到貨，並自動標記供應商付款完成；之後仍可手動調整"><PackageCheck size={13}/>選取全部到貨 {selected.length}</button><button className="btn btn-primary btn-sm" onClick={batchShip}><CheckCircle size={13}/>批次出貨 {selected.length}</button><button className="btn btn-ghost btn-sm" onClick={() => setReceiptOrders(filtered.filter(o => selected.includes(o.id)))}><Printer size={13}/>出貨單</button></>}<button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>開立訂單</button></div></div>
 
     <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginBottom:18 }}>
       <div style={{ background:'var(--amber-light)',borderRadius:10,padding:14 }}><div style={{ fontSize:12,color:'#b45309',fontWeight:700 }}>待出貨</div><strong style={{ fontSize:22,color:'#b45309' }}>{pendingCount}</strong></div>
