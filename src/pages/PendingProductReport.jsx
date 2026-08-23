@@ -6,9 +6,9 @@ import { getCustomerPhoneLast2 } from '../lib/customerSearch'
 
 const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
 const dateText = value => value ? new Date(value).toLocaleDateString('zh-TW') : '—'
-const SPEC_STYLE = { color:'#dc2626', fontWeight:900 }
-const COMBO_STYLE = { color:'#2563eb', fontWeight:900 }
-const specDisplayStyle = text => String(text || '').startsWith('組合：') ? COMBO_STYLE : SPEC_STYLE
+const SPEC_STYLE = { color:'#2563eb', fontWeight:900 }
+const COMBO_STYLE = { color:'#1d4ed8', fontWeight:900 }
+const specDisplayStyle = () => SPEC_STYLE
 
 function itemQty(item) { return Math.max(0, Number(item?.qty || 0)) }
 function arrivedQty(item) { return Math.min(itemQty(item), Math.max(0, Number(item?.arrived_qty || 0))) }
