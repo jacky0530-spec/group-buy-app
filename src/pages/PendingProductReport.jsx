@@ -244,8 +244,8 @@ export default function PendingProductReport() {
     setMarking(true)
     try {
       const changed = sourceOrders.filter(order => (order.items || []).some(item => matchesProduct(item,selectedProduct) && missingQty(item)>0)); const now = new Date().toISOString()
-      await Promise.all(changed.map(order => OrdersAPI.update(order.id,{ items:(order.items || []).map(item => matchesProduct(item,selectedProduct) ? { ...item,arrived_qty:itemQty(item),arrived_at:now } : item) })))
-      toast(`「${selectedProduct.name}」已將 ${changed.length} 筆待出貨訂單標記為全部到貨 ✓`); await load()
+      await Promise.all(changed.map(order => { const items=(order.items || []).map(item => matchesProduct(item,selectedProduct) ? { ...item,arrived_qty:itemQty(item),arrived_at:now } : item); return OrdersAPI.updateArrival(order.id,items) }))
+      toast(`「${selectedProduct.name}」已更新到貨；整張訂單全部到貨者已自動標記供應商付款完成 ✓`); await load()
     } catch(err) { toast('批次到貨失敗：'+err.message,'error') }
     finally { setMarking(false) }
   }
@@ -255,7 +255,7 @@ export default function PendingProductReport() {
     const key = `${row.key}-${nextStatus}`; setShippingKey(key)
     try {
       await OrdersAPI.batchUpdateStatus(row.order_ids,nextStatus)
-      toast(nextStatus === 'shipped' ? `✅ ${row.name} 的 ${row.order_ids.length} 筆訂單已標記為已出貨` : `↩️ ${row.name} 的 ${row.order_ids.length} 筆訂單已恢復待出貨`)
+      toast(nextStatus === 'shipped' ? `✅ ${row.name} 的 ${row.order_ids.length} 筆訂單已出貨並自動標記已收款` : `↩️ ${row.name} 的 ${row.order_ids.length} 筆訂單已恢復待出貨`)
       await load()
     } catch(err) { toast('更新出貨狀態失敗：'+err.message,'error') }
     finally { setShippingKey('') }
@@ -288,7 +288,7 @@ export default function PendingProductReport() {
   const modeCardStyle = active => ({ flex:1,minWidth:220,borderRadius:14,padding:'14px 16px',cursor:'pointer',textAlign:'left',border:`2px solid ${active ? 'var(--indigo)' : 'var(--border)'}`,background:active ? 'var(--indigo-light)' : 'var(--surface)',boxShadow:active ? '0 8px 22px rgba(79,70,229,.14)' : 'none',fontFamily:'inherit' })
 
   return <div className="animate-fade">
-    <div className="no-print" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:20}}><div><h2 style={{fontSize:22,fontWeight:800}}>出貨查詢報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>可從報表直接標記已出貨，並單獨查詢已出貨紀錄</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" disabled={!canOutput} onClick={exportCurrent}><Download size={14}/>匯出 CSV</button><button className="btn btn-primary" disabled={!canOutput} onClick={() => window.print()}><Printer size={14}/>列印</button></div></div>
+    <div className="no-print" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:20}}><div><h2 style={{fontSize:22,fontWeight:800}}>出貨查詢報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>報表標記已出貨會自動同步已收款；整張訂單全部到貨會自動同步供應商付款完成</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" disabled={!canOutput} onClick={exportCurrent}><Download size={14}/>匯出 CSV</button><button className="btn btn-primary" disabled={!canOutput} onClick={() => window.print()}><Printer size={14}/>列印</button></div></div>
     {error && <div className="no-print" style={{background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:14}}>{error}</div>}
 
     <div className="no-print" style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10,marginBottom:14}}><button type="button" onClick={() => { setShipmentView('pending'); setArrivalView('all'); setSelectedBuyerKey(''); setShowArchived(false) }} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='pending'?'#d97706':'var(--border)'}`,background:shipmentView==='pending'?'#fff7ed':'var(--surface)',fontWeight:900,color:shipmentView==='pending'?'#b45309':'var(--text-secondary)',cursor:'pointer',fontFamily:'inherit'}}><Truck size={16} style={{verticalAlign:'middle',marginRight:7}}/>待出貨訂單</button><button type="button" onClick={() => { setShipmentView('shipped'); setSelectedBuyerKey('') }} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='shipped'?'#059669':'var(--border)'}`,background:shipmentView==='shipped'?'#ecfdf5':'var(--surface)',fontWeight:900,color:shipmentView==='shipped'?'#047857':'var(--text-secondary)',cursor:'pointer',fontFamily:'inherit'}}><PackageCheck size={16} style={{verticalAlign:'middle',marginRight:7}}/>已出貨查詢</button></div>{shipmentView==='shipped' && <div className="no-print" style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:10,margin:'-4px 0 14px'}}><button type="button" className={`btn btn-sm ${showArchived?'btn-primary':'btn-ghost'}`} onClick={()=>{setShowArchived(v=>!v);setSelectedBuyerKey('')}}>{showArchived?<><ArchiveRestore size={13}/>隱藏封存</>:<><Archive size={13}/>顯示封存</>}</button><span style={{fontSize:12,color:'var(--text-muted)'}}>{showArchived?'目前包含已封存訂單':'封存訂單預設隱藏'}</span></div>}
