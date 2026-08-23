@@ -1,0 +1,31 @@
+name: Apply order product text filter
+
+on:
+  push:
+    branches:
+      - agent/order-product-text-filter
+    paths:
+      - scripts/trigger_order_product_text_filter.txt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/order-product-text-filter
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/patch_order_product_text_filter.py
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/Orders.jsx src/components/Layout.jsx
+          git diff --cached --quiet || git commit -m "Use searchable product filter in orders"
+          git push origin HEAD:agent/order-product-text-filter
