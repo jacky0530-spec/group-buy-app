@@ -10,6 +10,7 @@ import Orders from './pages/Orders'
 import Reports from './pages/Reports'
 import PendingProductReport from './pages/PendingProductReport'
 import Expenses from './pages/Expenses'
+import SupplierPayments from './pages/SupplierPayments'
 import Accounts from './pages/Accounts'
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
                 <Route path="reports" element={<Reports />} />
                 <Route path="pending-report" element={<PendingProductReport />} />
                 <Route path="expenses" element={<Expenses />} />
+                <Route path="supplier-payments" element={<SupplierPayments />} />
                 <Route path="accounts" element={<Accounts />} />
               </Route>
             </Route>
