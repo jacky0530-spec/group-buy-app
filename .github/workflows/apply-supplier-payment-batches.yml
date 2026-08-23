@@ -1,0 +1,31 @@
+name: Apply supplier payment batch architecture
+
+on:
+  push:
+    branches:
+      - agent/supplier-payment-batches
+    paths:
+      - 'scripts/trigger_supplier_payment_batches.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/supplier-payment-batches
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply patch
+        run: python scripts/patch_supplier_payment_batches.py
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/db.js src/App.jsx src/components/Layout.jsx src/pages/Orders.jsx src/pages/Reports.jsx src/pages/SupplierPayments.jsx
+          git diff --cached --quiet || git commit -m 'Refactor supplier payments into batch workflow'
+          git push
