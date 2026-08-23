@@ -14,6 +14,7 @@ const PAY_CFG = {
   unpaid:{ label:'未收款',badge:'badge-rose' }, paid:{ label:'已收款',badge:'badge-emerald' }, partial_refund:{ label:'部分退款',badge:'badge-amber' }, refunded:{ label:'已全額退款',badge:'badge-gray' },
 }
 const PAYABLE_CFG = { unpaid:{ label:'供應商未付款',badge:'badge-amber' }, paid:{ label:'供應商已付款',badge:'badge-emerald' } }
+const PAYMENT_TERM_LABEL = { order:'訂貨即付款', arrival:'到貨後付款', manual:'手動付款' }
 
 function specLabel(item) {
   const s = item?.spec || {}; const parts = []
@@ -59,6 +60,7 @@ function snapshotForCartItem(item) {
     cost:item.snapshot.cost_price ?? item.product.cost ?? 0,
     category:item.snapshot.category ?? item.product.category ?? 'other',
     supplier:item.snapshot.supplier ?? item.product.supplier ?? '',
+    supplier_payment_term:item.snapshot.supplier_payment_term ?? item.product.supplier_payment_term ?? 'manual',
   } : item.product
   const priceOption = item.snapshot ? (item.snapshot.spec?.package ? { label:item.snapshot.spec.package, price:item.snapshot.sale_price ?? item.snapshot.price, cost:item.snapshot.cost_price } : null) : ((item.product.price_options || []).find(option => option.label === item.price_option) || null)
   const snap = snapshotOrderItem(base,{ qty:item.qty,note:item.note,spec:item.spec,priceOption })
@@ -87,7 +89,7 @@ export default function Orders() {
   const filtProds = products.filter(p => p.name.toLowerCase().includes(prodSearch.toLowerCase()))
 
   function openAdd() { setEditId(null); setFormCustomer(null); setCartItems([]); setOrderNote(''); setCustSearch(''); setProdSearch(''); setShowForm(true) }
-  function productFromSnapshot(item) { const id = item.product_id || item.id; return prodMap[id] || { id,name:item.product_name || item.name,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? 0,category:item.category || 'other',supplier:item.supplier || '',spec_mode:'none',spec_flavors:item.spec?.flavor ? [item.spec.flavor] : [],spec_colors:item.spec?.color ? [item.spec.color] : [],spec_sizes:item.spec?.size ? [item.spec.size] : [],price_options:item.spec?.package ? [{label:item.spec.package,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? ''}] : [] } }
+  function productFromSnapshot(item) { const id = item.product_id || item.id; return prodMap[id] || { id,name:item.product_name || item.name,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? 0,category:item.category || 'other',supplier:item.supplier || '',supplier_payment_term:item.supplier_payment_term||'manual',spec_mode:'none',spec_flavors:item.spec?.flavor ? [item.spec.flavor] : [],spec_colors:item.spec?.color ? [item.spec.color] : [],spec_sizes:item.spec?.size ? [item.spec.size] : [],price_options:item.spec?.package ? [{label:item.spec.package,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? ''}] : [] } }
   function openEdit(o) { const customer = customers.find(c => c.id === o.customer_id) || { id:o.customer_id,name:o.customer_name,phone:o.customer_phone || '',phone_last2:o.customer_phone_last2 || '' }; setEditId(o.id); setFormCustomer(customer); setCartItems((o.items || []).map(item => ({ product:productFromSnapshot(item),qty:item.qty,note:item.note || '',spec:item.spec || {},price_option:item.spec?.package || '',snapshot:item }))); setOrderNote(o.note || ''); setShowForm(true) }
   function addToCart(product) { setCartItems(prev => [...prev,{ product,qty:1,note:'',spec:{ color:'',size:'',flavor:'' },price_option:'',snapshot:null }]); setProdOpen(false); setProdSearch('') }
   function addSameProduct(idx) { setCartItems(prev => { const source = prev[idx]; if (!source) return prev; const copy = { product:source.product,qty:1,note:'',spec:{ color:'',size:'',flavor:'' },price_option:'',snapshot:null }; return [...prev.slice(0,idx+1),copy,...prev.slice(idx+1)] }) }
@@ -115,14 +117,14 @@ export default function Orders() {
   async function setItemArrival(order,itemIndex,value) {
     try {
       const items = (order.items || []).map((item,index) => index !== itemIndex ? item : { ...item, arrived_qty:Math.min(itemQty(item),Math.max(0,Number(value || 0))), arrived_at:Number(value || 0) >= itemQty(item) ? new Date().toISOString() : null })
-      const result = await OrdersAPI.updateArrival(order.id,items)
-      setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items,...(result.allArrived ? { payable_status:'paid' } : {}) } : o))
+      await OrdersAPI.updateArrival(order.id,items)
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items } : o))
     } catch (err) { toast('到貨狀態更新失敗：'+err.message,'error') }
   }
   async function markAllArrived(order) {
     try {
       const now = new Date().toISOString(); const items = (order.items || []).map(item => ({ ...item, arrived_qty:itemQty(item), arrived_at:now }))
-      await OrdersAPI.updateArrival(order.id,items); setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items,payable_status:'paid' } : o)); toast('此訂單商品已全部到貨，供應商款已自動標記付款完成 ✓')
+      await OrdersAPI.updateArrival(order.id,items); setOrders(prev => prev.map(o => o.id === order.id ? { ...o,items } : o)); toast('📦 此訂單商品已全部到貨；供應商付款仍依實際匯款狀態另外確認 ✓')
     } catch (err) { toast('到貨狀態更新失敗：'+err.message,'error') }
   }
   async function batchMarkAllArrived() {
@@ -137,8 +139,8 @@ export default function Orders() {
       }))
       await Promise.all(updates.map(({ order,items }) => OrdersAPI.updateArrival(order.id,items)))
       const itemMap = Object.fromEntries(updates.map(({ order,items }) => [order.id,items]))
-      setOrders(prev => prev.map(order => itemMap[order.id] ? { ...order,items:itemMap[order.id],payable_status:'paid' } : order))
-      toast(`📦 ${targets.length} 筆選取訂單已全部到貨，供應商款已自動標記付款完成 ✓`)
+      setOrders(prev => prev.map(order => itemMap[order.id] ? { ...order,items:itemMap[order.id] } : order))
+      toast(`📦 ${targets.length} 筆選取訂單已全部到貨；供應商付款狀態不會自動變更 ✓`)
     } catch (err) { toast('批次到貨更新失敗：'+err.message,'error') }
   }
   async function batchShip() { if (!selected.length) return; try { await OrdersAPI.batchUpdateStatus(selected,'shipped'); toast(`✅ ${selected.length} 筆訂單已出貨並自動標記已收款`); setSelected([]); await load() } catch (err) { toast('批次出貨失敗：'+err.message,'error') } }
@@ -157,7 +159,7 @@ export default function Orders() {
   const outstanding = visibleOrders.filter(o => o.status !== 'cancelled' && o.payment_status === 'unpaid').reduce((s,o) => s+effectiveOrderAmount(o),0)
 
   return <div className="animate-fade">
-    <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12 }}><div><h2 style={{ fontSize:22,fontWeight:800 }}>訂單管理</h2><p style={{ color:'var(--text-secondary)',fontSize:13,marginTop:2 }}>全部到貨→自動供應商付款完成；已出貨→自動已收款；兩者仍可手動調整</p></div><div style={{ display:'flex',gap:8,flexWrap:'wrap' }}><button className="btn btn-ghost btn-sm" onClick={() => setShowArchived(v => !v)}>{showArchived ? '隱藏封存' : '顯示封存'}</button>{selected.length > 0 && <><button className="btn btn-success btn-sm" onClick={batchMarkAllArrived} title="將選取訂單全部到貨，並自動標記供應商付款完成；之後仍可手動調整"><PackageCheck size={13}/>選取全部到貨 {selected.length}</button><button className="btn btn-primary btn-sm" onClick={batchShip}><CheckCircle size={13}/>批次出貨 {selected.length}</button><button className="btn btn-ghost btn-sm" onClick={() => setReceiptOrders(filtered.filter(o => selected.includes(o.id)))}><Printer size={13}/>出貨單</button></>}<button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>開立訂單</button></div></div>
+    <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12 }}><div><h2 style={{ fontSize:22,fontWeight:800 }}>訂單管理</h2><p style={{ color:'var(--text-secondary)',fontSize:13,marginTop:2 }}>到貨與供應商付款分開管理；實際匯款才標記付款完成。已出貨仍自動同步已收款。</p></div><div style={{ display:'flex',gap:8,flexWrap:'wrap' }}><button className="btn btn-ghost btn-sm" onClick={() => setShowArchived(v => !v)}>{showArchived ? '隱藏封存' : '顯示封存'}</button>{selected.length > 0 && <><button className="btn btn-success btn-sm" onClick={batchMarkAllArrived} title="將選取訂單全部標記到貨；不會變更供應商付款狀態"><PackageCheck size={13}/>選取全部到貨 {selected.length}</button><button className="btn btn-primary btn-sm" onClick={batchShip}><CheckCircle size={13}/>批次出貨 {selected.length}</button><button className="btn btn-ghost btn-sm" onClick={() => setReceiptOrders(filtered.filter(o => selected.includes(o.id)))}><Printer size={13}/>出貨單</button></>}<button className="btn btn-primary" onClick={openAdd}><Plus size={15}/>開立訂單</button></div></div>
 
     <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginBottom:18 }}>
       <div style={{ background:'var(--amber-light)',borderRadius:10,padding:14 }}><div style={{ fontSize:12,color:'#b45309',fontWeight:700 }}>待出貨</div><strong style={{ fontSize:22,color:'#b45309' }}>{pendingCount}</strong></div>
@@ -180,7 +182,7 @@ export default function Orders() {
         <td style={{ fontWeight:800,color:'var(--indigo)' }}>NT${effectiveOrderAmount(o).toLocaleString()}</td>
         <td><span className={`badge ${scfg.badge}`}>{scfg.label}</span>{!archived && o.status !== 'cancelled' && <button className="btn btn-sm btn-ghost" style={{ marginTop:4,fontSize:11 }} onClick={() => toggleShip(o)}>{o.status === 'shipped' ? <><RotateCcw size={10}/>取消出貨</> : <><CheckCircle size={10}/>標記出貨</>}</button>}</td>
         <td><span className={`badge ${pcfg.badge}`}>{pcfg.label}</span>{!archived && o.status !== 'cancelled' && <div style={{ display:'flex',gap:4,marginTop:4,flexWrap:'wrap' }}><button className="btn btn-sm btn-ghost" style={{ fontSize:11 }} onClick={() => togglePayment(o)}>{o.payment_status === 'unpaid' ? '收款完成' : '切換收款'}</button><button className="btn btn-sm btn-ghost" style={{ fontSize:11 }} onClick={() => { setRefundOrder(o); setRefundAmount(''); setRefundNote('') }}><Undo2 size={10}/>退款</button>{Number(o.refund_amount || 0)>0 && <button className="btn btn-sm btn-ghost" style={{ fontSize:11 }} onClick={() => clearRefunds(o)}>清除退款</button>}</div>}</td>
-        <td><span className={`badge ${acfg.badge}`}>{acfg.label}</span>{!archived && o.status !== 'cancelled' && <button className="btn btn-sm btn-ghost" style={{ marginTop:4,fontSize:11 }} onClick={() => togglePayable(o)}><WalletCards size={10}/>{o.payable_status === 'paid' ? '取消付款' : '付款完成'}</button>}</td>
+        <td><span className={`badge ${acfg.badge}`}>{acfg.label}</span><div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>付款條件：{(()=>{const terms=[...new Set((o.items||[]).map(i=>i.supplier_payment_term||'manual'))];return terms.length===1?(PAYMENT_TERM_LABEL[terms[0]]||'手動付款'):'多種條件'})()}</div>{o.payable_status==='paid'&&o.payable_paid_at&&<div style={{fontSize:10,color:'var(--emerald)',marginTop:2}}>付款日：{new Date(o.payable_paid_at).toLocaleDateString('zh-TW')}</div>}{!archived && o.status !== 'cancelled' && <button className="btn btn-sm btn-ghost" style={{ marginTop:4,fontSize:11 }} onClick={() => togglePayable(o)}><WalletCards size={10}/>{o.payable_status === 'paid' ? '取消付款' : '付款完成'}</button>}</td>
         <td style={{ color:'var(--text-secondary)',fontSize:13 }}>{o.order_date ? new Date(o.order_date).toLocaleDateString('zh-TW') : '—'}</td>
         <td style={{ textAlign:'right' }}><div style={{ display:'flex',gap:5,justifyContent:'flex-end',flexWrap:'wrap' }}><button className="btn-icon btn" title="出貨單" onClick={() => setReceiptOrders([o])}><Printer size={12}/></button>{!archived && o.status !== 'cancelled' && <button className="btn-icon btn" title="編輯" onClick={() => openEdit(o)}><Pencil size={12}/></button>}{!archived && o.status !== 'cancelled' && <button className="btn-icon btn" title="取消訂單" onClick={() => { setCancelOrder(o); setCancelReason('') }} style={{ color:'var(--rose)' }}><AlertCircle size={12}/></button>}{!archived && o.status === 'cancelled' && <button className="btn-icon btn" title="恢復訂單" onClick={() => restoreCancelled(o)}><RotateCcw size={12}/></button>}{!archived && <button className="btn-icon btn" title="封存" onClick={() => setConfirmArchive(o)}><Archive size={12}/></button>}<OrderDeleteButton order={o} onDeleted={load}/></div></td>
       </tr>})}

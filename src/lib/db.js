@@ -18,7 +18,7 @@ function normalize(docSnap) {
   const d = { id: docSnap.id, ...docSnap.data() }
   const timeFields = [
     'created_at','updated_at','joined_at','order_date','shipped_at',
-    'cancelled_at','refunded_at','archived_at',
+    'cancelled_at','refunded_at','archived_at','payable_paid_at',
   ]
   timeFields.forEach(f => { if (d[f]) d[f] = tsToISO(d[f]) })
   return d
@@ -62,6 +62,7 @@ export function snapshotOrderItem(product, { qty = 1, note = '', spec = {}, pric
     cost_price: cost,
     category: product.category || 'other',
     supplier: product.supplier || '',
+    supplier_payment_term: product.supplier_payment_term || 'manual',
     qty: quantity,
     subtotal: price * quantity,
     cost_subtotal: cost * quantity,
@@ -292,10 +293,8 @@ export const OrdersAPI = {
       const arrived = Math.max(0, Number(item?.arrived_qty || 0))
       return qty > 0 && arrived >= qty
     })
-    const patch = { items:normalizedItems, updated_at:now() }
-    if (allArrived) patch.payable_status = 'paid'
-    await updateDoc(doc(db,'orders',id), patch)
-    return { allArrived, payable_status:allArrived ? 'paid' : null }
+    await updateDoc(doc(db,'orders',id), { items:normalizedItems, updated_at:now() })
+    return { allArrived }
   },
   async updateStatus(id, status, { reason = '' } = {}) {
     const ref = doc(db,'orders',id)
@@ -320,7 +319,7 @@ export const OrdersAPI = {
     await updateDoc(doc(db,'orders',id), { payment_status, updated_at:now() })
   },
   async updatePayable(id, payable_status) {
-    await updateDoc(doc(db,'orders',id), { payable_status, updated_at:now() })
+    await updateDoc(doc(db,'orders',id), { payable_status, payable_paid_at:payable_status === 'paid' ? now() : null, updated_at:now() })
   },
   async applyRefund(id, { amount, note = '' }) {
     const ref = doc(db,'orders',id)
