@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { deleteDoc, doc } from 'firebase/firestore'
-import { db } from '../lib/firebase'
+import { OrdersAPI } from '../lib/db'
 import { getAccountAccess } from '../lib/auth'
 import { useAuth } from './AuthGuard'
 
@@ -35,7 +34,7 @@ export default function OrderDeleteButton({ order, onDeleted }) {
 
     setDeleting(true)
     try {
-      await deleteDoc(doc(db, 'orders', order.id))
+      await OrdersAPI.bulkHardDelete([order.id])
       await onDeleted?.()
     } catch (err) {
       window.alert(`永久刪除失敗：${err.message}\n\n若顯示權限不足，請確認新版 Firestore Rules 已發布。`)
