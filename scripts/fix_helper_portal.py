@@ -1,0 +1,10 @@
+from pathlib import Path
+p=Path('src/components/Layout.jsx')
+s=p.read_text().replace("from 'lucide-react' from 'lucide-react'", "from 'lucide-react'")
+p.write_text(s)
+p=Path('src/pages/HelperPortal.jsx')
+s=p.read_text().replace("import { Search, Plus, X, Save, LogOut, ClipboardList } from 'lucide-react'", "import { Search, X, Save, LogOut, ClipboardList } from 'lucide-react'")
+p.write_text(s)
+p=Path('src/pages/Accounts.jsx')
+s=p.read_text().replace(", Crown } from 'lucide-react'", " } from 'lucide-react'")
+p.write_text(s)
