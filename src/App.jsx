@@ -7,6 +7,7 @@ import Home from './pages/Home'
 import Products from './pages/Products'
 import Customers from './pages/Customers'
 import Orders from './pages/Orders'
+import ExcelOrderImport from './pages/ExcelOrderImport'
 import Reports from './pages/Reports'
 import PendingProductReport from './pages/PendingProductReport'
 import Expenses from './pages/Expenses'
@@ -31,6 +32,7 @@ export default function App() {
                   <Route path="products" element={<Products />} />
                   <Route path="customers" element={<Customers />} />
                   <Route path="orders" element={<Orders />} />
+                  <Route path="order-import" element={<ExcelOrderImport />} />
                   <Route path="reports" element={<Reports />} />
                   <Route path="pending-report" element={<PendingProductReport />} />
                   <Route path="expenses" element={<Expenses />} />
