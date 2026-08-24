@@ -21,11 +21,16 @@ function loadXlsx() {
 
 function stripCodeLabel(v){return clean(v).replace(/^[A-ZＡ-Ｚ]\s*[、,，.．:\-]?\s*/i,'').replace(/碼$/,'').trim()}
 function parseHeaderSpec(header){
-  const raw=stripCodeLabel(header)
-  if(!raw)return{raw_label:''}
-  const sizeMatch=raw.match(/(XS|S|M|L|XL|XXL|XXXL|XXXXL|2L|3L|4L)$/i)
-  if(sizeMatch){const size=sizeMatch[1].toUpperCase();const color=raw.slice(0,sizeMatch.index).trim();return{raw_label:raw,color,size,...(color?{}:{})}}
-  return{raw_label:raw,color:raw}
+  const original=clean(header).replace(/碼$/,'').trim()
+  const plain=stripCodeLabel(original)
+  if(!original)return{raw_label:'',plain_label:''}
+  const sizeMatch=plain.match(/(XS|S|M|L|XL|XXL|XXXL|XXXXL|2L|3L|4L)$/i)
+  if(sizeMatch){
+    const size=sizeMatch[1].toUpperCase()
+    const color=plain.slice(0,sizeMatch.index).trim()
+    return{raw_label:original,plain_label:plain,color,size}
+  }
+  return{raw_label:original,plain_label:plain,color:plain}
 }
 function parseCellValue(value,header){
   if(value===null||value===undefined||clean(value)==='')return null
@@ -33,7 +38,7 @@ function parseCellValue(value,header){
   if(typeof value==='number'){const qty=qtyNumber(value);return qty?{qty,...base}:null}
   const text=clean(value)
   const mx=text.match(/^(.+?)\s*[xX×*]\s*(\d+)$/)
-  if(mx){const qty=qtyNumber(mx[2]);if(!qty)return null;const token=clean(mx[1]).replace(/碼$/,'').toUpperCase();return{qty,raw_label:base.raw_label,color:base.color||'',size:token}}
+  if(mx){const qty=qtyNumber(mx[2]);if(!qty)return null;const token=clean(mx[1]).replace(/碼$/,'').toUpperCase();return{qty,raw_label:base.raw_label,plain_label:base.plain_label||'',color:base.color||'',size:token}}
   const num=text.match(/^(\d+)$/)
   if(num)return{qty:qtyNumber(num[1]),...base}
   return null
@@ -61,7 +66,7 @@ function parseSheetRows(rows,fileName,sheetName){
     if(matrix){
       headers.forEach((header,i)=>{const parsed=parseCellValue(row[i+2],header);if(parsed&&parsed.qty>0)items.push(parsed)})
     }else{
-      const qty=qtyNumber(row[2]);if(qty>0)items.push({qty,raw_label:'',color:'',size:''})
+      const qty=qtyNumber(row[2]);if(qty>0)items.push({qty,raw_label:'',plain_label:'',color:'',size:''})
     }
     if(!items.length)continue
     buyers.push({key:`${fileName}:${sheetName}:${r}`,customer_name,marker,is_virtual:marker==='私',items})
@@ -85,13 +90,39 @@ function matchValue(value,options=[]){
   const alias=SIZE_ALIASES[clean(value).toUpperCase()];if(alias){const a=options.find(v=>norm(v)===norm(alias));if(a)return a}
   return''
 }
+function matchLabeledValue(values,options=[]){
+  const candidates=[...new Set((Array.isArray(values)?values:[values]).map(clean).filter(Boolean))]
+  for(const value of candidates){
+    const exact=options.find(v=>norm(v)===norm(value));if(exact)return exact
+  }
+  for(const value of candidates){
+    const plain=stripCodeLabel(value);if(!plain)continue
+    const plainMatch=options.find(v=>norm(stripCodeLabel(v))===norm(plain));if(plainMatch)return plainMatch
+  }
+  return''
+}
+function findPackageOption(values,options=[]){
+  const candidates=[...new Set((Array.isArray(values)?values:[values]).map(clean).filter(Boolean))]
+  for(const value of candidates){
+    const exact=options.find(o=>norm(o.label)===norm(value));if(exact)return exact
+  }
+  for(const value of candidates){
+    const plain=stripCodeLabel(value);if(!plain)continue
+    const exactPlain=options.find(o=>norm(stripCodeLabel(o.label))===norm(plain));if(exactPlain)return exactPlain
+  }
+  for(const value of candidates){
+    const n=norm(value);if(!n)continue
+    const fuzzy=options.find(o=>n.includes(norm(o.label))||norm(o.label).includes(n));if(fuzzy)return fuzzy
+  }
+  return null
+}
 function resolveImportedItem(product,item){
   const raw=item.raw_label||''
-  const packageOpt=(product.price_options||[]).find(o=>norm(o.label)===norm(raw)) || (product.price_options||[]).find(o=>norm(raw).includes(norm(o.label))||norm(o.label).includes(norm(raw))) || null
-  const flavor=matchValue(raw,product.spec_flavors||[])
+  const plain=item.plain_label||stripCodeLabel(raw)
+  const packageOpt=findPackageOption([raw,plain],product.price_options||[])
+  const flavor=matchLabeledValue([raw,plain],product.spec_flavors||[])
   const size=matchValue(item.size,product.spec_sizes||[]) || (!product.spec_sizes?.length?clean(item.size):'')
-  const colorCandidate=flavor?'':item.color
-  const color=matchValue(colorCandidate,product.spec_colors||[]) || (!product.spec_colors?.length?clean(colorCandidate):'')
+  const color=flavor?'':(matchLabeledValue([raw,item.color,plain],product.spec_colors||[]) || (!product.spec_colors?.length?clean(item.color||plain):''))
   return{qty:item.qty,spec:{package:packageOpt?.label||'',flavor,color,size},priceOption:packageOpt,raw_label:raw}
 }
 function validationError(product,resolved){
