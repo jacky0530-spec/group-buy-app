@@ -2,7 +2,7 @@ import {
   collection, doc,
   getDocs, getDoc, addDoc, updateDoc,
   query, orderBy, where, Timestamp,
-  writeBatch, arrayUnion, limit, startAfter,
+  writeBatch, arrayUnion, limit, startAfter, setDoc,
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from './customerSearch'
@@ -94,6 +94,23 @@ export function orderSnapshotCost(order, currentCostMap = {}) {
   }, 0)
 }
 
+
+function helperCatalogPayload(product) {
+  return {
+    name:String(product?.name || '').trim(),
+    price:Number(product?.price || 0),
+    category:product?.category || 'other',
+    pricing_mode:product?.pricing_mode || ((product?.price_options || []).length ? 'options' : 'single'),
+    spec_mode:product?.spec_mode || 'none',
+    spec_colors:[...(product?.spec_colors || [])],
+    spec_sizes:[...(product?.spec_sizes || [])],
+    spec_flavors:[...(product?.spec_flavors || [])],
+    price_options:(product?.price_options || []).map(o => ({ label:String(o.label || ''), price:Number(o.price || 0) })),
+    active:product?.active !== false,
+    updated_at:now(),
+  }
+}
+
 export const ProductsAPI = {
   async list({ includeArchived = false } = {}) {
     const snap = await getDocs(query(collection(db,'products'), orderBy('created_at','desc')))
@@ -103,16 +120,20 @@ export const ProductsAPI = {
   async create(data) {
     const payload = { ...data, active:true, created_at:now(), updated_at:now() }
     const ref = await addDoc(collection(db,'products'), payload)
+    await setDoc(doc(db,'helper_catalog',ref.id), helperCatalogPayload({ ...data,active:true }))
     return { id:ref.id, ...data, active:true, created_at:nowISO(), updated_at:nowISO() }
   },
   async update(id, data) {
     await updateDoc(doc(db,'products',id), { ...data, updated_at:now() })
+    await setDoc(doc(db,'helper_catalog',id), helperCatalogPayload(data), { merge:true })
   },
   async archive(id) {
     await updateDoc(doc(db,'products',id), { active:false, archived_at:now(), updated_at:now() })
+    await setDoc(doc(db,'helper_catalog',id), { active:false,updated_at:now() }, { merge:true })
   },
   async restore(id) {
     await updateDoc(doc(db,'products',id), { active:true, archived_at:null, updated_at:now() })
+    await setDoc(doc(db,'helper_catalog',id), { active:true,updated_at:now() }, { merge:true })
   },
   async isDuplicate(name, excludeId = null) {
     const snap = await getDocs(query(collection(db,'products'), where('name','==',name)))

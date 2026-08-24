@@ -1,7 +1,7 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { Navigate, Outlet } from 'react-router-dom'
-import { onAuthChange, logout, isEmailAllowed } from '../lib/auth'
+import { onAuthChange, logout, getAccountAccess } from '../lib/auth'
 import { ShoppingBag, LogOut, User } from 'lucide-react'
 
 const AuthContext = createContext(null)
@@ -11,6 +11,8 @@ export const useAuth = () => useContext(AuthContext)
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(undefined)  // undefined = 初始化中
   const [allowed, setAllowed] = useState(false)
+  const [role,setRole] = useState(null)
+  const [account,setAccount] = useState(null)
   const [checking,setChecking]= useState(false)
 
   useEffect(() => {
@@ -18,18 +20,22 @@ export function AuthProvider({ children }) {
       setUser(u)
       if (u) {
         setChecking(true)
-        const ok = await isEmailAllowed(u.uid)
-        setAllowed(ok)
+        const access = await getAccountAccess(u.uid)
+        setAllowed(access.allowed)
+        setRole(access.role)
+        setAccount(access.account)
         setChecking(false)
       } else {
         setAllowed(false)
+        setRole(null)
+        setAccount(null)
       }
     })
     return unsub
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, allowed, checking, logout }}>
+    <AuthContext.Provider value={{ user, allowed, role, account, checking, logout }}>
       {children}
     </AuthContext.Provider>
   )
@@ -81,6 +87,13 @@ export function AuthGuard() {
   if (!user)    return <Navigate to="/login" replace />
   if (!allowed) return <NoPermission user={user} />
   return <Outlet />
+}
+
+
+export function RoleGuard({ roles = [] }) {
+  const { role } = useAuth()
+  if (!roles.length || roles.includes(role)) return <Outlet />
+  return <Navigate to={role === 'helper' ? '/helper' : '/'} replace />
 }
 
 // ── UserMenu ──────────────────────────────────────────────────

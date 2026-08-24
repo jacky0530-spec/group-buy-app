@@ -2,46 +2,54 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
+    function signedIn() { return request.auth != null; }
+    function accountPath() { return /databases/$(database)/documents/accounts/$(request.auth.uid); }
+    function hasAccess() { return signedIn() && exists(accountPath()) && get(accountPath()).data.disabled != true; }
+    function role() { return hasAccess() ? get(accountPath()).data.role : null; }
+    function isOwner() { return role() == 'owner'; }
+    function isAdmin() { return role() == 'owner' || role() == 'staff'; }
+    function isHelper() { return role() == 'helper'; }
+    function validRole(value) { return value == 'owner' || value == 'staff' || value == 'helper'; }
 
-    function accountPath() {
-      return /databases/$(database)/documents/accounts/$(request.auth.uid);
-    }
-
-    function hasAccess() {
-      return signedIn()
-        && exists(accountPath())
-        && get(accountPath()).data.disabled != true;
-    }
-
-    function isOwner() {
-      return hasAccess()
-        && get(accountPath()).data.role == 'owner';
-    }
-
-    function validRole(role) {
-      return role == 'owner' || role == 'staff';
-    }
-
-    // 帳號權限維持獨立控制。
     match /accounts/{uid} {
-      allow read: if hasAccess();
-      allow create: if isOwner()
-        && validRole(request.resource.data.role)
-        && request.resource.data.disabled == false;
-      allow update: if isOwner()
-        && validRole(request.resource.data.role)
-        && (uid != request.auth.uid || request.resource.data.disabled == false);
+      allow read: if isAdmin() || (hasAccess() && uid == request.auth.uid);
+      allow create: if isOwner() && validRole(request.resource.data.role) && request.resource.data.disabled == false;
+      allow update: if isOwner() && validRole(request.resource.data.role) && (uid != request.auth.uid || request.resource.data.disabled == false);
       allow delete: if false;
     }
 
-    // 除 accounts 外，所有應用資料共用同一套規則。
-    // 一般資料可讀取 / 新增 / 修改；永久刪除只開放 orders 且僅限 owner。
-    match /{collection}/{document=**} {
-      allow read, create, update: if collection != 'accounts' && hasAccess();
-      allow delete: if collection == 'orders' && isOwner();
+    match /customers/{id} {
+      allow read: if isAdmin() || isHelper();
+      allow create, update: if isAdmin();
+      allow delete: if false;
     }
+
+    match /helper_catalog/{id} {
+      allow read: if isAdmin() || isHelper();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /helper_entries/{id} {
+      allow read: if isAdmin() || (isHelper() && resource.data.created_by_uid == request.auth.uid);
+      allow create: if isHelper()
+        && request.resource.data.created_by_uid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasOnly(['created_by_uid','created_by_name','customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','created_at','updated_at']);
+      allow update: if isAdmin() || (isHelper()
+        && resource.data.created_by_uid == request.auth.uid
+        && resource.data.status == 'pending'
+        && request.resource.data.created_by_uid == resource.data.created_by_uid
+        && request.resource.data.status in ['pending','cancelled']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','updated_at']));
+      allow delete: if isAdmin();
+    }
+
+    match /products/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
+    match /orders/{id} { allow read, create, update: if isAdmin(); allow delete: if isOwner(); }
+    match /expenses/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
+    match /supplier_payments/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
+
+    match /{document=**} { allow read, write: if false; }
   }
 }
