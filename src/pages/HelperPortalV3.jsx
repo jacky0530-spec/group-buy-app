@@ -232,17 +232,21 @@ export default function HelperPortalV3() {
 
   function addBatchCustomer(c) {
     if (!batchProduct) return toast('請先選擇商品', 'error')
-    const existing = batchRows.find(r => r.customer.id === c.id)
-    if (existing) {
-      addBatchLine(c.id)
-      setBatchCustomerSearch('')
-      setBatchCustomerOpen(false)
-      toast(`${c.name}：已新增另一個規格／數量欄位 ✓`)
-      return
-    }
-    setBatchRows(v => [...v, { customer: c, items: [blankLine()] }])
+    const alreadyAdded = batchRows.some(r => r.customer.id === c.id)
+
+    setBatchRows(v => {
+      const index = v.findIndex(r => r.customer.id === c.id)
+      if (index >= 0) {
+        const target = v[index]
+        const updated = { ...target, items: [...target.items, blankLine()] }
+        return [updated, ...v.filter((_, i) => i !== index)]
+      }
+      return [{ customer: c, items: [blankLine()] }, ...v]
+    })
+
     setBatchCustomerSearch('')
-    setBatchCustomerOpen(true)
+    setBatchCustomerOpen(false)
+    if (alreadyAdded) toast(`${c.name}：已新增另一個規格／數量欄位，並移到最上方 ✓`)
   }
 
   function addBatchLine(customerId) {
@@ -417,10 +421,10 @@ export default function HelperPortalV3() {
 
                 {items.map((x, i) => (
                   <div key={x.line_id || i} style={{ marginTop: 10, padding: 12, border: '1px solid var(--border)', borderRadius: 10, background: '#fff' }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                       <strong style={{ flex: 1 }}>{x.product.name}</strong>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>數量</span>
-                      <QuantityInput value={x.qty} min={1} onChange={v => patchItem(i, { qty: v })} style={{ width: 90 }} />
+                      <span style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 800 }}>數量</span>
+                      <QuantityInput value={x.qty} min={1} onChange={v => patchItem(i, { qty: v })} style={{ width: 130, height: 48, fontSize: 20, padding: '8px 12px', textAlign: 'center', fontWeight: 800 }} />
                       <button onClick={() => setItems(v => v.filter((_, n) => n !== i))} style={{ border: 0, background: 'transparent', color: 'var(--rose)' }}><X size={16} /></button>
                     </div>
                     <div style={{ marginTop: 8 }}>
@@ -514,10 +518,10 @@ export default function HelperPortalV3() {
 
                     {r.items.map((line, lineIndex) => (
                       <div key={line.line_id || lineIndex} style={{ padding: '10px 0', borderTop: '1px dashed var(--border)' }}>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                           <SpecFields product={batchProduct} spec={line.spec} onChange={(k, v) => patchBatchSpec(r.customer.id, lineIndex, k, v)} />
-                          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>數量</span>
-                          <QuantityInput value={line.qty} min={1} onChange={v => patchBatchLine(r.customer.id, lineIndex, { qty: v })} style={{ width: 90 }} />
+                          <span style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 800 }}>數量</span>
+                          <QuantityInput value={line.qty} min={1} onChange={v => patchBatchLine(r.customer.id, lineIndex, { qty: v })} style={{ width: 130, height: 48, fontSize: 20, padding: '8px 12px', textAlign: 'center', fontWeight: 800 }} />
                           <input value={line.note} onChange={e => patchBatchLine(r.customer.id, lineIndex, { note: e.target.value })} placeholder="備註" style={{ flex: 1, minWidth: 130 }} />
                           {r.items.length > 1 && (
                             <button onClick={() => removeBatchLine(r.customer.id, lineIndex)} className="btn btn-sm btn-ghost" style={{ color: 'var(--rose)' }}>
