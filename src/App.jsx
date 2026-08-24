@@ -12,7 +12,7 @@ import PendingProductReport from './pages/PendingProductReport'
 import Expenses from './pages/Expenses'
 import SupplierPayments from './pages/SupplierPayments'
 import Accounts from './pages/Accounts'
-import HelperPortal from './pages/HelperPortal'
+import HelperPortal from './pages/HelperPortalV2'
 import HelperEntries from './pages/HelperEntries'
 
 function LandingRedirect(){ const { role } = useAuth(); return <Navigate to={role === 'helper' ? '/helper' : '/'} replace /> }
