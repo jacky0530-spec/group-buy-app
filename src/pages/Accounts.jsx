@@ -9,6 +9,7 @@ import { Plus, Shield, User, Mail, Eye, EyeOff, RefreshCw, Power, Crown } from '
 const ROLES = {
   owner:{ label:'負責人', icon:'👑', color:'#f59e0b', bg:'#fffbeb' },
   staff:{ label:'員工', icon:'👤', color:'#6366f1', bg:'#eef2ff' },
+  helper:{ label:'小幫手', icon:'📝', color:'#0f766e', bg:'#ecfdf5' },
 }
 const ACCOUNTS_COL = 'accounts'
 
@@ -110,7 +111,7 @@ export default function Accounts() {
       {!loading && accounts.length === 0 && <tr><td colSpan={6}><div className="empty-state"><User size={36}/><span>尚無帳號</span></div></td></tr>}
       {accounts.map(a => { const role = ROLES[a.role] || ROLES.staff; const isMe = a.id === user?.uid; return <tr key={a.id} style={{ background:isMe ? 'var(--indigo-light)' : undefined,opacity:a.disabled ? .55 : 1 }}>
         <td><div style={{ fontWeight:700 }}>{a.display_name || '未命名'} {isMe && <span style={{ fontSize:11,color:'var(--indigo)' }}>（目前登入）</span>}</div></td><td style={{ color:'var(--text-secondary)' }}><Mail size={12} style={{ verticalAlign:'middle',marginRight:5 }}/>{a.email}</td><td><span className="badge" style={{ background:role.bg,color:role.color }}>{role.icon} {role.label}</span></td><td><span className={`badge ${a.disabled ? 'badge-rose' : 'badge-emerald'}`}>{a.disabled ? '已停用' : '可登入'}</span></td><td style={{ color:'var(--text-secondary)',fontSize:12 }}>{a.created_at ? new Date(a.created_at).toLocaleDateString('zh-TW') : '—'}</td>
-        {isOwner && <td style={{ textAlign:'right' }}>{!isMe && <div style={{ display:'flex',gap:5,justifyContent:'flex-end',flexWrap:'wrap' }}><button className="btn btn-sm btn-ghost" onClick={() => changeRole(a,a.role === 'owner' ? 'staff' : 'owner')}><Crown size={11}/>{a.role === 'owner' ? '改員工' : '設負責人'}</button><button className="btn btn-sm btn-ghost" onClick={() => toggleDisabled(a)}><Power size={11}/>{a.disabled ? '啟用' : '停用'}</button></div>}</td>}
+        {isOwner && <td style={{ textAlign:'right' }}>{!isMe && <div style={{ display:'flex',gap:5,justifyContent:'flex-end',flexWrap:'wrap' }}><select value={a.role||'staff'} onChange={e=>changeRole(a,e.target.value)} style={{padding:'6px 8px',borderRadius:8,fontWeight:700}}>{Object.entries(ROLES).map(([id,r])=><option key={id} value={id}>{r.icon} {r.label}</option>)}</select><button className="btn btn-sm btn-ghost" onClick={() => toggleDisabled(a)}><Power size={11}/>{a.disabled ? '啟用' : '停用'}</button></div>}</td>}
       </tr>})}
     </tbody></table></div></div>
 
