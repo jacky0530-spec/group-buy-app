@@ -45,8 +45,11 @@ function likelySummaryRow(row){
 }
 function parseSheetRows(rows,fileName,sheetName){
   const title=clean(rows?.[0]?.[0]) || fileName.replace(/\.xlsx?$/i,'')
-  const headers=(rows?.[1]||[]).slice(2)
-  const matrix=headers.some(v=>clean(v))
+  const headerRow=rows?.[1]||[]
+  const headers=headerRow.slice(2)
+  // 只有 C 欄之後出現「文字型規格名稱」才視為橫向規格表。
+  // 單純數量表的第 2 列本身就是第一位客戶（例如 B2=姓名、C2=1），不可跳過。
+  const matrix=headers.some(v=>typeof v==='string'&&clean(v)!==''&&qtyNumber(v)===0)
   const buyers=[]
   const start=matrix?2:1
   for(let r=start;r<rows.length;r+=1){
