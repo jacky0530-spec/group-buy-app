@@ -4,7 +4,7 @@ import { useAuth } from '../components/AuthGuard'
 import { MaintenanceAPI } from '../lib/db'
 import { db } from '../lib/firebase'
 import { collection, doc, setDoc, getDocs, getDoc, query, orderBy, updateDoc } from 'firebase/firestore'
-import { Plus, Shield, User, Mail, Eye, EyeOff, RefreshCw, Power, Crown } from 'lucide-react'
+import { Plus, Shield, User, Mail, Eye, EyeOff, RefreshCw, Power } from 'lucide-react'
 
 const ROLES = {
   owner:{ label:'負責人', icon:'👑', color:'#f59e0b', bg:'#fffbeb' },

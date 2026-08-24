@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Search, Plus, X, Save, LogOut, ClipboardList } from 'lucide-react'
+import { Search, X, Save, LogOut, ClipboardList } from 'lucide-react'
 import { useAuth } from '../components/AuthGuard'
 import { useToast } from '../components/UI'
 import { HelperAPI } from '../lib/helper'
