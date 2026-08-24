@@ -77,7 +77,7 @@ export default function HelperPortalV3() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [mode, setMode] = useState('customer')
+  const [mode, setMode] = useState('product')
 
   const [customerSearch, setCustomerSearch] = useState('')
   const [customer, setCustomer] = useState(null)
