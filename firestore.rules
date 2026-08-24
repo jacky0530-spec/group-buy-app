@@ -34,19 +34,42 @@ service cloud.firestore {
       allow read: if isAdmin() || (isHelper() && resource.data.created_by_uid == request.auth.uid);
       allow create: if isHelper()
         && request.resource.data.created_by_uid == request.auth.uid
-        && request.resource.data.status == 'pending'
-        && request.resource.data.keys().hasOnly(['created_by_uid','created_by_name','customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','created_at','updated_at']);
+        && request.resource.data.status in ['pending','converted']
+        && request.resource.data.keys().hasOnly([
+          'created_by_uid','created_by_name','customer_id','customer_name','customer_phone_last2',
+          'items','total_amount','is_virtual','note','status','converted_order_id','converted_at',
+          'direct_order','created_at','updated_at'
+        ]);
       allow update: if isAdmin() || (isHelper()
         && resource.data.created_by_uid == request.auth.uid
         && resource.data.status == 'pending'
         && request.resource.data.created_by_uid == resource.data.created_by_uid
         && request.resource.data.status in ['pending','cancelled']
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','updated_at']));
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','updated_at'
+        ]));
       allow delete: if isAdmin();
     }
 
-    match /products/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
-    match /orders/{id} { allow read, create, update: if isAdmin(); allow delete: if isOwner(); }
+    match /products/{id} {
+      allow read: if isAdmin() || isHelper();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /orders/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() || (isHelper()
+        && request.resource.data.source == 'helper'
+        && request.resource.data.created_by_uid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.payment_status == 'unpaid'
+        && request.resource.data.payable_status == 'unpaid'
+        && request.resource.data.helper_entry_id is string);
+      allow update: if isAdmin();
+      allow delete: if isOwner();
+    }
+
     match /expenses/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
     match /supplier_payments/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
 
