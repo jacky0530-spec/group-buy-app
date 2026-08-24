@@ -1,19 +1,163 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshCw, CheckCircle, XCircle, Database, Zap } from 'lucide-react'
+import { RefreshCw, Database, Search, CalendarDays } from 'lucide-react'
 import { useToast } from '../components/UI'
 import { HelperAPI } from '../lib/helper'
-import { ProductsAPI, OrdersAPI, snapshotOrderItem } from '../lib/db'
+import { ProductsAPI } from '../lib/db'
 
-const money=v=>`NT$${Math.round(Number(v||0)).toLocaleString()}`
+const money = v => `NT$${Math.round(Number(v || 0)).toLocaleString()}`
+const currentMonth = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+}
+const entryMonth = entry => String(entry.created_at || '').slice(0,7)
+const statusLabel = status => status === 'converted' ? '已建立訂單' : status === 'cancelled' ? '已取消' : '舊待確認'
 
-export default function HelperEntries(){
- const toast=useToast();const[entries,setEntries]=useState([]),[products,setProducts]=useState([]),[loading,setLoading]=useState(true),[working,setWorking]=useState('')
- const load=useCallback(async()=>{setLoading(true);try{const[e,p,catalog]=await Promise.all([HelperAPI.allEntries(),ProductsAPI.list({includeArchived:true}),HelperAPI.catalog()]);setEntries(e);setProducts(p);if(catalog.length===0&&p.length>0){await HelperAPI.syncCatalog(p);toast(`已自動建立 ${p.length} 筆小幫手安全商品目錄 ✓`)}}catch(err){toast('載入失敗：'+err.message,'error')}finally{setLoading(false)}},[toast]);useEffect(()=>{load()},[load])
- const productMap=useMemo(()=>Object.fromEntries(products.map(p=>[p.id,p])),[products]);const pending=entries.filter(e=>e.status==='pending')
- async function sync(){setWorking('sync');try{const n=await HelperAPI.syncCatalog(products);toast(`已同步 ${n} 筆小幫手安全商品目錄 ✓`)}catch(err){toast('同步失敗：'+err.message,'error')}finally{setWorking('')}}
- async function convertOne(entry){const items=(entry.items||[]).map(x=>{const p=productMap[x.product_id];if(!p||p.active===false)throw new Error(`商品「${x.product_name}」不存在或已封存`);const priceOption=(p.price_options||[]).find(o=>o.label===(x.spec?.package||''))||null;return snapshotOrderItem(p,{qty:x.qty,spec:x.spec||{},note:x.note||'',priceOption})});const order=await OrdersAPI.create({customer_id:entry.customer_id,customer_name:entry.customer_name,customer_phone_last2:entry.customer_phone_last2||'',items,total_amount:items.reduce((s,i)=>s+i.subtotal,0),note:entry.note||'',is_virtual:Boolean(entry.is_virtual),source:'helper',helper_entry_id:entry.id,created_by_uid:entry.created_by_uid||'',created_by_name:entry.created_by_name||''});await HelperAPI.updateEntry(entry.id,{status:'converted',converted_order_id:order.id,converted_at:new Date().toISOString()});return order}
- async function convert(entry){setWorking(entry.id);try{await convertOne(entry);toast(`已轉成${entry.is_virtual?'虛擬':'正式'}訂單 ✓`);await load()}catch(err){toast('轉單失敗：'+err.message,'error')}finally{setWorking('')}}
- async function convertAll(){if(!pending.length)return;if(!window.confirm(`確定要一次轉入目前 ${pending.length} 筆待確認登記？\n每筆會保留原本的正式／虛擬設定。`))return;setWorking('bulk');let ok=0;const failed=[];for(const entry of pending){try{await convertOne(entry);ok+=1}catch(err){failed.push(`${entry.customer_name||'未命名'}：${err.message}`)}}await load();setWorking('');if(!failed.length){toast(`一鍵轉單完成：${ok} 筆全部成功 ✓`);return}toast(`一鍵轉單完成：成功 ${ok} 筆、失敗 ${failed.length} 筆`,'warning');window.alert(`成功 ${ok} 筆\n失敗 ${failed.length} 筆\n\n${failed.slice(0,10).join('\n')}${failed.length>10?'\n...':''}`)}
- async function reject(entry){setWorking(entry.id);try{await HelperAPI.updateEntry(entry.id,{status:'cancelled'});toast('已取消此筆登記');await load()}catch(err){toast('取消失敗：'+err.message,'error')}finally{setWorking('')}}
- return <div className="animate-fade"><div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:18}}><div><h2 style={{fontSize:22,fontWeight:800}}>小幫手登記</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>小幫手只能登記；由正式後台確認後才寫入訂單與成本快照。</p></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}>{pending.length>0&&<button className="btn btn-primary" onClick={convertAll} disabled={Boolean(working)}><Zap size={14}/>{working==='bulk'?`轉單中...`:`一鍵全部轉單 ${pending.length}`}</button>}<button className="btn btn-ghost" onClick={sync} disabled={working==='sync'}><Database size={14}/>{working==='sync'?'同步中...':'重新同步商品目錄'}</button><button className="btn btn-ghost" onClick={load} disabled={Boolean(working)}><RefreshCw size={14}/>重新整理</button></div></div><div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',padding:12,borderRadius:10,marginBottom:14,fontSize:13,color:'#065f46'}}>商品安全目錄首次會自動建立；若小幫手看不到最新商品，可按「重新同步商品目錄」。一鍵全部轉單會保留每筆原本的正式／虛擬設定。</div><div className="card"><div className="card-header"><strong>待確認 {pending.length} 筆</strong></div><div className="table-container"><table><thead><tr><th>登記人</th><th>客戶</th><th>商品明細</th><th>類型</th><th>登記金額</th><th>操作</th></tr></thead><tbody>{pending.map(e=><tr key={e.id} style={{background:e.is_virtual?'#fff1f2':undefined}}><td>{e.created_by_name||'小幫手'}</td><td><strong>{e.customer_name}</strong>{e.customer_phone_last2&&<div style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {e.customer_phone_last2}</div>}</td><td>{(e.items||[]).map((x,i)=><div key={i}>{x.product_name} ×<strong>{x.qty}</strong>{x.spec?.package?`／${x.spec.package}`:''}{x.spec?.flavor?`／${x.spec.flavor}`:''}{x.spec?.color?`／${x.spec.color}`:''}{x.spec?.size?`／${x.spec.size}`:''}</div>)}{e.note&&<div style={{fontSize:11,color:'var(--text-muted)'}}>備註：{e.note}</div>}</td><td><span className={`badge ${e.is_virtual?'badge-rose':'badge-emerald'}`}>{e.is_virtual?'⚠ 虛擬':'正式'}</span></td><td>{money(e.total_amount)}</td><td><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><button className="btn btn-sm btn-primary" disabled={Boolean(working)} onClick={()=>convert(e)}><CheckCircle size={12}/>{working===e.id?'轉單中...':'確認轉單'}</button><button className="btn btn-sm btn-ghost" disabled={Boolean(working)} onClick={()=>reject(e)} style={{color:'var(--rose)'}}><XCircle size={12}/>取消</button></div></td></tr>)}{!loading&&!pending.length&&<tr><td colSpan={6} style={{textAlign:'center',padding:30,color:'var(--text-muted)'}}>目前沒有待確認登記</td></tr>}</tbody></table></div></div></div>
+export default function HelperEntries() {
+  const toast = useToast()
+  const [entries,setEntries] = useState([])
+  const [products,setProducts] = useState([])
+  const [loading,setLoading] = useState(true)
+  const [working,setWorking] = useState('')
+  const [month,setMonth] = useState(currentMonth())
+  const [search,setSearch] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [e,p] = await Promise.all([HelperAPI.allEntries(),ProductsAPI.list({includeArchived:true})])
+      setEntries(e)
+      setProducts(p)
+    } catch (err) {
+      toast('載入失敗：'+err.message,'error')
+    } finally {
+      setLoading(false)
+    }
+  },[toast])
+
+  useEffect(() => { load() },[load])
+
+  async function sync() {
+    setWorking('sync')
+    try {
+      const n = await HelperAPI.syncCatalog(products)
+      toast(`已同步 ${n} 筆小幫手商品目錄 ✓`)
+    } catch (err) {
+      toast('同步失敗：'+err.message,'error')
+    } finally {
+      setWorking('')
+    }
+  }
+
+  const monthEntries = useMemo(
+    () => entries.filter(e => !month || entryMonth(e) === month),
+    [entries,month],
+  )
+
+  const stats = useMemo(() => {
+    const map = new Map()
+    monthEntries.forEach(e => {
+      const key = e.created_by_uid || `name:${e.created_by_name || 'unknown'}`
+      if (!map.has(key)) map.set(key,{
+        key,
+        uid:e.created_by_uid || '',
+        name:e.created_by_name || '小幫手',
+        total:0,
+        converted:0,
+        pending:0,
+        cancelled:0,
+        virtual:0,
+        formal:0,
+      })
+      const row = map.get(key)
+      row.total += 1
+      if (e.status === 'converted') row.converted += 1
+      else if (e.status === 'cancelled') row.cancelled += 1
+      else row.pending += 1
+      if (e.is_virtual) row.virtual += 1
+      else row.formal += 1
+    })
+    return [...map.values()].sort((a,b) => b.total-a.total || a.name.localeCompare(b.name,'zh-Hant'))
+  },[monthEntries])
+
+  const totals = useMemo(() => stats.reduce((a,r) => ({
+    total:a.total+r.total,
+    converted:a.converted+r.converted,
+    pending:a.pending+r.pending,
+    cancelled:a.cancelled+r.cancelled,
+    virtual:a.virtual+r.virtual,
+  }),{total:0,converted:0,pending:0,cancelled:0,virtual:0}),[stats])
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return monthEntries
+    return monthEntries.filter(e =>
+      String(e.created_by_name || '').toLowerCase().includes(q) ||
+      String(e.customer_name || '').toLowerCase().includes(q) ||
+      String(e.customer_phone_last2 || '').includes(q) ||
+      (e.items || []).some(x => String(x.product_name || '').toLowerCase().includes(q))
+    )
+  },[monthEntries,search])
+
+  return <div className="animate-fade">
+    <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:18}}>
+      <div>
+        <h2 style={{fontSize:22,fontWeight:800}}>小幫手登記</h2>
+        <p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>小幫手送出後直接建立訂單；此頁僅供查詢、稽核與薪資統計，不再需要人工轉單。</p>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <button className="btn btn-ghost" onClick={sync} disabled={working==='sync'}><Database size={14}/>{working==='sync'?'同步中...':'重新同步商品目錄'}</button>
+        <button className="btn btn-ghost" onClick={load} disabled={loading}><RefreshCw size={14}/>重新整理</button>
+      </div>
+    </div>
+
+    <div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',padding:12,borderRadius:10,marginBottom:14,fontSize:13,color:'#065f46'}}>
+      新版流程會同時寫入正式訂單與小幫手登記紀錄。舊資料若仍顯示「舊待確認」，只保留作歷史紀錄，不再從此頁轉單。
+    </div>
+
+    <div className="card" style={{marginBottom:14}}>
+      <div className="card-body">
+        <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+          <label style={{display:'flex',gap:7,alignItems:'center',fontWeight:800}}><CalendarDays size={15}/>統計月份 <input type="month" value={month} onChange={e=>setMonth(e.target.value)} /></label>
+          <div className="search-input-wrap" style={{flex:'1 1 280px'}}><Search size={14}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋小幫手、客戶、末兩碼或商品" style={{paddingLeft:32}}/></div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
+      <div style={{background:'var(--indigo-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>當月登記筆數</div><strong style={{fontSize:26,color:'var(--indigo)'}}>{totals.total}</strong></div>
+      <div style={{background:'var(--emerald-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>已建立實際訂單</div><strong style={{fontSize:26,color:'var(--emerald)'}}>{totals.converted}</strong></div>
+      <div style={{background:'var(--amber-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>舊待確認</div><strong style={{fontSize:26,color:'#b45309'}}>{totals.pending}</strong></div>
+      <div style={{background:'#fff1f2',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>虛擬訂單</div><strong style={{fontSize:26,color:'#be123c'}}>{totals.virtual}</strong></div>
+    </div>
+
+    <div className="card" style={{marginBottom:14}}>
+      <div className="card-header"><strong>{month || '全部月份'} 小幫手薪資統計</strong></div>
+      <div className="table-container"><table>
+        <thead><tr><th>小幫手</th><th>登記筆數</th><th>已建立訂單</th><th>正式</th><th>虛擬</th><th>舊待確認</th><th>已取消</th><th>成功率</th></tr></thead>
+        <tbody>
+          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td>{r.formal}</td><td>{r.virtual}</td><td>{r.pending}</td><td>{r.cancelled}</td><td>{r.total?`${Math.round(r.converted/r.total*100)}%`:'—'}</td></tr>)}
+          {!loading&&!stats.length&&<tr><td colSpan={8} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>此月份沒有小幫手登記資料</td></tr>}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div className="card">
+      <div className="card-header"><strong>登記紀錄 {visible.length} 筆</strong></div>
+      <div className="table-container"><table>
+        <thead><tr><th>時間</th><th>登記人</th><th>客戶</th><th>商品明細</th><th>類型</th><th>金額</th><th>狀態</th></tr></thead>
+        <tbody>
+          {visible.map(e => <tr key={e.id} style={{background:e.is_virtual?'#fff1f2':undefined}}>
+            <td style={{whiteSpace:'nowrap'}}>{e.created_at ? new Date(e.created_at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+            <td>{e.created_by_name||'小幫手'}</td>
+            <td><strong>{e.customer_name}</strong>{e.customer_phone_last2&&<div style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {e.customer_phone_last2}</div>}</td>
+            <td>{(e.items||[]).map((x,i)=><div key={i}>{x.product_name} ×<strong>{x.qty}</strong>{x.spec?.package?`／${x.spec.package}`:''}{x.spec?.flavor?`／${x.spec.flavor}`:''}{x.spec?.color?`／${x.spec.color}`:''}{x.spec?.size?`／${x.spec.size}`:''}</div>)}{e.note&&<div style={{fontSize:11,color:'var(--text-muted)'}}>備註：{e.note}</div>}</td>
+            <td><span className={`badge ${e.is_virtual?'badge-rose':'badge-emerald'}`}>{e.is_virtual?'⚠ 虛擬':'正式'}</span></td>
+            <td>{money(e.total_amount)}</td>
+            <td><span className={`badge ${e.status==='converted'?'badge-emerald':e.status==='cancelled'?'badge-gray':'badge-amber'}`}>{statusLabel(e.status)}</span>{e.converted_order_id&&<div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>訂單 {e.converted_order_id.slice(0,8)}…</div>}</td>
+          </tr>)}
+          {!loading&&!visible.length&&<tr><td colSpan={7} style={{textAlign:'center',padding:30,color:'var(--text-muted)'}}>目前沒有符合條件的紀錄</td></tr>}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
 }
