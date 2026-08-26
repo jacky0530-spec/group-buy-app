@@ -52,8 +52,6 @@ function parseSheetRows(rows,fileName,sheetName){
   const title=clean(rows?.[0]?.[0]) || fileName.replace(/\.xlsx?$/i,'')
   const headerRow=rows?.[1]||[]
   const headers=headerRow.slice(2)
-  // 只有 C 欄之後出現「文字型規格名稱」才視為橫向規格表。
-  // 單純數量表的第 2 列本身就是第一位客戶（例如 B2=姓名、C2=1），不可跳過。
   const matrix=headers.some(v=>typeof v==='string'&&clean(v)!==''&&qtyNumber(v)===0)
   const buyers=[]
   const start=matrix?2:1
@@ -73,16 +71,37 @@ function parseSheetRows(rows,fileName,sheetName){
   }
   return{fileName,sheetName,title,buyers}
 }
-function productScore(title,product){
-  const t=norm(title).replace(/\d+(入|尾|包|盒|組|顆|片|支|件)?\d*元?/g,'').replace(/元/g,'')
-  const p=norm(product?.name)
-  if(!p)return 0
-  if(norm(title).includes(p))return 100+p.length
-  if(t.includes(p)||p.includes(t))return 80+Math.min(t.length,p.length)
-  let common=0;for(const ch of new Set([...t]))if(p.includes(ch))common+=1
-  return common
+function productCore(value){
+  return norm(value)
+    .replace(/^\d{1,2}\d{1,2}/,'')
+    .replace(/\d+(入|尾|包|盒|組|顆|片|支|件|元)?$/g,'')
+    .replace(/\d+元/g,'')
+    .replace(/元/g,'')
 }
-function guessProduct(title,products){return [...products].sort((a,b)=>productScore(title,b)-productScore(title,a))[0]||null}
+function commonPrefixLength(a,b){let i=0;while(i<a.length&&i<b.length&&a[i]===b[i])i+=1;return i}
+function productScore(title,product){
+  const t=productCore(title)
+  const p=productCore(product?.name)
+  if(!t||!p)return 0
+  if(t===p)return 1000+t.length
+  if(t.includes(p)||p.includes(t)){
+    const ratio=Math.min(t.length,p.length)/Math.max(t.length,p.length)
+    if(ratio>=0.72)return 800+Math.round(ratio*100)
+  }
+  const prefix=commonPrefixLength(t,p)
+  if(prefix>=4)return 500+prefix
+  let common=0;for(const ch of new Set([...t]))if(p.includes(ch))common+=1
+  const ratio=common/Math.max(t.length,p.length)
+  return ratio>=0.7?Math.round(ratio*300):0
+}
+function guessProduct(title,products){
+  const ranked=[...products].map(product=>({product,score:productScore(title,product)})).sort((a,b)=>b.score-a.score)
+  const best=ranked[0]
+  const second=ranked[1]
+  if(!best||best.score<500)return null
+  if(second&&best.score<800&&best.score-second.score<30)return null
+  return best.product
+}
 function findCustomerMatches(name,customers){const n=norm(name);return customers.filter(c=>norm(c.name)===n)}
 function matchValue(value,options=[]){
   const n=norm(value);if(!n)return''
