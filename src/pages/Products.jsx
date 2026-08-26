@@ -19,7 +19,7 @@ const SPEC_MODES = {
   clothing:[{ id:'color_size', label:'顏色＋尺碼' },{ id:'color_free', label:'顏色＋Free Size' },{ id:'color_only', label:'僅顏色' },{ id:'size_only', label:'僅尺碼' },{ id:'none', label:'無規格' }],
   daily:[{ id:'random', label:'隨機出貨' },{ id:'color_only', label:'僅顏色' },{ id:'color_size', label:'顏色＋尺寸' },{ id:'none', label:'無規格' }],
 }
-const DEFAULT_SIZES = ['XS','S','M','L','XL','XXL','XXXL']
+const DEFAULT_SIZES = ['XS','S','M','L','XL','2L','3L','4L']
 const PRESET_COLORS = ['黑色','白色','灰色','米白','藏青','紅色','粉色','藍色','綠色','黃色','咖啡','紫色']
 const PRESET_FLAVORS = { frozen:['原味','辣味','黑胡椒','蒜香','起司','海鮮','牛肉','豬肉','雞肉'], biscuit:['原味','巧克力','草莓','抹茶','起司','牛奶','咖啡','花生'], candy:[] }
 const EMPTY_FORM = { name:'',price:'',cost:'',pricing_mode:'single',category:'other',supplier:'',supplier_payment_term:'manual',note:'',spec_mode:'none',spec_colors:[],spec_sizes:[],spec_flavors:[],price_options:[],price_label_input:'',price_value_input:'',price_cost_input:'',color_input:'',size_input:'',flavor_input:'' }
