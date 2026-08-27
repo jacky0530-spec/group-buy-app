@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CustomersAPI, OrdersAPI } from '../lib/db'
 import { useToast, Modal, ConfirmDialog } from '../components/UI'
-import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from '../lib/customerSearch'
+import { customerMatchesSearch, derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from '../lib/customerSearch'
 import { Plus, Pencil, Archive, Search, Users, RotateCcw, Upload, ArrowUpDown } from 'lucide-react'
 
 const EMPTY = { name:'', line_nick:'', fb_name:'', phone:'', phone_last2:'', note:'' }
 
 const SORT_OPTIONS = [
-  { value:'last2_asc', label:'末兩碼：小 → 大' },
-  { value:'last2_desc', label:'末兩碼：大 → 小' },
+  { value:'last2_asc', label:'末碼：小 → 大' },
+  { value:'last2_desc', label:'末碼：大 → 小' },
   { value:'name_asc', label:'姓名：A → Z / 筆畫' },
   { value:'orders_desc', label:'有效訂單數：多 → 少' },
 ]
@@ -65,13 +65,7 @@ export default function Customers() {
   useEffect(() => { load() }, [load])
 
   const q = search.toLowerCase().trim()
-  const filtered = customers.filter(c =>
-    c.name.toLowerCase().includes(q) ||
-    (c.line_nick || '').toLowerCase().includes(q) ||
-    (c.fb_name || '').toLowerCase().includes(q) ||
-    (c.phone || '').includes(search.trim()) ||
-    getCustomerPhoneLast2(c).toLowerCase().includes(q)
-  ).sort((a,b) => {
+  const filtered = customers.filter(c => customerMatchesSearch(c,q)).sort((a,b) => {
     if (sortBy === 'last2_desc') return compareLast2(a,b,'desc')
     if (sortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '','zh-Hant',{ numeric:true })
     if (sortBy === 'orders_desc') {
@@ -158,7 +152,7 @@ export default function Customers() {
       setConfirmArchive(null)
       toast(`已封存「${c.name}」；歷史訂單仍保留`, 'warning')
       await load()
-    } catch (err) { toast('封存失敗：' + err.message, 'error') }
+    } catch (err) { toast('封存失敗：' + err.message,'error') }
   }
 
   async function restoreCustomer(c) {
@@ -166,7 +160,7 @@ export default function Customers() {
       await CustomersAPI.restore(c.id)
       toast(`已還原「${c.name}」`)
       await load()
-    } catch (err) { toast('還原失敗：' + err.message, 'error') }
+    } catch (err) { toast('還原失敗：' + err.message,'error') }
   }
 
   return (
@@ -175,7 +169,7 @@ export default function Customers() {
         <div>
           <h2 style={{ fontSize:22, fontWeight:800 }}>客戶管理</h2>
           <p style={{ color:'var(--text-secondary)', fontSize:13, marginTop:2 }}>
-            共 {customers.length} 位　姓名可重複；手機末兩碼可用於快速找人
+            共 {customers.length} 位　姓名可重複；辨識末碼可自訂 2 碼、3 碼以上
           </p>
         </div>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
@@ -187,13 +181,13 @@ export default function Customers() {
       </div>
 
       <div style={{ background:'var(--sky-light)', borderRadius:8, padding:'9px 12px', marginBottom:14, fontSize:12, color:'#0369a1' }}>
-        📱 手機末兩碼可重複，例如末碼「12」可以有多位客戶；開單時會列出所有符合的人名供你挑選。完整電話填入後會自動帶出末兩碼。
+        📱 辨識末碼可重複，也可自行輸入 2～3 碼以上，例如「00」或「000」；完整電話填入後會自動帶出末兩碼。搜尋也支援客戶備註。
       </div>
 
       <div style={{ marginBottom:14, display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
         <div className="search-input-wrap" style={{ flex:'1 1 360px', maxWidth:520 }}>
           <Search size={14}/>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋姓名、手機末兩碼、完整電話、Line、FB..."
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋姓名、辨識末碼、完整電話、Line、FB、備註..."
             style={{ padding:'8px 8px 8px 32px', border:'1.5px solid var(--border)', borderRadius:8, fontSize:14, outline:'none', fontFamily:'inherit', background:'var(--surface)', width:'100%' }}/>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:7, background:'var(--surface)', border:'1.5px solid var(--border)', borderRadius:8, padding:'0 10px', minHeight:38 }}>
@@ -208,7 +202,7 @@ export default function Customers() {
       <div className="card">
         <div className="table-container">
           <table>
-            <thead><tr><th>姓名</th><th>末兩碼</th><th>Line 暱稱</th><th>FB 名稱</th><th>完整電話</th><th>有效訂單數</th><th>備註</th><th style={{ textAlign:'right' }}>操作</th></tr></thead>
+            <thead><tr><th>姓名</th><th>辨識末碼</th><th>Line 暱稱</th><th>FB 名稱</th><th>完整電話</th><th>有效訂單數</th><th>備註</th><th style={{ textAlign:'right' }}>操作</th></tr></thead>
             <tbody>
               {loading && <tr><td colSpan={8} style={{ textAlign:'center', padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
               {!loading && filtered.length === 0 && <tr><td colSpan={8}><div className="empty-state"><Users size={36}/><span>尚無客戶</span></div></td></tr>}
@@ -244,11 +238,11 @@ export default function Customers() {
       {showModal && (
         <Modal title={editId ? '編輯客戶資料' : '新增客戶'} onClose={() => setShowModal(false)}>
           <div style={{ background:'var(--sky-light)', borderRadius:8, padding:'9px 12px', marginBottom:14, fontSize:12, color:'#0369a1' }}>
-            ℹ️ 同名客戶可以存在；請用手機末兩碼、完整電話、Line 或 FB 協助辨識。
+            ℹ️ 同名客戶可以存在；請用辨識末碼、完整電話、Line、FB 或備註協助辨識。
           </div>
           <div className="form-group"><label>真實姓名 *</label><input value={form.name} onChange={e => setForm(p => ({ ...p, name:e.target.value }))}/></div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <div className="form-group"><label>手機末兩碼</label><input inputMode="numeric" value={form.phone_last2} onChange={e => setForm(p => ({ ...p, phone_last2:e.target.value }))} placeholder="例如：12"/></div>
+            <div className="form-group"><label>辨識末碼</label><input inputMode="numeric" value={form.phone_last2} onChange={e => setForm(p => ({ ...p, phone_last2:e.target.value.replace(/\D/g,'') }))} placeholder="例如：12、000"/></div>
             <div className="form-group"><label>完整電話</label><input type="tel" value={form.phone} onChange={e => updatePhone(e.target.value)} placeholder="0912-345-678"/></div>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
