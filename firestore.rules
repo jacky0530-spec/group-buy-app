@@ -91,6 +91,23 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
+    match /stock_inventory/{id} {
+      allow read: if isAdmin() || isHelper();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isHelper()
+        && request.resource.data.product_id == resource.data.product_id
+        && request.resource.data.available_qty is number
+        && request.resource.data.available_qty >= 0
+        && request.resource.data.available_qty <= resource.data.available_qty
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['available_qty','updated_at']));
+      allow delete: if false;
+    }
+
+    match /stock_purchase_extras/{id} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
     match /expenses/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
     match /supplier_payments/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
 
