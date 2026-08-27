@@ -96,9 +96,16 @@ export const HelperAPI = {
     return snap.docs.map(normalize).sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
   },
   async myPendingOrders(uid){
-    const snap = await getDocs(query(collection(db,'orders'),where('created_by_uid','==',uid)))
+    // Firestore rules only allow helpers to read orders that are both their own
+    // and explicitly marked source='helper'. The query must carry both
+    // constraints; filtering source only after getDocs is rejected by Rules.
+    const snap = await getDocs(query(
+      collection(db,'orders'),
+      where('created_by_uid','==',uid),
+      where('source','==','helper')
+    ))
     return snap.docs.map(normalize)
-      .filter(x=>x.source==='helper' && x.status==='pending' && x.archived!==true)
+      .filter(x=>x.status==='pending' && x.archived!==true)
       .sort((a,b)=>String(b.order_date||b.created_at||'').localeCompare(String(a.order_date||a.created_at||'')))
   },
   async allEntries(){
