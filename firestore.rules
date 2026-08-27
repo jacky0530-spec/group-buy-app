@@ -75,7 +75,11 @@ service cloud.firestore {
         && request.resource.data.created_by_uid == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.payment_status == 'unpaid'
-        && request.resource.data.payable_status == 'unpaid'
+        && (
+          (request.resource.data.fulfillment_type == 'stock' && request.resource.data.payable_status == 'paid')
+          ||
+          (request.resource.data.fulfillment_type != 'stock' && request.resource.data.payable_status == 'unpaid')
+        )
         && request.resource.data.helper_entry_id is string);
       allow update: if isAdmin() || (isHelper()
         && resource.data.source == 'helper'
