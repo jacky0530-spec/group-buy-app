@@ -6,6 +6,10 @@ import { getCustomerPhoneLast2 } from '../lib/customerSearch'
 
 const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
 const dateText = value => value ? new Date(value).toLocaleDateString('zh-TW') : '—'
+const timeValue = value => {
+  const time = Date.parse(value || '')
+  return Number.isFinite(time) ? time : 0
+}
 const SPEC_STYLE = { color:'#2563eb', fontWeight:900 }
 const COMBO_STYLE = { color:'#1d4ed8', fontWeight:900 }
 const specDisplayStyle = () => SPEC_STYLE
@@ -65,6 +69,7 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
     const last2 = String(order.customer_phone_last2 || getCustomerPhoneLast2(customer) || '').trim()
     const baseGroupKey = order.customer_id || `${order.customer_name || customer.name || ''}|${phone || last2 || ''}`
     const groupKey = `${baseGroupKey}|${order.archived === true ? 'archived' : 'active'}`
+    const orderCreatedAt = order.created_at || order.order_date || ''
 
     if (!groups.has(groupKey)) {
       groups.set(groupKey, {
@@ -75,6 +80,7 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
         phone_last2:last2,
         line_nick:customer.line_nick || '',
         fb_name:customer.fb_name || '',
+        latest_created_at:orderCreatedAt,
         items:new Map(),
         total_qty:0,
         total_amount:0,
@@ -91,6 +97,7 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
     }
 
     const group = groups.get(groupKey)
+    if (timeValue(orderCreatedAt) > timeValue(group.latest_created_at)) group.latest_created_at = orderCreatedAt
     group.order_ids.add(order.id)
     if (order.is_virtual) { group.virtual_order_ids.add(order.id); group.has_virtual = true } else { group.real_order_ids.add(order.id); group.all_virtual = false }
     if (order.archived !== true) group.archived = false
@@ -149,7 +156,9 @@ function buildRows(orderRows, customerMap, selectedProduct = null, arrivalView =
     virtual_order_ids:Array.from(group.virtual_order_ids),
     order_count:group.order_ids.size,
     all_arrived:group.total_missing_qty === 0,
-  })).sort((a,b) => a.name.localeCompare(b.name,'zh-Hant'))
+  })).sort((a,b) => selectedProduct
+    ? timeValue(b.latest_created_at) - timeValue(a.latest_created_at) || a.name.localeCompare(b.name,'zh-Hant')
+    : a.name.localeCompare(b.name,'zh-Hant'))
 }
 function increment(map,key,qty) { if (key) map.set(key,(map.get(key) || 0) + qty) }
 function mapToRows(map) {
