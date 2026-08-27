@@ -12,9 +12,18 @@ const iso = v => {
   return null
 }
 const role = v => ['owner','staff','helper'].includes(v) ? v : 'staff'
-const status = v => ['pending','shipped','cancelled'].includes(v) ? v : 'pending'
+const orderStatus = v => ['pending','shipped','cancelled'].includes(v) ? v : 'pending'
 const fulfillment = v => v === 'stock' ? 'stock' : 'preorder'
 const j = v => JSON.stringify(v ?? [])
+const cleanSpec = row => {
+  const s = row?.spec || {}
+  return {
+    package:text(s.package ?? row?.spec_package),
+    flavor:text(s.flavor ?? row?.spec_flavor),
+    color:text(s.color ?? row?.spec_color),
+    size:text(s.size ?? row?.spec_size),
+  }
+}
 
 async function upsertAccounts(sql,rows){
   let done = 0
@@ -90,6 +99,11 @@ async function productUuid(sql,legacyId){
   const rows = await sql`SELECT id FROM products WHERE legacy_id=${legacyId} LIMIT 1`
   return rows[0]?.id || null
 }
+async function orderUuid(sql,legacyId){
+  if(!legacyId) return null
+  const rows = await sql`SELECT id FROM orders WHERE legacy_id=${legacyId} LIMIT 1`
+  return rows[0]?.id || null
+}
 
 async function upsertOrders(sql,rows){
   let done = 0
@@ -98,7 +112,7 @@ async function upsertOrders(sql,rows){
     const legacyId = text(row.id || row.legacy_id)
     if(!legacyId) continue
     const customerId = await customerUuid(sql,text(row.customer_id))
-    const orderFulfillment = fulfillment(row.fulfillment_type || ((row.items || []).every(i => i.fulfillment_type === 'stock') ? 'stock' : 'preorder'))
+    const orderFulfillment = fulfillment(row.fulfillment_type || ((row.items || []).length && (row.items || []).every(i => i.fulfillment_type === 'stock') ? 'stock' : 'preorder'))
     const orderRows = await sql`
       INSERT INTO orders (
         legacy_id,customer_id,customer_name,customer_phone,customer_phone_last2,total_amount,
@@ -107,7 +121,7 @@ async function upsertOrders(sql,rows){
         archived,archived_at,status_history,refunds,created_at,updated_at
       ) VALUES (
         ${legacyId},${customerId},${text(row.customer_name)},${text(row.customer_phone)},${text(row.customer_phone_last2)},${num(row.total_amount)},
-        ${status(row.status)},${text(row.payment_status) || 'unpaid'},${text(row.payable_status) || 'unpaid'},${num(row.refund_amount)},${bool(row.is_virtual)},${text(row.source) || 'admin'},${orderFulfillment},${text(row.note)},
+        ${orderStatus(row.status)},${text(row.payment_status) || 'unpaid'},${text(row.payable_status) || 'unpaid'},${num(row.refund_amount)},${bool(row.is_virtual)},${text(row.source) || 'admin'},${orderFulfillment},${text(row.note)},
         ${text(row.created_by_uid)},${text(row.created_by_name)},${iso(row.order_date) || iso(row.created_at) || new Date().toISOString()},${iso(row.shipped_at)},${iso(row.cancelled_at)},${text(row.cancellation_reason)},
         ${bool(row.archived)},${iso(row.archived_at)},${j(row.status_history)}::jsonb,${j(row.refunds)}::jsonb,${iso(row.created_at) || new Date().toISOString()},${new Date().toISOString()}
       )
@@ -129,9 +143,9 @@ async function upsertOrders(sql,rows){
     let lineNo = 0
     for(const item of (row.items || [])){
       lineNo += 1
-      const legacyProductId = text(item.product_id || item.id)
+      const legacyProductId = text(item.original_product_id || item.product_id || item.id).replace(/^stock:/,'')
       const pid = await productUuid(sql,legacyProductId)
-      const spec = item.spec || {}
+      const spec = cleanSpec(item)
       const qty = Math.max(1,Math.trunc(num(item.qty) || 1))
       const salePrice = num(item.sale_price ?? item.price)
       const costPrice = num(item.cost_price)
@@ -144,7 +158,7 @@ async function upsertOrders(sql,rows){
         ) VALUES (
           ${orderId},${lineNo},${pid},${text(item.product_name || item.name)},${text(item.category) || 'other'},${text(item.supplier)},
           ${salePrice},${costPrice},${qty},${num(item.subtotal || salePrice * qty)},${num(item.cost_subtotal || costPrice * qty)},${text(item.note)},
-          ${text(spec.package)},${text(spec.flavor)},${text(spec.color)},${text(spec.size)},${fulfillment(item.fulfillment_type || orderFulfillment)},
+          ${spec.package},${spec.flavor},${spec.color},${spec.size},${fulfillment(item.fulfillment_type || orderFulfillment)},
           ${Math.max(0,Math.trunc(num(item.arrived_qty)))},${iso(item.arrived_at)},${text(item.supplier_payment_term) || 'manual'},
           ${num(item.supplier_paid_amount)},${text(item.supplier_payment_status) || 'unpaid'},${j(item.supplier_payment_refs)}::jsonb,
           ${iso(row.created_at) || new Date().toISOString()},${new Date().toISOString()}
@@ -157,6 +171,104 @@ async function upsertOrders(sql,rows){
   return { orders:done, items:itemsDone }
 }
 
+async function upsertHelperEntries(sql,rows){
+  let done = 0
+  for(const row of rows){
+    const legacyId = text(row.id || row.legacy_id)
+    if(!legacyId) continue
+    const customerId = await customerUuid(sql,text(row.customer_id))
+    const convertedOrderId = await orderUuid(sql,text(row.converted_order_id))
+    const result = await sql`
+      INSERT INTO helper_entries (
+        legacy_id,created_by_uid,created_by_name,customer_id,customer_name,customer_phone_last2,
+        total_amount,is_virtual,note,status,converted_order_id,direct_order,payload,converted_at,created_at,updated_at
+      ) VALUES (
+        ${legacyId},${text(row.created_by_uid)},${text(row.created_by_name)},${customerId},${text(row.customer_name)},${text(row.customer_phone_last2)},
+        ${num(row.total_amount)},${bool(row.is_virtual)},${text(row.note)},${text(row.status) || 'converted'},${convertedOrderId},${row.direct_order !== false},
+        ${j(row)}::jsonb,${iso(row.converted_at)},${iso(row.created_at) || new Date().toISOString()},${new Date().toISOString()}
+      )
+      ON CONFLICT (legacy_id) DO UPDATE SET
+        created_by_uid=EXCLUDED.created_by_uid,created_by_name=EXCLUDED.created_by_name,
+        customer_id=EXCLUDED.customer_id,customer_name=EXCLUDED.customer_name,
+        customer_phone_last2=EXCLUDED.customer_phone_last2,total_amount=EXCLUDED.total_amount,
+        is_virtual=EXCLUDED.is_virtual,note=EXCLUDED.note,status=EXCLUDED.status,
+        converted_order_id=EXCLUDED.converted_order_id,direct_order=EXCLUDED.direct_order,
+        payload=EXCLUDED.payload,converted_at=EXCLUDED.converted_at,updated_at=EXCLUDED.updated_at
+      RETURNING id
+    `
+    const helperId = result[0]?.id
+    if(helperId && convertedOrderId) await sql`UPDATE orders SET helper_entry_id=${helperId},updated_at=${new Date().toISOString()} WHERE id=${convertedOrderId}`
+    done += 1
+  }
+  return done
+}
+
+async function upsertStockInventory(sql,rows){
+  let done = 0
+  for(const row of rows){
+    const productId = await productUuid(sql,text(row.product_id))
+    if(!productId) continue
+    const spec = cleanSpec(row)
+    await sql`
+      INSERT INTO stock_inventory (
+        product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,available_qty,adjustment_note,created_at,updated_at
+      ) VALUES (
+        ${productId},${text(row.supplier)},${spec.package},${spec.flavor},${spec.color},${spec.size},
+        ${Math.max(0,Math.trunc(num(row.available_qty)))},${text(row.adjustment_note)},${iso(row.created_at) || new Date().toISOString()},${new Date().toISOString()}
+      )
+      ON CONFLICT (product_id,spec_package,spec_flavor,spec_color,spec_size) DO UPDATE SET
+        supplier=EXCLUDED.supplier,available_qty=EXCLUDED.available_qty,
+        adjustment_note=EXCLUDED.adjustment_note,updated_at=EXCLUDED.updated_at
+    `
+    done += 1
+  }
+  return done
+}
+
+async function upsertSupplierPayments(sql,rows){
+  let done = 0
+  let allocationsDone = 0
+  for(const row of rows){
+    const legacyId = text(row.id || row.legacy_id)
+    if(!legacyId) continue
+    const paymentRows = await sql`
+      INSERT INTO supplier_payments (legacy_id,supplier,payment_date,amount,note,voided,voided_at,void_reason,created_at,updated_at)
+      VALUES (
+        ${legacyId},${text(row.supplier) || '未指定供應商'},${text(row.payment_date) || new Date().toISOString().slice(0,10)},
+        ${Math.max(0,num(row.amount))},${text(row.note)},${bool(row.voided)},${iso(row.voided_at)},${text(row.void_reason)},
+        ${iso(row.created_at) || new Date().toISOString()},${new Date().toISOString()}
+      )
+      ON CONFLICT (legacy_id) DO UPDATE SET
+        supplier=EXCLUDED.supplier,payment_date=EXCLUDED.payment_date,amount=EXCLUDED.amount,note=EXCLUDED.note,
+        voided=EXCLUDED.voided,voided_at=EXCLUDED.voided_at,void_reason=EXCLUDED.void_reason,updated_at=EXCLUDED.updated_at
+      RETURNING id
+    `
+    const paymentId = paymentRows[0]?.id
+    if(!paymentId) continue
+    await sql`DELETE FROM supplier_payment_allocations WHERE payment_id=${paymentId}`
+    for(const allocation of (row.allocations || [])){
+      const orderId = await orderUuid(sql,text(allocation.order_id))
+      let orderItemId = null
+      if(orderId){
+        const lineNo = Math.max(1,Math.trunc(num(allocation.item_index)) + 1)
+        const itemRows = await sql`SELECT id FROM order_items WHERE order_id=${orderId} AND line_no=${lineNo} LIMIT 1`
+        orderItemId = itemRows[0]?.id || null
+      }
+      await sql`
+        INSERT INTO supplier_payment_allocations (
+          payment_id,order_id,order_item_id,customer_name,product_name,supplier,amount,created_at
+        ) VALUES (
+          ${paymentId},${orderId},${orderItemId},${text(allocation.customer_name)},${text(allocation.product_name)},
+          ${text(allocation.supplier || row.supplier)},${Math.max(0,num(allocation.amount))},${iso(row.created_at) || new Date().toISOString()}
+        )
+      `
+      allocationsDone += 1
+    }
+    done += 1
+  }
+  return { payments:done, allocations:allocationsDone }
+}
+
 async function counts(sql){
   const rows = await sql`
     SELECT
@@ -164,7 +276,11 @@ async function counts(sql){
       (SELECT count(*)::int FROM customers) AS customers,
       (SELECT count(*)::int FROM products) AS products,
       (SELECT count(*)::int FROM orders) AS orders,
-      (SELECT count(*)::int FROM order_items) AS order_items
+      (SELECT count(*)::int FROM order_items) AS order_items,
+      (SELECT count(*)::int FROM helper_entries) AS helper_entries,
+      (SELECT count(*)::int FROM stock_inventory) AS stock_inventory,
+      (SELECT count(*)::int FROM supplier_payments) AS supplier_payments,
+      (SELECT count(*)::int FROM supplier_payment_allocations) AS supplier_payment_allocations
   `
   return rows[0]
 }
@@ -184,6 +300,9 @@ export default async function handler(req,res){
     else if(action === 'customers') migrated = await upsertCustomers(sql,rows)
     else if(action === 'products') migrated = await upsertProducts(sql,rows)
     else if(action === 'orders') migrated = await upsertOrders(sql,rows)
+    else if(action === 'helper_entries') migrated = await upsertHelperEntries(sql,rows)
+    else if(action === 'stock_inventory') migrated = await upsertStockInventory(sql,rows)
+    else if(action === 'supplier_payments') migrated = await upsertSupplierPayments(sql,rows)
     else if(action === 'counts') migrated = await counts(sql)
     else throw new Error('未知的搬移動作')
     return json(res,200,{ ok:true,action,migrated,counts:await counts(sql) })
