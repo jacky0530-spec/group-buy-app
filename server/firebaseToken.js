@@ -65,10 +65,23 @@ function firestoreValue(value){
   return null
 }
 
+function safeFirestoreError(status, body){
+  let message = ''
+  try {
+    const parsed = JSON.parse(body || '{}')
+    message = String(parsed?.error?.message || '')
+  } catch {}
+  const cleaned = message.replace(/https?:\/\/\S+/g,'').slice(0,180)
+  return `無法確認原系統帳號權限（Firestore ${status}${cleaned ? `：${cleaned}` : ''}）`
+}
+
 export async function verifyFirestoreOwner(auth){
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(auth.projectId)}/databases/(default)/documents/accounts/${encodeURIComponent(auth.uid)}`
   const response = await fetch(url,{ headers:{ Authorization:`Bearer ${auth.token}` } })
-  if(!response.ok) throw new Error('無法確認原系統帳號權限')
+  if(!response.ok){
+    const body = await response.text().catch(()=> '')
+    throw new Error(safeFirestoreError(response.status,body))
+  }
   const doc = await response.json()
   const fields = {}
   Object.entries(doc.fields || {}).forEach(([k,v]) => { fields[k] = firestoreValue(v) })
