@@ -42,12 +42,21 @@ service cloud.firestore {
         ]);
       allow update: if isAdmin() || (isHelper()
         && resource.data.created_by_uid == request.auth.uid
-        && resource.data.status == 'pending'
         && request.resource.data.created_by_uid == resource.data.created_by_uid
-        && request.resource.data.status in ['pending','cancelled']
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','updated_at'
-        ]));
+        && (
+          (resource.data.status == 'pending'
+            && request.resource.data.status in ['pending','cancelled']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'customer_id','customer_name','customer_phone_last2','items','total_amount','is_virtual','note','status','updated_at'
+            ]))
+          ||
+          (resource.data.status == 'converted'
+            && resource.data.direct_order == true
+            && request.resource.data.status == 'converted'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'items','total_amount','is_virtual','note','updated_at'
+            ]))
+        ));
       allow delete: if isAdmin();
     }
 
@@ -58,7 +67,9 @@ service cloud.firestore {
     }
 
     match /orders/{id} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || (isHelper()
+        && resource.data.source == 'helper'
+        && resource.data.created_by_uid == request.auth.uid);
       allow create: if isAdmin() || (isHelper()
         && request.resource.data.source == 'helper'
         && request.resource.data.created_by_uid == request.auth.uid
@@ -66,7 +77,17 @@ service cloud.firestore {
         && request.resource.data.payment_status == 'unpaid'
         && request.resource.data.payable_status == 'unpaid'
         && request.resource.data.helper_entry_id is string);
-      allow update: if isAdmin();
+      allow update: if isAdmin() || (isHelper()
+        && resource.data.source == 'helper'
+        && resource.data.created_by_uid == request.auth.uid
+        && resource.data.status == 'pending'
+        && resource.data.archived != true
+        && request.resource.data.source == resource.data.source
+        && request.resource.data.created_by_uid == resource.data.created_by_uid
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'items','total_amount','note','is_virtual','updated_at'
+        ]));
       allow delete: if isOwner();
     }
 
