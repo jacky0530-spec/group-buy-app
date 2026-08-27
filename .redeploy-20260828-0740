@@ -1,0 +1,1 @@
+Trigger Vercel redeploy so newly configured server environment variables are injected into the production functions.
