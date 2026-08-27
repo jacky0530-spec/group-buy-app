@@ -2,11 +2,9 @@ export function normalizePhoneLast2(value) {
   if (value === null || value === undefined) return ''
   const raw = String(value).trim()
   if (!raw) return ''
-  if (/^\d+$/.test(raw)) {
-    const n = Number(raw)
-    if (Number.isFinite(n) && n >= 0 && n <= 9) return String(n).padStart(2,'0')
-    return raw.replace(/^0+(?=\d{2,}$)/,'') || '0'
-  }
+  // 末碼是人工辨識欄位，不強制只能兩碼，也不移除前導 0。
+  // 例如 00、000、007 都必須依使用者輸入原樣保存。
+  if (/^\d+$/.test(raw)) return raw
   return raw
 }
 
@@ -29,6 +27,7 @@ export function customerMatchesSearch(customer, search) {
     customer?.fb_name,
     customer?.phone,
     last2,
+    customer?.note,
   ].some(value => String(value || '').toLowerCase().includes(q))
 }
 
