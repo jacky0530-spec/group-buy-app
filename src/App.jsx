@@ -10,6 +10,7 @@ import Orders from './pages/Orders'
 import ExcelOrderImport from './pages/ExcelOrderImport'
 import Reports from './pages/Reports'
 import PendingProductReport from './pages/PendingProductReportFiltered'
+import StockInventory from './pages/StockInventory'
 import Expenses from './pages/Expenses'
 import SupplierPayments from './pages/SupplierPayments'
 import Accounts from './pages/Accounts'
@@ -35,6 +36,7 @@ export default function App() {
                   <Route path="order-import" element={<ExcelOrderImport />} />
                   <Route path="reports" element={<Reports />} />
                   <Route path="pending-report" element={<PendingProductReport />} />
+                  <Route path="stock" element={<StockInventory />} />
                   <Route path="expenses" element={<Expenses />} />
                   <Route path="supplier-payments" element={<SupplierPayments />} />
                   <Route path="helper-entries" element={<HelperEntries />} />
