@@ -125,3 +125,30 @@ export async function bestEffortNeonExtraSync(row){
     return null
   }
 }
+
+export async function bestEffortNeonStockConsume(payload){
+  try{
+    return await neonInventoryRuntime('consume_stock',payload)
+  }catch(err){
+    console.error('[Neon dual-write] stock consume failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonStockSet(payload){
+  try{
+    return await neonInventoryRuntime('set_stock',payload)
+  }catch(err){
+    console.error('[Neon dual-write] stock adjustment failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonExtraReceive(payload){
+  try{
+    return await neonInventoryRuntime('receive_extra',payload)
+  }catch(err){
+    console.error('[Neon dual-write] extra purchase receive failed',err)
+    return null
+  }
+}
