@@ -148,7 +148,7 @@ async function listOrders(sql){
   const items=await sql`
     SELECT
       oi.order_id,p.legacy_id AS product_id,oi.product_name,oi.category,oi.supplier,oi.sale_price,oi.cost_price,
-      oi.qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
+      oi.qty,oi.original_qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
       oi.fulfillment_type,oi.arrived_qty,oi.arrived_at,oi.supplier_payment_term,oi.supplier_paid_amount,
       oi.supplier_payment_status,oi.supplier_payment_refs,oi.created_at,oi.updated_at,oi.line_no
     FROM order_items oi
@@ -160,7 +160,7 @@ async function listOrders(sql){
     const row={
       id:item.product_id||'',product_id:item.product_id||'',name:item.product_name,product_name:item.product_name,
       category:item.category,supplier:item.supplier,price:Number(item.sale_price||0),sale_price:Number(item.sale_price||0),
-      cost_price:Number(item.cost_price||0),qty:Number(item.qty||0),subtotal:Number(item.subtotal||0),
+      cost_price:Number(item.cost_price||0),qty:Number(item.qty||0),original_qty:Number(item.original_qty??item.qty??0),subtotal:Number(item.subtotal||0),
       cost_subtotal:Number(item.cost_subtotal||0),note:item.note||'',
       spec:{package:item.spec_package||'',flavor:item.spec_flavor||'',color:item.spec_color||'',size:item.spec_size||''},
       fulfillment_type:item.fulfillment_type,arrived_qty:Number(item.arrived_qty||0),arrived_at:item.arrived_at,
