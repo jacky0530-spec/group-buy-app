@@ -25,6 +25,12 @@ async function productUuid(sql,legacyId){
   return rows[0]?.id||null
 }
 
+async function orderUuid(sql,legacyId){
+  if(!legacyId)return null
+  const rows=await sql`SELECT id,created_by_uid,source FROM orders WHERE legacy_id=${legacyId} LIMIT 1`
+  return rows[0]||null
+}
+
 async function inventoryUuid(sql,productId,spec){
   if(!productId)return null
   const rows=await sql`SELECT id FROM stock_inventory WHERE product_id=${productId} AND spec_package=${spec.package} AND spec_flavor=${spec.flavor} AND spec_color=${spec.color} AND spec_size=${spec.size} LIMIT 1`
@@ -79,6 +85,118 @@ async function syncExtra(sql,row){
   return legacyId
 }
 
+async function consumeStock(sql,auth,account,payload){
+  const qty=Math.max(1,Math.trunc(num(payload?.qty)||1))
+  const order=await orderUuid(sql,text(payload?.order_id))
+  if(!order) throw new Error('Neon 找不到現貨訂單')
+  if(account.role==='helper' && (order.created_by_uid!==auth.uid || order.source!=='helper')) throw new Error('只能扣除自己建立的現貨訂單庫存')
+  const productId=await productUuid(sql,text(payload?.product_id))
+  if(!productId) throw new Error('Neon 找不到現貨商品')
+  const spec=cleanSpec(payload)
+  const rows=await sql`
+    WITH target AS (
+      SELECT id FROM stock_inventory
+      WHERE product_id=${productId}
+        AND spec_package=${spec.package} AND spec_flavor=${spec.flavor}
+        AND spec_color=${spec.color} AND spec_size=${spec.size}
+    ), already AS (
+      SELECT 1 AS done FROM inventory_transactions it,target t
+      WHERE it.inventory_id=t.id AND it.order_id=${order.id} AND it.transaction_type='sale'
+      LIMIT 1
+    ), updated AS (
+      UPDATE stock_inventory s
+      SET available_qty=s.available_qty-${qty},updated_at=now()
+      FROM target t
+      WHERE s.id=t.id AND s.available_qty>=${qty} AND NOT EXISTS (SELECT 1 FROM already)
+      RETURNING s.id,s.available_qty
+    ), movement AS (
+      INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid)
+      SELECT u.id,${-qty},u.available_qty,'sale',${order.id},${text(payload?.note)||'現貨訂單扣庫存'},${auth.uid}
+      FROM updated u
+      RETURNING id
+    )
+    SELECT 'updated'::text AS state,available_qty FROM updated
+    UNION ALL
+    SELECT 'already'::text AS state,s.available_qty
+    FROM stock_inventory s,target t WHERE s.id=t.id AND EXISTS (SELECT 1 FROM already)
+    LIMIT 1
+  `
+  if(!rows.length) throw new Error('Neon 現貨不足或庫存不存在')
+  return {state:rows[0].state,available_qty:Number(rows[0].available_qty||0)}
+}
+
+async function setStock(sql,auth,payload){
+  const targetQty=Math.max(0,Math.trunc(num(payload?.available_qty)))
+  const productId=await productUuid(sql,text(payload?.product_id))
+  if(!productId) throw new Error('Neon 找不到庫存商品')
+  const spec=cleanSpec(payload)
+  const note=text(payload?.note||payload?.adjustment_note)||'手動調整庫存'
+  const rows=await sql`
+    WITH previous AS (
+      SELECT id,available_qty FROM stock_inventory
+      WHERE product_id=${productId}
+        AND spec_package=${spec.package} AND spec_flavor=${spec.flavor}
+        AND spec_color=${spec.color} AND spec_size=${spec.size}
+      FOR UPDATE
+    ), changed AS (
+      UPDATE stock_inventory s
+      SET available_qty=${targetQty},adjustment_note=${note},updated_at=now()
+      FROM previous p WHERE s.id=p.id
+      RETURNING s.id,p.available_qty AS before_qty,s.available_qty AS after_qty
+    ), movement AS (
+      INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,note,created_by_uid)
+      SELECT id,after_qty-before_qty,after_qty,'adjustment',${note},${auth.uid}
+      FROM changed WHERE after_qty<>before_qty
+      RETURNING id
+    )
+    SELECT before_qty,after_qty FROM changed
+  `
+  if(!rows.length) throw new Error('Neon 找不到要調整的庫存')
+  return {before:Number(rows[0].before_qty||0),after:Number(rows[0].after_qty||0)}
+}
+
+async function receiveExtra(sql,auth,payload){
+  const legacyId=text(payload?.extra_id)
+  const incoming=Math.max(1,Math.trunc(num(payload?.qty)||1))
+  if(!legacyId) throw new Error('缺少額外叫貨 ID')
+  const rows=await sql`
+    WITH extra AS (
+      SELECT id,product_id,supplier,spec_package,spec_flavor,spec_color,spec_size
+      FROM stock_purchase_extras WHERE legacy_id=${legacyId} LIMIT 1
+    ), guard AS (
+      SELECT e.* FROM extra e
+      WHERE NOT EXISTS (
+        SELECT 1 FROM inventory_transactions it
+        WHERE it.extra_purchase_id=e.id AND it.transaction_type='receive'
+      )
+    ), upsert_inventory AS (
+      INSERT INTO stock_inventory (product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,available_qty,created_at,updated_at)
+      SELECT product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,${incoming},now(),now() FROM guard
+      ON CONFLICT (product_id,spec_package,spec_flavor,spec_color,spec_size)
+      DO UPDATE SET available_qty=stock_inventory.available_qty+${incoming},updated_at=now()
+      RETURNING id,available_qty
+    ), linked AS (
+      UPDATE stock_purchase_extras e
+      SET stock_inventory_id=u.id,updated_at=now()
+      FROM upsert_inventory u,guard g WHERE e.id=g.id
+      RETURNING e.id,u.id AS inventory_id,u.available_qty
+    ), movement AS (
+      INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,extra_purchase_id,note,created_by_uid)
+      SELECT l.inventory_id,${incoming},l.available_qty,'receive',l.id,${text(payload?.note)||'額外叫貨入庫'},${auth.uid}
+      FROM linked l RETURNING id
+    )
+    SELECT 'received'::text AS state,available_qty FROM linked
+    UNION ALL
+    SELECT 'already'::text AS state,s.available_qty
+    FROM extra e
+    JOIN stock_inventory s ON s.id=e.stock_inventory_id
+    WHERE NOT EXISTS (SELECT 1 FROM guard)
+    LIMIT 1
+  `
+  if(!rows.length) throw new Error('Neon 找不到額外叫貨或庫存')
+  return {state:rows[0].state,available_qty:Number(rows[0].available_qty||0)}
+}
+
 async function listStock(sql){
   const rows=await sql`
     SELECT p.legacy_id AS product_id,p.name AS product_name,s.supplier,s.spec_package,s.spec_flavor,s.spec_color,s.spec_size,
@@ -113,6 +231,21 @@ async function listExtras(sql){
   }))
 }
 
+async function listMovements(sql){
+  const rows=await sql`
+    SELECT it.id,p.legacy_id AS product_id,p.name AS product_name,it.qty_change,it.balance_after,it.transaction_type,
+      o.legacy_id AS order_id,e.legacy_id AS extra_id,it.note,it.created_by_uid,it.created_at
+    FROM inventory_transactions it
+    JOIN stock_inventory s ON s.id=it.inventory_id
+    JOIN products p ON p.id=s.product_id
+    LEFT JOIN orders o ON o.id=it.order_id
+    LEFT JOIN stock_purchase_extras e ON e.id=it.extra_purchase_id
+    ORDER BY it.created_at DESC
+    LIMIT 500
+  `
+  return rows.map(r=>({...r,qty_change:Number(r.qty_change||0),balance_after:Number(r.balance_after||0)}))
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -122,6 +255,7 @@ export default async function handler(req,res){
     const account=await requireAccount(sql,auth)
     const action=text(req.body?.action)
     if(action==='list_stock') return res.status(200).json({ok:true,rows:await listStock(sql)})
+    if(action==='consume_stock') return res.status(200).json({ok:true,result:await consumeStock(sql,auth,account,req.body||{})})
     if(action==='list_extras'){
       requireStaff(account)
       return res.status(200).json({ok:true,rows:await listExtras(sql)})
@@ -129,7 +263,10 @@ export default async function handler(req,res){
     requireStaff(account)
     if(action==='sync_inventory') return res.status(200).json({ok:true,id:await syncInventory(sql,req.body?.row||{})})
     if(action==='sync_extra') return res.status(200).json({ok:true,id:await syncExtra(sql,req.body?.row||{})})
-    throw new Error('未知的庫存同步動作')
+    if(action==='set_stock') return res.status(200).json({ok:true,result:await setStock(sql,auth,req.body||{})})
+    if(action==='receive_extra') return res.status(200).json({ok:true,result:await receiveExtra(sql,auth,req.body||{})})
+    if(action==='list_movements') return res.status(200).json({ok:true,rows:await listMovements(sql)})
+    throw new Error('未知的庫存動作')
   }catch(err){
     console.error('neon-inventory-runtime',err)
     return res.status(400).json({ok:false,error:String(err?.message||err)})
