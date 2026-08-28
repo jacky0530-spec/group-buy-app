@@ -46,7 +46,7 @@ async function consumeStock(sql,auth,account,payload){
   const productId=await productUuid(sql,text(payload?.product_id));if(!productId) throw new Error('Neon 找不到現貨商品')
   const spec=cleanSpec(payload)
   const rows=await sql`WITH target AS (SELECT id FROM stock_inventory WHERE product_id=${productId} AND spec_package=${spec.package} AND spec_flavor=${spec.flavor} AND spec_color=${spec.color} AND spec_size=${spec.size}),
-    already AS (SELECT 1 AS done FROM inventory_transactions it,target t WHERE it.inventory_id=t.id AND it.order_id=${order.id} AND it.transaction_type IN ('sale','stock_sale') LIMIT 1),
+    already AS (SELECT 1 AS done FROM inventory_transactions it,target t WHERE it.inventory_id=t.id AND it.order_id=${order.id} AND it.transaction_type='stock_sale' LIMIT 1),
     updated AS (UPDATE stock_inventory s SET available_qty=s.available_qty-${qty},updated_at=now() FROM target t WHERE s.id=t.id AND s.available_qty>=${qty} AND NOT EXISTS (SELECT 1 FROM already) RETURNING s.id,s.available_qty),
     movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid) SELECT u.id,${-qty},u.available_qty,'stock_sale',${order.id},${text(payload?.note)||'現貨訂單扣庫存'},${auth.uid} FROM updated u RETURNING id)
     SELECT 'updated'::text AS state,available_qty FROM updated UNION ALL SELECT 'already'::text AS state,s.available_qty FROM stock_inventory s,target t WHERE s.id=t.id AND EXISTS (SELECT 1 FROM already) LIMIT 1`
@@ -75,7 +75,7 @@ async function receiveExtra(sql,auth,payload){
       SELECT e.*,GREATEST(e.ordered_qty-e.received_qty,0)::integer AS incoming
       FROM extra e
       WHERE e.status<>'cancelled' AND e.ordered_qty>e.received_qty
-        AND NOT EXISTS (SELECT 1 FROM inventory_transactions it WHERE it.extra_purchase_id=e.id AND it.transaction_type IN ('receive','extra_receive'))
+        AND NOT EXISTS (SELECT 1 FROM inventory_transactions it WHERE it.extra_purchase_id=e.id AND it.transaction_type='extra_receive')
     ),
     upsert_inventory AS (
       INSERT INTO stock_inventory (product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,available_qty,created_at,updated_at)
