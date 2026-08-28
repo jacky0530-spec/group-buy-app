@@ -47,7 +47,7 @@ async function helperUuid(sql,legacyId){
 }
 
 async function existingOrder(sql,legacyId){
-  const rows=await sql`SELECT id,legacy_id FROM orders WHERE legacy_id=${text(legacyId)} LIMIT 1`
+  const rows=await sql`SELECT id,legacy_id,total_amount,refund_amount,refunds FROM orders WHERE legacy_id=${text(legacyId)} LIMIT 1`
   if(!rows[0]) throw new Error('Neon 找不到訂單')
   return rows[0]
 }
@@ -143,6 +143,39 @@ async function updateArchive(sql,legacyId,archived){
   return rows[0]
 }
 
+async function applyRefund(sql,legacyId,amount,note){
+  const order=await existingOrder(sql,legacyId)
+  const addAmount=num(amount)
+  if(!(addAmount>0)) throw new Error('退款金額必須大於 0')
+  const total=num(order.total_amount)
+  const oldRefund=num(order.refund_amount)
+  if(oldRefund+addAmount>total+0.001) throw new Error('累積退款金額不可超過訂單總額')
+  const nextRefund=oldRefund+addAmount
+  const paymentStatus=nextRefund>=total-0.001?'refunded':'partial_refund'
+  const entry={amount:addAmount,note:text(note),at:new Date().toISOString()}
+  const rows=await sql`
+    UPDATE orders SET
+      refund_amount=${nextRefund},
+      payment_status=${paymentStatus},
+      refunded_at=now(),
+      refunds=COALESCE(refunds,'[]'::jsonb) || ${JSON.stringify([entry])}::jsonb,
+      updated_at=now()
+    WHERE legacy_id=${text(legacyId)}
+    RETURNING legacy_id AS id,refund_amount,payment_status,refunded_at,refunds,updated_at
+  `
+  return rows[0]
+}
+
+async function clearRefunds(sql,legacyId){
+  await existingOrder(sql,legacyId)
+  const rows=await sql`
+    UPDATE orders SET refund_amount=0,refunds='[]'::jsonb,refunded_at=NULL,payment_status='paid',updated_at=now()
+    WHERE legacy_id=${text(legacyId)}
+    RETURNING legacy_id AS id,refund_amount,payment_status,refunded_at,refunds,updated_at
+  `
+  return rows[0]
+}
+
 async function deleteOrders(sql,ids){
   let deleted=0
   for(const legacyId of [...new Set(ids.map(text).filter(Boolean))]){
@@ -187,6 +220,14 @@ export default async function handler(req,res){
     if(action==='unarchive'){
       requireStaff(account)
       return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,false)})
+    }
+    if(action==='apply_refund'){
+      requireStaff(account)
+      return res.status(200).json({ok:true,result:await applyRefund(sql,req.body?.id,req.body?.amount,req.body?.note)})
+    }
+    if(action==='clear_refunds'){
+      requireStaff(account)
+      return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
     }
     if(action==='delete'){
       requireStaff(account)
