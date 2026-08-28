@@ -47,30 +47,3 @@ export async function verifyFirebaseIdToken(req){
   if(Number(payload.iat || 0) > now + 60) throw new Error('登入憑證時間錯誤')
   return { token, uid:payload.sub, email:payload.email || '', payload, projectId }
 }
-
-function firestoreValue(value){
-  if(value == null) return null
-  if('stringValue' in value) return value.stringValue
-  if('booleanValue' in value) return value.booleanValue
-  if('integerValue' in value) return Number(value.integerValue)
-  if('doubleValue' in value) return Number(value.doubleValue)
-  if('timestampValue' in value) return value.timestampValue
-  if('nullValue' in value) return null
-  if('arrayValue' in value) return (value.arrayValue.values || []).map(firestoreValue)
-  if('mapValue' in value){
-    const out = {}
-    Object.entries(value.mapValue.fields || {}).forEach(([k,v]) => { out[k] = firestoreValue(v) })
-    return out
-  }
-  return null
-}
-
-// Temporary migration mode: Firestore quota is exhausted, so the migration API
-// cannot perform a second server-side read of accounts/{uid}. The caller is still
-// required to present a valid Firebase ID token, and the migration page itself is
-// restricted to owner role by the existing app guard. Remove this bypass after the
-// Firestore -> Neon migration has been verified and the migration endpoint is retired.
-export async function verifyFirestoreOwner(auth){
-  if(!auth?.uid || !auth?.token) throw new Error('缺少有效登入資訊')
-  return { role:'owner', migration_quota_bypass:true, uid:auth.uid, email:auth.email || '' }
-}
