@@ -1,12 +1,13 @@
-import { doc, setDoc, updateDoc, Timestamp } from 'firebase/firestore'
+import { doc, setDoc, updateDoc, Timestamp, writeBatch } from 'firebase/firestore'
 import { db } from './firebase'
 import { CustomersAPI, ProductsAPI } from './db'
 import { ExpensesAPI } from './expenses'
-import { derivePhoneLast2, normalizePhoneLast2 } from './customerSearch'
+import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from './customerSearch'
 import { neonRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-catalog-writes-installed')
 const nowISO=()=>new Date().toISOString()
+const normalizeNameKey=value=>String(value||'').trim().toLocaleLowerCase('zh-TW')
 
 function randomLegacyId(){
   const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -34,6 +35,15 @@ function customerData(data={}){
   }
 }
 
+function mergedNote(current,incoming){
+  const oldText=String(current||'').trim()
+  const newText=String(incoming||'').trim()
+  if(!newText) return oldText
+  if(!oldText) return newText
+  if(oldText.includes(newText)) return oldText
+  return `${oldText}；${newText}`
+}
+
 function helperCatalogPayload(product={}){
   return {
     name:String(product.name||'').trim(),
@@ -50,9 +60,35 @@ function helperCatalogPayload(product={}){
   }
 }
 
+function fsTime(value){
+  if(!value) return null
+  if(value instanceof Timestamp) return value
+  const date=new Date(value)
+  return Number.isNaN(date.getTime())?null:Timestamp.fromDate(date)
+}
+
+function customerFirestoreRow(row){
+  return {
+    name:String(row.name||'').trim(),phone:String(row.phone||'').trim(),phone_last2:String(row.phone_last2||'').trim(),
+    line_nick:String(row.line_nick||'').trim(),fb_name:String(row.fb_name||'').trim(),note:String(row.note||'').trim(),
+    active:row.active!==false,joined_at:fsTime(row.joined_at)||Timestamp.now(),archived_at:fsTime(row.archived_at),updated_at:fsTime(row.updated_at)||Timestamp.now(),
+    ...(row.import_source?{import_source:row.import_source}:{}),
+  }
+}
+
 async function mirror(label,fn){
   try{return await fn()}
   catch(err){console.error(`[Firestore mirror] ${label} failed after Neon success`,err);return null}
+}
+
+async function mirrorCustomers(rows=[]){
+  await mirror('CustomersAPI.importRows',async()=>{
+    for(let i=0;i<rows.length;i+=400){
+      const batch=writeBatch(db)
+      for(const row of rows.slice(i,i+400)) batch.set(doc(db,'customers',row.id),customerFirestoreRow(row),{merge:true})
+      await batch.commit()
+    }
+  })
 }
 
 function installCustomers(){
@@ -85,6 +121,75 @@ function installCustomers(){
     const primary=await neonRuntime('write_customer',{op:'restore',id})
     await mirror('CustomersAPI.restore',()=>updateDoc(doc(db,'customers',id),{active:true,archived_at:null,updated_at:Timestamp.now()}))
     return primary?.result
+  }
+
+  CustomersAPI.isDuplicateIdentity=async function({phone='',line_nick='',fb_name=''},excludeId=null){
+    const result=await neonRuntime('list_customers',{includeArchived:false})
+    const rows=Array.isArray(result?.rows)?result.rows:[]
+    const checks=[['phone',phone.trim()],['line_nick',line_nick.trim()],['fb_name',fb_name.trim()]].filter(([,v])=>v)
+    for(const [field,value] of checks){
+      const hit=rows.find(row=>row.id!==excludeId&&row.active!==false&&String(row[field]||'')===value)
+      if(hit) return {duplicate:true,field,value}
+    }
+    return {duplicate:false}
+  }
+
+  CustomersAPI.importRows=async function(rows=[]){
+    if(!Array.isArray(rows)) throw new Error('匯入格式不正確')
+    const currentResult=await neonRuntime('list_customers',{includeArchived:true})
+    const local=(currentResult?.rows||[]).map(row=>({...row}))
+    const changes=[]
+    let created=0,updated=0,skipped=0,ambiguous=0
+
+    for(const input of rows){
+      const name=String(input?.name||'').trim()
+      if(!name){skipped++;continue}
+      const phone=String(input?.phone||'').trim()
+      const phoneLast2=normalizePhoneLast2(input?.phone_last2)||derivePhoneLast2(phone)
+      const note=String(input?.note||'').trim()
+      const key=normalizeNameKey(name)
+      const sameName=local.filter(c=>c.active!==false&&normalizeNameKey(c.name)===key)
+      const exact=sameName.find(c=>{
+        const existingLast2=getCustomerPhoneLast2(c)
+        return phoneLast2?existingLast2===phoneLast2:!existingLast2
+      })
+
+      if(exact){
+        const patch={}
+        if(phoneLast2&&!normalizePhoneLast2(exact.phone_last2)) patch.phone_last2=phoneLast2
+        if(phone&&!exact.phone) patch.phone=phone
+        const nextNote=mergedNote(exact.note,note)
+        if(nextNote!==String(exact.note||'').trim()) patch.note=nextNote
+        if(Object.keys(patch).length){
+          Object.assign(exact,patch,{updated_at:nowISO()});changes.push({...exact});updated++
+        }else skipped++
+        continue
+      }
+
+      const untagged=sameName.filter(c=>!getCustomerPhoneLast2(c)&&!c.phone)
+      if(phoneLast2&&sameName.length===1&&untagged.length===1){
+        const target=untagged[0]
+        const patch={phone_last2:phoneLast2}
+        if(phone) patch.phone=phone
+        const nextNote=mergedNote(target.note,note)
+        if(nextNote!==String(target.note||'').trim()) patch.note=nextNote
+        Object.assign(target,patch,{updated_at:nowISO()});changes.push({...target});updated++
+        continue
+      }
+
+      if(phoneLast2&&sameName.length>1&&untagged.length>0) ambiguous++
+      const createdAt=nowISO()
+      const row={
+        id:randomLegacyId(),name,line_nick:String(input?.line_nick||'').trim(),fb_name:String(input?.fb_name||'').trim(),
+        phone,phone_last2:phoneLast2,note,active:true,import_source:String(input?.import_source||'customer-json-v1'),
+        joined_at:createdAt,updated_at:createdAt,
+      }
+      local.push(row);changes.push(row);created++
+    }
+
+    for(let i=0;i<changes.length;i+=250) await neonRuntime('sync_customers',{rows:changes.slice(i,i+250)})
+    await mirrorCustomers(changes)
+    return {scanned:rows.length,created,updated,skipped,ambiguous}
   }
 }
 
@@ -129,6 +234,11 @@ function installProducts(){
       await setDoc(doc(db,'helper_catalog',id),{active:true,updated_at:Timestamp.now()},{merge:true})
     })
     return primary?.result
+  }
+
+  ProductsAPI.isDuplicate=async function(name,excludeId=null){
+    const result=await neonRuntime('list_products',{includeArchived:false})
+    return (result?.rows||[]).some(row=>row.id!==excludeId&&row.active!==false&&String(row.name||'')===String(name||''))
   }
 }
 
