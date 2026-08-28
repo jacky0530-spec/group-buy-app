@@ -69,7 +69,15 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.unarchive=async id=> (await neonOrdersRuntime('unarchive',{id}))?.result
   OrdersAPI.applyRefund=async (id,{amount,note=''}={})=> (await neonOrdersRuntime('apply_refund',{id,amount,note}))?.result
   OrdersAPI.clearRefunds=async id=> (await neonOrdersRuntime('clear_refunds',{id}))?.result
-  OrdersAPI.updateArrival=async (id,items)=> (await neonOrdersRuntime('update_arrival',{id,items}))?.result
+  OrdersAPI.updateArrival=async function(id,items){
+    const result=(await neonOrdersRuntime('update_arrival',{id,items}))?.result
+    const rows=(await neonOrderQuery('all'))?.rows||[]
+    const fresh=rows.find(row=>row.id===id)
+    if(fresh?.items&&Array.isArray(items)){
+      items.splice(0,items.length,...fresh.items)
+    }
+    return {...(result||{}),order:fresh||null}
+  }
 
   OrdersAPI.updateItemQty=async function(id,item_index,qty){
     const m=await meta(id)
