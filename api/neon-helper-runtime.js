@@ -35,11 +35,12 @@ async function productSnapshot(sql,line={}){
   const options=Array.isArray(p.price_options)?p.price_options:[]
   const option=packageLabel?options.find(x=>text(x?.label)===packageLabel):null
   const qty=Math.max(1,Math.trunc(num(line.qty)||1))
+  const originalQty=Math.max(1,Math.trunc(num(line.original_qty)||qty))
   const sale=Number(option?.price??p.price??0)
   const cost=Number(option?.cost===''||option?.cost==null?p.cost:option.cost)||0
   return {
     product_uuid:p.id,product_id:p.legacy_id,product_name:p.name,category:p.category||'other',supplier:p.supplier||'',
-    sale_price:sale,cost_price:cost,qty,subtotal:sale*qty,cost_subtotal:cost*qty,note:text(line.note),
+    sale_price:sale,cost_price:cost,qty,original_qty:originalQty,subtotal:sale*qty,cost_subtotal:cost*qty,note:text(line.note),
     spec:{package:text(option?.label||spec.package),flavor:text(spec.flavor),color:text(spec.color),size:text(spec.size)},
     supplier_payment_term:p.supplier_payment_term||'manual',supplier_paid_amount:0,supplier_payment_status:'unpaid',supplier_payment_refs:[],
   }
@@ -88,13 +89,16 @@ async function upsertHelperPreorder(sql,auth,payload,{editing=false}={}){
     if(owner[0]?.created_by_uid!==auth.uid||owner[0]?.source!=='helper'||owner[0]?.fulfillment_type==='stock') throw new Error('訂單 ID 已被其他資料使用')
   }
 
+  const previousItems=await sql`SELECT line_no,product_id,spec_package,spec_flavor,spec_color,spec_size,qty,original_qty FROM order_items WHERE order_id=${orderUuidValue}`
   await sql`DELETE FROM order_items WHERE order_id=${orderUuidValue}`
   for(let i=0;i<items.length;i++){
-    const x=items[i],s=x.spec
-    await sql`INSERT INTO order_items (order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,subtotal,cost_subtotal,note,spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,supplier_payment_term,supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at) VALUES (${orderUuidValue},${i+1},${x.product_uuid},${x.product_name},${x.category},${x.supplier},${x.sale_price},${x.cost_price},${x.qty},${x.subtotal},${x.cost_subtotal},${x.note},${s.package},${s.flavor},${s.color},${s.size},'preorder',0,${x.supplier_payment_term},0,'unpaid','[]'::jsonb,now(),now())`
+    const x=items[i],s=x.spec,lineNo=i+1
+    const previous=previousItems.find(p=>Number(p.line_no)===lineNo&&text(p.product_id)===text(x.product_uuid)&&text(p.spec_package)===s.package&&text(p.spec_flavor)===s.flavor&&text(p.spec_color)===s.color&&text(p.spec_size)===s.size)
+    x.original_qty=previous?Math.max(1,Math.trunc(num(previous.original_qty??previous.qty)||x.qty)):x.original_qty
+    await sql`INSERT INTO order_items (order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,original_qty,subtotal,cost_subtotal,note,spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,supplier_payment_term,supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at) VALUES (${orderUuidValue},${lineNo},${x.product_uuid},${x.product_name},${x.category},${x.supplier},${x.sale_price},${x.cost_price},${x.qty},${x.original_qty},${x.subtotal},${x.cost_subtotal},${x.note},${s.package},${s.flavor},${s.color},${s.size},'preorder',0,${x.supplier_payment_term},0,'unpaid','[]'::jsonb,now(),now())`
   }
 
-  const publicItems=items.map(x=>({id:x.product_id,product_id:x.product_id,name:x.product_name,product_name:x.product_name,price:x.sale_price,sale_price:x.sale_price,qty:x.qty,subtotal:x.subtotal,note:x.note,spec:x.spec}))
+  const publicItems=items.map(x=>({id:x.product_id,product_id:x.product_id,name:x.product_name,product_name:x.product_name,price:x.sale_price,sale_price:x.sale_price,qty:x.qty,original_qty:x.original_qty,subtotal:x.subtotal,note:x.note,spec:x.spec}))
   const entryPayload={customer_id:customer.legacy_id,customer_name:customer.name,customer_phone_last2:customer.phone_last2||'',items:publicItems,total_amount:total,is_virtual:isVirtual,note,status:'converted',converted_order_id:orderLegacy,direct_order:true,created_by_uid:auth.uid,created_by_name:displayName}
   const entryRows=await sql`
     INSERT INTO helper_entries (legacy_id,created_by_uid,created_by_name,customer_id,customer_name,customer_phone_last2,total_amount,is_virtual,note,status,converted_order_id,direct_order,payload,converted_at,created_at,updated_at)
@@ -142,9 +146,9 @@ async function listMyEntries(sql,auth){
 async function listMyPendingOrders(sql,auth){
   const orders=await sql`SELECT o.id AS neon_id,o.legacy_id AS id,c.legacy_id AS customer_id,o.customer_name,o.customer_phone,o.customer_phone_last2,o.total_amount,o.status,o.payment_status,o.payable_status,o.refund_amount,o.is_virtual,o.source,o.fulfillment_type,o.note,o.created_by_uid,o.created_by_name,o.order_date,o.shipped_at,o.cancelled_at,o.cancellation_reason,o.archived,o.archived_at,o.status_history,o.refunds,o.created_at,o.updated_at,h.legacy_id AS helper_entry_id FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN helper_entries h ON h.id=o.helper_entry_id WHERE o.created_by_uid=${auth.uid} AND o.source='helper' AND o.status='pending' AND o.archived<>true ORDER BY o.order_date DESC`
   if(!orders.length)return[]
-  const items=await sql`SELECT oi.order_id,p.legacy_id AS product_id,oi.product_name,oi.category,oi.supplier,oi.sale_price,oi.cost_price,oi.qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,oi.fulfillment_type,oi.arrived_qty,oi.arrived_at,oi.supplier_payment_term,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.line_no FROM order_items oi JOIN orders o ON o.id=oi.order_id LEFT JOIN products p ON p.id=oi.product_id WHERE o.created_by_uid=${auth.uid} AND o.source='helper' AND o.status='pending' AND o.archived<>true ORDER BY oi.order_id,oi.line_no`
+  const items=await sql`SELECT oi.order_id,p.legacy_id AS product_id,oi.product_name,oi.category,oi.supplier,oi.sale_price,oi.cost_price,oi.qty,oi.original_qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,oi.fulfillment_type,oi.arrived_qty,oi.arrived_at,oi.supplier_payment_term,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.line_no FROM order_items oi JOIN orders o ON o.id=oi.order_id LEFT JOIN products p ON p.id=oi.product_id WHERE o.created_by_uid=${auth.uid} AND o.source='helper' AND o.status='pending' AND o.archived<>true ORDER BY oi.order_id,oi.line_no`
   const byOrder=new Map()
-  for(const item of items){if(!byOrder.has(item.order_id))byOrder.set(item.order_id,[]);byOrder.get(item.order_id).push({id:item.product_id||'',product_id:item.product_id||'',name:item.product_name,product_name:item.product_name,price:Number(item.sale_price||0),sale_price:Number(item.sale_price||0),cost_price:Number(item.cost_price||0),category:item.category,supplier:item.supplier,qty:Number(item.qty||0),subtotal:Number(item.subtotal||0),cost_subtotal:Number(item.cost_subtotal||0),note:item.note||'',spec:{package:item.spec_package||'',flavor:item.spec_flavor||'',color:item.spec_color||'',size:item.spec_size||''},fulfillment_type:item.fulfillment_type,arrived_qty:Number(item.arrived_qty||0),arrived_at:item.arrived_at,supplier_payment_term:item.supplier_payment_term,supplier_paid_amount:Number(item.supplier_paid_amount||0),supplier_payment_status:item.supplier_payment_status,supplier_payment_refs:item.supplier_payment_refs||[]})}
+  for(const item of items){if(!byOrder.has(item.order_id))byOrder.set(item.order_id,[]);byOrder.get(item.order_id).push({id:item.product_id||'',product_id:item.product_id||'',name:item.product_name,product_name:item.product_name,price:Number(item.sale_price||0),sale_price:Number(item.sale_price||0),cost_price:Number(item.cost_price||0),category:item.category,supplier:item.supplier,qty:Number(item.qty||0),original_qty:Number(item.original_qty??item.qty??0),subtotal:Number(item.subtotal||0),cost_subtotal:Number(item.cost_subtotal||0),note:item.note||'',spec:{package:item.spec_package||'',flavor:item.spec_flavor||'',color:item.spec_color||'',size:item.spec_size||''},fulfillment_type:item.fulfillment_type,arrived_qty:Number(item.arrived_qty||0),arrived_at:item.arrived_at,supplier_payment_term:item.supplier_payment_term,supplier_paid_amount:Number(item.supplier_paid_amount||0),supplier_payment_status:item.supplier_payment_status,supplier_payment_refs:item.supplier_payment_refs||[]})}
   return orders.map(({neon_id,...row})=>({...row,total_amount:Number(row.total_amount||0),refund_amount:Number(row.refund_amount||0),items:byOrder.get(neon_id)||[]}))
 }
 
