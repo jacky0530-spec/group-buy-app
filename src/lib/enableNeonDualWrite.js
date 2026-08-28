@@ -157,6 +157,21 @@ function wrapShadowList(api,action,label){
   }
 }
 
+function wrapNeonFirstList(api,action,label){
+  const firestoreList=api.list
+  if(typeof firestoreList!=='function') return
+  api.list=async function(options={}){
+    try{
+      const result=await neonRuntime(action,{includeArchived:options?.includeArchived===true})
+      if(Array.isArray(result?.rows)) return result.rows
+      throw new Error('Neon 回傳格式錯誤')
+    }catch(err){
+      console.error(`[Neon read fallback] ${label}`,err)
+      return firestoreList.apply(this,[options])
+    }
+  }
+}
+
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
   wrapCrud(CustomersAPI,'customers','sync_customer')
@@ -164,5 +179,5 @@ if(!globalThis[INSTALLED]){
   wrapOrders()
   wrapSupplierPayments()
   wrapShadowList(CustomersAPI,'list_customers','customers')
-  wrapShadowList(ProductsAPI,'list_products','products')
+  wrapNeonFirstList(ProductsAPI,'list_products','products')
 }
