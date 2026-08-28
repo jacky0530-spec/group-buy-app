@@ -26,4 +26,6 @@ if(!globalThis[INSTALLED]){
   install('unarchive','unarchive',()=>({}))
   install('applyRefund','apply_refund',(_id,{amount,note='' }={})=>({amount,note}))
   install('clearRefunds','clear_refunds',()=>({}))
+  install('updateArrival','update_arrival',(_id,items)=>({items}))
+  install('updateItemQty','update_item_qty',(_id,item_index,qty)=>({item_index,qty}))
 }
