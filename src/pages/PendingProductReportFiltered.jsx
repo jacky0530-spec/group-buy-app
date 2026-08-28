@@ -5,21 +5,21 @@ import { ProductsAPI } from '../lib/db'
 
 export default function PendingProductReportFiltered() {
   const [showArchivedProducts,setShowArchivedProducts] = useState(false)
-  const originalListRef = useRef(null)
+  const originalListRef = useRef(ProductsAPI.list)
   const reportRef = useRef(null)
 
-  if (!originalListRef.current) originalListRef.current = ProductsAPI.list
-
   // 出貨報表原本會用 includeArchived:true 載入全部商品。
-  // 在此頁預設排除 active===false 的封存商品；需要查舊資料時可手動顯示。
-  ProductsAPI.list = async (...args) => {
-    const rows = await originalListRef.current(...args)
-    return showArchivedProducts ? rows : (rows || []).filter(product => product.active !== false)
-  }
-
-  useEffect(() => () => {
-    if (originalListRef.current) ProductsAPI.list = originalListRef.current
-  },[])
+  // 僅在 effect 期間安裝篩選 wrapper，避免 render 階段修改共享 API。
+  useEffect(() => {
+    const originalList = originalListRef.current
+    ProductsAPI.list = async (...args) => {
+      const rows = await originalList(...args)
+      return showArchivedProducts ? rows : (rows || []).filter(product => product.active !== false)
+    }
+    return () => {
+      ProductsAPI.list = originalList
+    }
+  },[showArchivedProducts])
 
   // 小幫手/訂單備註在出貨畫面一律用紅字提醒，避免「私」等重要註記被忽略。
   useEffect(() => {
