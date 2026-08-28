@@ -1,9 +1,10 @@
 import { doc, getDoc, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
-import { CustomersAPI, OrdersAPI, ProductsAPI } from './db'
+import { CustomersAPI, OrdersAPI, ProductsAPI, SupplierPaymentsAPI } from './db'
 import {
   bestEffortNeonOrderDelete,
   bestEffortNeonOrderSync,
+  bestEffortNeonPaymentSync,
   bestEffortNeonSync,
   neonRuntime,
 } from './neonRuntime'
@@ -114,6 +115,24 @@ function wrapOrders(){
   }
 }
 
+function wrapSupplierPayments(){
+  const original=SupplierPaymentsAPI.createPayment
+  if(typeof original!=='function') return
+  SupplierPaymentsAPI.createPayment=async function(...args){
+    const request=args[0]||{}
+    const result=await original.apply(this,args)
+    const orderIds=[...new Set((request.lines||[]).map(line=>line?.order_id).filter(Boolean))]
+    for(const id of orderIds) await syncOrderId(id)
+    try{
+      const payment=await readFirestoreDocument('supplier_payments',result?.id)
+      if(payment) await bestEffortNeonPaymentSync(payment)
+    }catch(err){
+      console.error(`[Neon dual-write] supplier_payments/${result?.id||''} readback failed`,err)
+    }
+    return result
+  }
+}
+
 function sameIds(a,b){
   if(a.length!==b.length) return false
   const left=[...a].map(x=>String(x?.id||'')).sort()
@@ -143,6 +162,7 @@ if(!globalThis[INSTALLED]){
   wrapCrud(CustomersAPI,'customers','sync_customer')
   wrapCrud(ProductsAPI,'products','sync_product')
   wrapOrders()
+  wrapSupplierPayments()
   wrapShadowList(CustomersAPI,'list_customers','customers')
   wrapShadowList(ProductsAPI,'list_products','products')
 }
