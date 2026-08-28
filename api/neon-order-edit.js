@@ -50,6 +50,7 @@ async function insertItems(sql,orderId,items,{preserve=[]}={}){
     const sale=num(item.sale_price??item.price)
     const cost=num(item.cost_price)
     const same=old&&text(old.product_id)===legacyProduct&&sameSpec(spec,{package:old.spec_package,flavor:old.spec_flavor,color:old.spec_color,size:old.spec_size})
+    const originalQty=same?Math.max(1,Math.trunc(num(old.original_qty??old.qty)||qty)):qty
     const paid=same?Math.max(0,num(old.supplier_paid_amount)):0
     const paidStatus=paid>0?(paid>=cost*qty-0.01?'paid':'partial'):'unpaid'
     const refs=paid>0?(old?.supplier_payment_refs||[]):[]
@@ -57,12 +58,12 @@ async function insertItems(sql,orderId,items,{preserve=[]}={}){
     const arrivedAt=arrived>=qty?(item.arrived_at||old?.arrived_at||nowISO()):null
     await sql`
       INSERT INTO order_items (
-        order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,subtotal,cost_subtotal,note,
+        order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,original_qty,subtotal,cost_subtotal,note,
         spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,supplier_payment_term,
         supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at
       ) VALUES (
         ${orderId},${i+1},${productId},${text(item.product_name||item.name)},${text(item.category)||'other'},${text(item.supplier)},
-        ${sale},${cost},${qty},${sale*qty},${cost*qty},${text(item.note)},${spec.package},${spec.flavor},${spec.color},${spec.size},'preorder',
+        ${sale},${cost},${qty},${originalQty},${sale*qty},${cost*qty},${text(item.note)},${spec.package},${spec.flavor},${spec.color},${spec.size},'preorder',
         ${arrived},${arrivedAt},${text(item.supplier_payment_term)||'manual'},${paid},${paidStatus},${JSON.stringify(refs)}::jsonb,now(),now()
       )
     `
@@ -97,8 +98,14 @@ async function createOrder(sql,row){
   `
   const orderId=upserted[0]?.id
   if(!orderId) throw new Error(`訂單 ${id} 建立失敗`)
+  const current=await sql`
+    SELECT oi.line_no,p.legacy_id AS product_id,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
+           oi.qty,oi.original_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at
+    FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id
+    WHERE oi.order_id=${orderId} ORDER BY oi.line_no
+  `
   await sql`DELETE FROM order_items WHERE order_id=${orderId}`
-  await insertItems(sql,orderId,items)
+  await insertItems(sql,orderId,items,{preserve:current})
   return {id,total_amount:total,items:items.length,order_date:orderDate,created_at:created}
 }
 
@@ -112,7 +119,7 @@ async function editOrder(sql,id,data){
   if(!incoming.length) throw new Error('訂單至少需要一個品項')
   const current=await sql`
     SELECT oi.line_no,p.legacy_id AS product_id,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
-           oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at
+           oi.qty,oi.original_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at
     FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id
     WHERE oi.order_id=${order.id} ORDER BY oi.line_no
   `
