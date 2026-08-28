@@ -57,7 +57,7 @@ async function resizeStockItem(sql,auth,legacyOrderId,itemIndex,nextQty){
     ), movement AS (
       INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid)
       SELECT i.inventory_id,-i.diff,i.available_qty,
-        CASE WHEN i.diff>0 THEN 'sale' ELSE 'restore' END,
+        CASE WHEN i.diff>0 THEN 'stock_sale' ELSE 'return' END,
         i.order_id,
         CASE WHEN i.diff>0 THEN '出貨報表增加現貨數量' ELSE '出貨報表減少現貨數量' END,
         ${auth.uid}
@@ -114,7 +114,7 @@ async function updateStockOrder(sql,auth,legacyOrderId,status,reason=''){
   const allowed=['pending','shipped','cancelled']
   if(!allowed.includes(status)) throw new Error('訂單狀態不正確')
   const cancelled=status==='cancelled'
-  const movementType=cancelled?'restore':'reconsume'
+  const movementType=cancelled?'return':'stock_sale'
   const movementNote=cancelled?'取消現貨訂單自動還庫':'取消訂單恢復後重新扣庫存'
 
   const rows=await sql`
@@ -130,8 +130,8 @@ async function updateStockOrder(sql,auth,legacyOrderId,status,reason=''){
       LEFT JOIN stock_inventory s ON s.product_id=g.product_id AND s.spec_package=g.spec_package AND s.spec_flavor=g.spec_flavor AND s.spec_color=g.spec_color AND s.spec_size=g.spec_size
     ), movement_state AS (
       SELECT r.product_id,r.spec_package,r.spec_flavor,r.spec_color,r.spec_size,r.qty,r.inventory_id,r.available_qty,
-        COALESCE(SUM(it.qty_change) FILTER (WHERE it.transaction_type IN ('sale','restore','reconsume')),0)::int AS net,
-        COUNT(it.id) FILTER (WHERE it.transaction_type IN ('sale','restore','reconsume'))::int AS movement_count
+        COALESCE(SUM(it.qty_change) FILTER (WHERE it.transaction_type IN ('sale','stock_sale','restore','return','reconsume')),0)::int AS net,
+        COUNT(it.id) FILTER (WHERE it.transaction_type IN ('sale','stock_sale','restore','return','reconsume'))::int AS movement_count
       FROM resolved r LEFT JOIN target_order o ON true
       LEFT JOIN inventory_transactions it ON it.inventory_id=r.inventory_id AND it.order_id=o.id
       GROUP BY r.product_id,r.spec_package,r.spec_flavor,r.spec_color,r.spec_size,r.qty,r.inventory_id,r.available_qty
