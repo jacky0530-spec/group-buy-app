@@ -5,11 +5,16 @@ const text=v=>String(v??'').trim()
 const iso=v=>{if(!v)return null;if(typeof v==='string')return v;if(v?.seconds)return new Date(Number(v.seconds)*1000).toISOString();return null}
 const role=v=>['owner','staff','helper'].includes(v)?v:'staff'
 
-async function requireOwner(sql,auth){
+async function requireAccount(sql,auth){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
   const account=rows[0]
   if(!account) throw new Error('Neon 找不到登入帳號')
   if(account.disabled) throw new Error('帳號已停用')
+  if(!['owner','staff','helper'].includes(account.role)) throw new Error('帳號權限無效')
+  return account
+}
+
+function requireOwner(account){
   if(account.role!=='owner') throw new Error('只有負責人可以管理帳號')
 }
 
@@ -35,12 +40,16 @@ export default async function handler(req,res){
     if(!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing')
     const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
-    await requireOwner(sql,auth)
+    const account=await requireAccount(sql,auth)
     const action=text(req.body?.action)
-    if(action==='sync') return res.status(200).json({ok:true,id:await syncAccount(sql,req.body?.row||{})})
     if(action==='list'){
+      if(!['owner','staff'].includes(account.role)) throw new Error('權限不足')
       const rows=await sql`SELECT firebase_uid AS id,email,display_name,role,disabled,created_at,updated_at FROM accounts ORDER BY created_at ASC`
       return res.status(200).json({ok:true,rows})
+    }
+    if(action==='sync'){
+      requireOwner(account)
+      return res.status(200).json({ok:true,id:await syncAccount(sql,req.body?.row||{})})
     }
     throw new Error('未知的帳號動作')
   }catch(err){
