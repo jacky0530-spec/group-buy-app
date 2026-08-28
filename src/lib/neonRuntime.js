@@ -42,6 +42,10 @@ export async function neonAccountsRuntime(action,payload={}){
   return postAuthed('/api/neon-accounts-runtime',{action,...payload})
 }
 
+export async function neonStockOrderState(payload={}){
+  return postAuthed('/api/neon-stock-order-state',payload)
+}
+
 export async function bestEffortNeonSync(action,row){
   try{
     return await neonRuntime(action,{row})
@@ -149,6 +153,15 @@ export async function bestEffortNeonExtraReceive(payload){
     return await neonInventoryRuntime('receive_extra',payload)
   }catch(err){
     console.error('[Neon dual-write] extra purchase receive failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonStockOrderState(payload){
+  try{
+    return await neonStockOrderState(payload)
+  }catch(err){
+    console.error('[Neon dual-write] stock order state sync failed',err)
     return null
   }
 }
