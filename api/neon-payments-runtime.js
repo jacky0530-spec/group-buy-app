@@ -58,6 +58,34 @@ async function syncPayment(sql,row){
   return {id:legacyId,allocations}
 }
 
+async function listPayments(sql){
+  const payments=await sql`
+    SELECT id AS neon_id,legacy_id AS id,supplier,payment_date,amount,note,voided,voided_at,void_reason,created_at,updated_at
+    FROM supplier_payments
+    WHERE voided<>true
+    ORDER BY created_at DESC
+  `
+  const allocations=await sql`
+    SELECT a.payment_id,o.legacy_id AS order_id,COALESCE(oi.line_no,1)-1 AS item_index,
+      a.customer_name,a.product_name,a.supplier,a.amount
+    FROM supplier_payment_allocations a
+    LEFT JOIN orders o ON o.id=a.order_id
+    LEFT JOIN order_items oi ON oi.id=a.order_item_id
+    ORDER BY a.created_at ASC
+  `
+  const byPayment=new Map()
+  for(const row of allocations){
+    if(!byPayment.has(row.payment_id)) byPayment.set(row.payment_id,[])
+    byPayment.get(row.payment_id).push({
+      order_id:row.order_id||'',item_index:Number(row.item_index||0),customer_name:row.customer_name||'',
+      product_name:row.product_name||'',supplier:row.supplier||'',amount:Number(row.amount||0),
+    })
+  }
+  return payments.map(({neon_id,...row})=>({
+    ...row,amount:Number(row.amount||0),allocations:byPayment.get(neon_id)||[],
+  }))
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -65,8 +93,10 @@ export default async function handler(req,res){
     const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
     await requireStaff(sql,auth)
-    if(text(req.body?.action)!=='sync') throw new Error('未知的付款同步動作')
-    return res.status(200).json({ok:true,result:await syncPayment(sql,req.body?.row||{})})
+    const action=text(req.body?.action)
+    if(action==='sync') return res.status(200).json({ok:true,result:await syncPayment(sql,req.body?.row||{})})
+    if(action==='list') return res.status(200).json({ok:true,rows:await listPayments(sql)})
+    throw new Error('未知的付款同步動作')
   }catch(err){
     console.error('neon-payments-runtime',err)
     return res.status(400).json({ok:false,error:String(err?.message||err)})
