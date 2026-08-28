@@ -1,8 +1,9 @@
-import { doc, getDoc, Timestamp } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
 import { CustomersAPI, OrdersAPI, ProductsAPI, SupplierPaymentsAPI } from './db'
 import { InventoryAPI } from './inventory'
 import {
+  bestEffortNeonCustomersSync,
   bestEffortNeonExtraSync,
   bestEffortNeonHelperSync,
   bestEffortNeonInventorySync,
@@ -69,6 +70,22 @@ function wrapCrud(api,collectionName,action){
       await syncFirestoreDocument(collectionName,id,action)
       return result
     }
+  }
+}
+
+function wrapCustomerImport(){
+  const original=CustomersAPI.importRows
+  if(typeof original!=='function') return
+  CustomersAPI.importRows=async function(...args){
+    const result=await original.apply(this,args)
+    try{
+      const snap=await getDocs(collection(db,'customers'))
+      const rows=snap.docs.map(d=>({id:d.id,...clean(d.data())}))
+      await bestEffortNeonCustomersSync(rows)
+    }catch(err){
+      console.error('[Neon dual-write] customer import resync failed',err)
+    }
+    return result
   }
 }
 
@@ -195,30 +212,6 @@ function wrapInventory(){
   }
 }
 
-function sameIds(a,b){
-  if(a.length!==b.length) return false
-  const left=[...a].map(x=>String(x?.id||'')).sort()
-  const right=[...b].map(x=>String(x?.id||'')).sort()
-  return left.every((id,index)=>id===right[index])
-}
-
-function wrapShadowList(api,action,label){
-  const original=api.list
-  if(typeof original!=='function') return
-  api.list=async function(options={}){
-    const firestoreRows=await original.apply(this,[options])
-    void neonRuntime(action,{includeArchived:options?.includeArchived===true})
-      .then(result=>{
-        const neonRows=Array.isArray(result?.rows)?result.rows:[]
-        if(!sameIds(firestoreRows,neonRows)){
-          console.warn(`[Neon shadow-read mismatch] ${label}: Firestore=${firestoreRows.length}, Neon=${neonRows.length}`)
-        }
-      })
-      .catch(err=>console.error(`[Neon shadow-read] ${label} failed`,err))
-    return firestoreRows
-  }
-}
-
 function wrapNeonFirstList(api,action,label){
   const firestoreList=api.list
   if(typeof firestoreList!=='function') return
@@ -238,9 +231,10 @@ if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
   wrapCrud(CustomersAPI,'customers','sync_customer')
   wrapCrud(ProductsAPI,'products','sync_product')
+  wrapCustomerImport()
   wrapOrders()
   wrapSupplierPayments()
   wrapInventory()
-  wrapShadowList(CustomersAPI,'list_customers','customers')
+  wrapNeonFirstList(CustomersAPI,'list_customers','customers')
   wrapNeonFirstList(ProductsAPI,'list_products','products')
 }
