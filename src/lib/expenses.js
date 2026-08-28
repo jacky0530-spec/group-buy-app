@@ -1,6 +1,6 @@
 import { addDoc, collection, getDocs, getDoc, orderBy, query, Timestamp, updateDoc, doc } from 'firebase/firestore'
 import { db } from './firebase'
-import { bestEffortNeonSync } from './neonRuntime'
+import { bestEffortNeonSync, neonRuntime } from './neonRuntime'
 
 const now = () => Timestamp.now()
 
@@ -24,6 +24,12 @@ async function syncExpense(id) {
   }
 }
 
+async function listFirestore(includeArchived) {
+  const snap = await getDocs(query(collection(db,'expenses'), orderBy('month','desc')))
+  const rows = snap.docs.map(normalize)
+  return includeArchived ? rows : rows.filter(row => row.active !== false)
+}
+
 export const EXPENSE_TYPES = [
   { id:'shipping', label:'運費', sign:1 },
   { id:'other', label:'其他費用', sign:1 },
@@ -37,9 +43,14 @@ export function expenseSignedAmount(row) {
 
 export const ExpensesAPI = {
   async list({ includeArchived = false } = {}) {
-    const snap = await getDocs(query(collection(db,'expenses'), orderBy('month','desc')))
-    const rows = snap.docs.map(normalize)
-    return includeArchived ? rows : rows.filter(row => row.active !== false)
+    try {
+      const result = await neonRuntime('list_expenses',{ includeArchived })
+      if (Array.isArray(result?.rows)) return result.rows
+      throw new Error('Neon 回傳格式錯誤')
+    } catch (err) {
+      console.error('[Neon read fallback] expenses',err)
+      return listFirestore(includeArchived)
+    }
   },
   async create(data) {
     const payload = {
