@@ -8,6 +8,7 @@ export default function PendingProductReportFiltered() {
   const [filterReady,setFilterReady] = useState(false)
   const reportRef = useRef(null)
   const originalListRef = useRef(ProductsAPI.list)
+  const qtyTimersRef = useRef(new Map())
 
   // PendingProductReport 內部固定以 includeArchived:true 載入商品。
   // 先安裝過濾器，再掛載報表，避免父子 effect 執行順序造成第一次載入仍出現封存商品。
@@ -45,6 +46,48 @@ export default function PendingProductReportFiltered() {
     const observer = new MutationObserver(highlightNotes)
     observer.observe(root,{ childList:true,subtree:true,characterData:true })
     return () => observer.disconnect()
+  },[])
+
+  // 未出貨報表的「訂購量」原本只在離開欄位(onBlur)時儲存。
+  // 使用者停止輸入約 450ms 後，主動觸發同一個 focusout 儲存流程，
+  // 因此不用點到欄位外也會自動寫入 Neon；連續輸入時只送最後一次數值。
+  useEffect(() => {
+    const root = reportRef.current
+    if (!root) return undefined
+    const timers = qtyTimersRef.current
+
+    const bindQtyInputs = () => {
+      root.querySelectorAll('input[type="number"]').forEach(input => {
+        if (input.dataset.pendingQtyAutosave === '1') return
+        const row = input.parentElement
+        if (!row || !String(row.textContent || '').includes('訂購量')) return
+        input.dataset.pendingQtyAutosave = '1'
+        const onInput = () => {
+          const previous = timers.get(input)
+          if (previous) window.clearTimeout(previous)
+          const timer = window.setTimeout(() => {
+            timers.delete(input)
+            if (!input.isConnected) return
+            input.dispatchEvent(new FocusEvent('focusout',{ bubbles:true,relatedTarget:null }))
+          },450)
+          timers.set(input,timer)
+        }
+        input.addEventListener('input',onInput)
+        input.__pendingQtyAutosaveCleanup = () => input.removeEventListener('input',onInput)
+      })
+    }
+
+    bindQtyInputs()
+    const observer = new MutationObserver(bindQtyInputs)
+    observer.observe(root,{ childList:true,subtree:true })
+    return () => {
+      observer.disconnect()
+      timers.forEach(timer => window.clearTimeout(timer))
+      timers.clear()
+      root.querySelectorAll('input[data-pending-qty-autosave="1"]').forEach(input => {
+        input.__pendingQtyAutosaveCleanup?.()
+      })
+    }
   },[])
 
   return <div ref={reportRef}>
