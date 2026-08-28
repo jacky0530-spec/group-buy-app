@@ -46,9 +46,9 @@ async function consumeStock(sql,auth,account,payload){
   const productId=await productUuid(sql,text(payload?.product_id));if(!productId) throw new Error('Neon 找不到現貨商品')
   const spec=cleanSpec(payload)
   const rows=await sql`WITH target AS (SELECT id FROM stock_inventory WHERE product_id=${productId} AND spec_package=${spec.package} AND spec_flavor=${spec.flavor} AND spec_color=${spec.color} AND spec_size=${spec.size}),
-    already AS (SELECT 1 AS done FROM inventory_transactions it,target t WHERE it.inventory_id=t.id AND it.order_id=${order.id} AND it.transaction_type='sale' LIMIT 1),
+    already AS (SELECT 1 AS done FROM inventory_transactions it,target t WHERE it.inventory_id=t.id AND it.order_id=${order.id} AND it.transaction_type IN ('sale','stock_sale') LIMIT 1),
     updated AS (UPDATE stock_inventory s SET available_qty=s.available_qty-${qty},updated_at=now() FROM target t WHERE s.id=t.id AND s.available_qty>=${qty} AND NOT EXISTS (SELECT 1 FROM already) RETURNING s.id,s.available_qty),
-    movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid) SELECT u.id,${-qty},u.available_qty,'sale',${order.id},${text(payload?.note)||'現貨訂單扣庫存'},${auth.uid} FROM updated u RETURNING id)
+    movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid) SELECT u.id,${-qty},u.available_qty,'stock_sale',${order.id},${text(payload?.note)||'現貨訂單扣庫存'},${auth.uid} FROM updated u RETURNING id)
     SELECT 'updated'::text AS state,available_qty FROM updated UNION ALL SELECT 'already'::text AS state,s.available_qty FROM stock_inventory s,target t WHERE s.id=t.id AND EXISTS (SELECT 1 FROM already) LIMIT 1`
   if(!rows.length) throw new Error('Neon 現貨不足或庫存不存在')
   return {state:rows[0].state,available_qty:Number(rows[0].available_qty||0)}
@@ -59,7 +59,7 @@ async function setStock(sql,auth,payload){
   const spec=cleanSpec(payload),note=text(payload?.note||payload?.adjustment_note)||'手動調整庫存'
   const rows=await sql`WITH previous AS (SELECT id,available_qty FROM stock_inventory WHERE product_id=${productId} AND spec_package=${spec.package} AND spec_flavor=${spec.flavor} AND spec_color=${spec.color} AND spec_size=${spec.size} FOR UPDATE),
     changed AS (UPDATE stock_inventory s SET available_qty=${targetQty},adjustment_note=${note},updated_at=now() FROM previous p WHERE s.id=p.id RETURNING s.id,p.available_qty AS before_qty,s.available_qty AS after_qty),
-    movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,note,created_by_uid) SELECT id,after_qty-before_qty,after_qty,'adjustment',${note},${auth.uid} FROM changed WHERE after_qty<>before_qty RETURNING id)
+    movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,note,created_by_uid) SELECT id,after_qty-before_qty,after_qty,'manual_adjust',${note},${auth.uid} FROM changed WHERE after_qty<>before_qty RETURNING id)
     SELECT before_qty,after_qty FROM changed`
   if(!rows.length) throw new Error('Neon 找不到要調整的庫存')
   return {before:Number(rows[0].before_qty||0),after:Number(rows[0].after_qty||0)}
@@ -75,7 +75,7 @@ async function receiveExtra(sql,auth,payload){
       SELECT e.*,GREATEST(e.ordered_qty-e.received_qty,0)::integer AS incoming
       FROM extra e
       WHERE e.status<>'cancelled' AND e.ordered_qty>e.received_qty
-        AND NOT EXISTS (SELECT 1 FROM inventory_transactions it WHERE it.extra_purchase_id=e.id AND it.transaction_type='receive')
+        AND NOT EXISTS (SELECT 1 FROM inventory_transactions it WHERE it.extra_purchase_id=e.id AND it.transaction_type IN ('receive','extra_receive'))
     ),
     upsert_inventory AS (
       INSERT INTO stock_inventory (product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,available_qty,created_at,updated_at)
@@ -92,7 +92,7 @@ async function receiveExtra(sql,auth,payload){
     ),
     movement AS (
       INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,extra_purchase_id,note,created_by_uid)
-      SELECT l.inventory_id,l.incoming,l.available_qty,'receive',l.id,${text(payload?.note)||'額外叫貨入庫'},${auth.uid} FROM linked l
+      SELECT l.inventory_id,l.incoming,l.available_qty,'extra_receive',l.id,${text(payload?.note)||'額外叫貨入庫'},${auth.uid} FROM linked l
       RETURNING id
     )
     SELECT 'received'::text AS state,available_qty,incoming FROM linked
@@ -111,17 +111,19 @@ async function createHelperStockOrder(sql,auth,payload){
   if(!productLegacy) throw new Error('請選擇現貨商品')
   if(qty<1) throw new Error('數量至少為 1')
   const spec=cleanSpec(payload),orderLegacy=text(payload?.order_id)||randomId(),entryLegacy=text(payload?.helper_entry_id)||randomId(),note=text(payload?.note)
-  const rows=await sql`WITH customer AS (SELECT id,legacy_id,name,phone,phone_last2 FROM customers WHERE legacy_id=${customerLegacy} AND active<>false LIMIT 1),
-    product AS (SELECT id,legacy_id,name,category,supplier,price,cost,price_options,supplier_payment_term FROM products WHERE legacy_id=${productLegacy} AND active<>false LIMIT 1),
-    inventory AS (SELECT s.id,s.available_qty,s.supplier,p.id AS product_id,p.legacy_id AS product_legacy,p.name AS product_name,p.category,p.price,p.cost,p.price_options,p.supplier_payment_term FROM stock_inventory s JOIN product p ON p.id=s.product_id WHERE s.spec_package=${spec.package} AND s.spec_flavor=${spec.flavor} AND s.spec_color=${spec.color} AND s.spec_size=${spec.size} FOR UPDATE),
-    priced AS (SELECT i.*,COALESCE((SELECT (x->>'price')::numeric FROM jsonb_array_elements(COALESCE(i.price_options,'[]'::jsonb)) x WHERE x->>'label'=${spec.package} LIMIT 1),i.price,0) AS sale_price,COALESCE((SELECT NULLIF(x->>'cost','')::numeric FROM jsonb_array_elements(COALESCE(i.price_options,'[]'::jsonb)) x WHERE x->>'label'=${spec.package} LIMIT 1),i.cost,0) AS cost_price FROM inventory i WHERE i.available_qty>=${qty}),
-    created_order AS (INSERT INTO orders (legacy_id,customer_id,customer_name,customer_phone,customer_phone_last2,total_amount,status,payment_status,payable_status,refund_amount,is_virtual,source,fulfillment_type,note,created_by_uid,created_by_name,order_date,status_history,refunds,archived,created_at,updated_at) SELECT ${orderLegacy},c.id,c.name,c.phone,c.phone_last2,p.sale_price*${qty},'pending','unpaid','paid',0,false,'helper','stock','現貨開單',${auth.uid},${text(payload?.display_name)},now(),${JSON.stringify([{status:'pending',at:new Date().toISOString(),note:'小幫手現貨開單'}])}::jsonb,'[]'::jsonb,false,now(),now() FROM customer c,priced p ON CONFLICT (legacy_id) DO NOTHING RETURNING id),
-    created_item AS (INSERT INTO order_items (order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,subtotal,cost_subtotal,note,spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,supplier_payment_term,supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at) SELECT o.id,1,p.product_id,p.product_name||'【現貨】',p.category,p.supplier,p.sale_price,p.cost_price,${qty},p.sale_price*${qty},p.cost_price*${qty},${note},${spec.package},${spec.flavor},${spec.color},${spec.size},'stock',${qty},COALESCE(p.supplier_payment_term,'manual'),p.cost_price*${qty},'paid','["stock_inventory"]'::jsonb,now(),now() FROM created_order o,priced p RETURNING order_id),
-    created_entry AS (INSERT INTO helper_entries (legacy_id,created_by_uid,created_by_name,customer_id,customer_name,customer_phone_last2,items,total_amount,is_virtual,note,status,converted_order_id,converted_at,direct_order,created_at,updated_at) SELECT ${entryLegacy},${auth.uid},${text(payload?.display_name)},c.id,c.name,c.phone_last2,jsonb_build_array(jsonb_build_object('product_id','stock:'||p.product_legacy,'original_product_id',p.product_legacy,'product_name',p.product_name||'【現貨】','sale_price',p.sale_price,'qty',${qty}::integer,'spec',jsonb_build_object('package',${spec.package}::text,'flavor',${spec.flavor}::text,'color',${spec.color}::text,'size',${spec.size}::text),'note',${note}::text,'fulfillment_type','stock','stock_inventory_id',${legacyInventoryId(productLegacy,spec)}::text)),p.sale_price*${qty},false,'現貨開單','converted',o.id,now(),true,now(),now() FROM created_order o,customer c,priced p RETURNING id,converted_order_id),
-    linked_order AS (UPDATE orders o SET helper_entry_id=e.id,updated_at=now() FROM created_entry e WHERE o.id=e.converted_order_id RETURNING o.id),
-    deducted AS (UPDATE stock_inventory s SET available_qty=s.available_qty-${qty},updated_at=now() FROM priced p,linked_order l WHERE s.id=p.id RETURNING s.id,s.available_qty,l.id AS order_id),
-    movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid) SELECT d.id,${-qty},d.available_qty,'sale',d.order_id,'小幫手現貨開單',${auth.uid} FROM deducted d RETURNING id)
-    SELECT ${orderLegacy}::text AS order_id,${entryLegacy}::text AS helper_entry_id,d.available_qty,p.sale_price*${qty} AS total_amount FROM deducted d,priced p`
+  const [rows]=await sql.transaction([
+    sql`WITH customer AS (SELECT id,legacy_id,name,phone,phone_last2 FROM customers WHERE legacy_id=${customerLegacy} AND active<>false LIMIT 1),
+      product AS (SELECT id,legacy_id,name,category,supplier,price,cost,price_options,supplier_payment_term FROM products WHERE legacy_id=${productLegacy} AND active<>false LIMIT 1),
+      inventory AS (SELECT s.id,s.available_qty,s.supplier,p.id AS product_id,p.legacy_id AS product_legacy,p.name AS product_name,p.category,p.price,p.cost,p.price_options,p.supplier_payment_term FROM stock_inventory s JOIN product p ON p.id=s.product_id WHERE s.spec_package=${spec.package} AND s.spec_flavor=${spec.flavor} AND s.spec_color=${spec.color} AND s.spec_size=${spec.size} FOR UPDATE),
+      priced AS (SELECT i.*,COALESCE((SELECT (x->>'price')::numeric FROM jsonb_array_elements(COALESCE(i.price_options,'[]'::jsonb)) x WHERE x->>'label'=${spec.package} LIMIT 1),i.price,0) AS sale_price,COALESCE((SELECT NULLIF(x->>'cost','')::numeric FROM jsonb_array_elements(COALESCE(i.price_options,'[]'::jsonb)) x WHERE x->>'label'=${spec.package} LIMIT 1),i.cost,0) AS cost_price FROM inventory i WHERE i.available_qty>=${qty}),
+      created_order AS (INSERT INTO orders (legacy_id,customer_id,customer_name,customer_phone,customer_phone_last2,total_amount,status,payment_status,payable_status,refund_amount,is_virtual,source,fulfillment_type,note,created_by_uid,created_by_name,order_date,status_history,refunds,archived,created_at,updated_at) SELECT ${orderLegacy},c.id,c.name,c.phone,c.phone_last2,p.sale_price*${qty},'pending','unpaid','paid',0,false,'helper','stock','現貨開單',${auth.uid},${text(payload?.display_name)},now(),${JSON.stringify([{status:'pending',at:new Date().toISOString(),note:'小幫手現貨開單'}])}::jsonb,'[]'::jsonb,false,now(),now() FROM customer c,priced p ON CONFLICT (legacy_id) DO NOTHING RETURNING id),
+      created_item AS (INSERT INTO order_items (order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,subtotal,cost_subtotal,note,spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,supplier_payment_term,supplier_paid_amount,supplier_payment_status,supplier_payment_refs,original_qty,created_at,updated_at) SELECT o.id,1,p.product_id,p.product_name||'【現貨】',p.category,p.supplier,p.sale_price,p.cost_price,${qty},p.sale_price*${qty},p.cost_price*${qty},${note},${spec.package},${spec.flavor},${spec.color},${spec.size},'stock',${qty},COALESCE(p.supplier_payment_term,'manual'),p.cost_price*${qty},'paid','["stock_inventory"]'::jsonb,${qty},now(),now() FROM created_order o,priced p RETURNING order_id),
+      created_entry AS (INSERT INTO helper_entries (legacy_id,created_by_uid,created_by_name,customer_id,customer_name,customer_phone_last2,items,total_amount,is_virtual,note,status,converted_order_id,converted_at,direct_order,created_at,updated_at) SELECT ${entryLegacy},${auth.uid},${text(payload?.display_name)},c.id,c.name,c.phone_last2,jsonb_build_array(jsonb_build_object('product_id','stock:'||p.product_legacy,'original_product_id',p.product_legacy,'product_name',p.product_name||'【現貨】','sale_price',p.sale_price,'qty',${qty}::integer,'original_qty',${qty}::integer,'spec',jsonb_build_object('package',${spec.package}::text,'flavor',${spec.flavor}::text,'color',${spec.color}::text,'size',${spec.size}::text),'note',${note}::text,'fulfillment_type','stock','stock_inventory_id',${legacyInventoryId(productLegacy,spec)}::text)),p.sale_price*${qty},false,'現貨開單','converted',o.id,now(),true,now(),now() FROM created_order o,customer c,priced p RETURNING id,converted_order_id),
+      deducted AS (UPDATE stock_inventory s SET available_qty=s.available_qty-${qty},updated_at=now() FROM priced p,created_entry e WHERE s.id=p.id RETURNING s.id,s.available_qty,e.converted_order_id AS order_id),
+      movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,order_id,note,created_by_uid) SELECT d.id,${-qty},d.available_qty,'stock_sale',d.order_id,'小幫手現貨開單',${auth.uid} FROM deducted d RETURNING id)
+      SELECT ${orderLegacy}::text AS order_id,${entryLegacy}::text AS helper_entry_id,d.available_qty,p.sale_price*${qty} AS total_amount FROM deducted d,priced p`,
+    sql`UPDATE orders o SET helper_entry_id=e.id,updated_at=now() FROM helper_entries e WHERE o.legacy_id=${orderLegacy} AND e.legacy_id=${entryLegacy} AND e.converted_order_id=o.id AND (o.helper_entry_id IS NULL OR o.helper_entry_id=e.id)`
+  ])
   if(!rows.length){
     const existing=await sql`SELECT legacy_id FROM orders WHERE legacy_id=${orderLegacy} AND created_by_uid=${auth.uid} AND source='helper' LIMIT 1`
     if(existing.length) return {order_id:orderLegacy,helper_entry_id:entryLegacy,state:'already'}
