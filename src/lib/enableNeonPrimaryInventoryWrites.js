@@ -12,6 +12,36 @@ function randomLegacyId(){
   return Array.from(bytes,b=>chars[b%chars.length]).join('')
 }
 
+function validateStockSpec(product,spec){
+  const clean=normalizeStockSpec(spec)
+  const options=Array.isArray(product?.price_options)?product.price_options:[]
+  if(options.length){
+    if(!clean.package) throw new Error('請選擇組合／包裝')
+    if(!options.some(o=>String(o?.label||'').trim()===clean.package)) throw new Error('組合／包裝規格不存在，請重新選擇')
+  }
+  const mode=String(product?.spec_mode||'none')
+  if(['color_size','color_only','color_free'].includes(mode)){
+    if(!clean.color) throw new Error('請選擇顏色')
+    if(Array.isArray(product?.spec_colors)&&product.spec_colors.length&&!product.spec_colors.includes(clean.color)) throw new Error('顏色規格不存在，請重新選擇')
+  }
+  if(['color_size','size_only'].includes(mode)){
+    if(!clean.size) throw new Error('請選擇尺寸')
+    if(Array.isArray(product?.spec_sizes)&&product.spec_sizes.length&&!product.spec_sizes.includes(clean.size)) throw new Error('尺寸規格不存在，請重新選擇')
+  }
+  if(Array.isArray(product?.spec_flavors)&&product.spec_flavors.length){
+    if(!clean.flavor) throw new Error('請選擇口味／品種')
+    if(!product.spec_flavors.includes(clean.flavor)) throw new Error('口味／品種規格不存在，請重新選擇')
+  }
+  return clean
+}
+
+function stockUnitCost(product,spec){
+  const options=Array.isArray(product?.price_options)?product.price_options:[]
+  const option=options.find(o=>String(o?.label||'').trim()===String(spec?.package||'').trim())
+  if(option&&option.cost!==''&&option.cost!=null&&Number.isFinite(Number(option.cost))) return Number(option.cost)
+  return Number(product?.cost||0)
+}
+
 async function neonHelperStockOrder(payload){
   try{return await neonInventoryRuntime('create_helper_stock_order',payload)}
   catch(firstErr){
@@ -42,12 +72,26 @@ if(!globalThis[INSTALLED]){
   }
 
   InventoryAPI.createExtraPurchase=async function({product,spec={},qty=1,note=''}){
-    const amount=Math.max(1,Number(qty||1))
+    const amount=Number(qty)
     if(!product?.id) throw new Error('請選擇商品')
-    if(!Number.isInteger(amount)) throw new Error('額外叫貨數量必須是整數')
-    const cleanSpec=normalizeStockSpec(spec)
+    if(!Number.isInteger(amount)||amount<1) throw new Error('額外叫貨數量必須是 1 以上整數')
+    const cleanSpec=validateStockSpec(product,spec)
     const id=randomLegacyId(),createdAt=nowISO()
-    const row={id,product_id:product.id,product_name:product.name||'',supplier:product.supplier||'',spec:cleanSpec,spec_label:stockSpecLabel(cleanSpec),ordered_qty:amount,received_qty:0,unit_cost:Number(product.cost||0),note:String(note||'').trim(),status:'ordered',created_at:createdAt,updated_at:createdAt}
+    const row={
+      id,
+      product_id:product.id,
+      product_name:product.name||'',
+      supplier:product.supplier||'',
+      spec:cleanSpec,
+      spec_label:stockSpecLabel(cleanSpec),
+      ordered_qty:amount,
+      received_qty:0,
+      unit_cost:stockUnitCost(product,cleanSpec),
+      note:String(note||'').trim(),
+      status:'ordered',
+      created_at:createdAt,
+      updated_at:createdAt,
+    }
     await neonInventoryRuntime('sync_extra',{row})
     return id
   }
