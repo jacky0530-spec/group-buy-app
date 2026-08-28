@@ -1,9 +1,9 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Database } from 'lucide-react'
+import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { UserMenu } from './AuthGuard'
 
-const APP_VERSION = 'v2026.08.28.1'
+const APP_VERSION = 'v2026.08.28.2'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
@@ -18,7 +18,6 @@ const NAV = [
   { to: '/supplier-payments', icon: CreditCard, label: '供應商付款' },
   { to: '/helper-entries', icon: ClipboardCheck, label: '小幫手登記' },
   { to: '/accounts', icon: UserCog, label: '帳號管理' },
-  { to: '/data-migration', icon: Database, label: '資料庫搬移' },
 ]
 
 export default function Layout() {
