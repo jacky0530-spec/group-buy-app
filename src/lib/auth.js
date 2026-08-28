@@ -6,7 +6,7 @@ import {
 import { auth, db } from './firebase'
 import { doc, getDoc } from 'firebase/firestore'
 
-export async function getAccountAccess(uid) {
+async function getFirestoreAccountAccess(uid) {
   try {
     const snap = await getDoc(doc(db, 'accounts', uid))
     if (!snap.exists()) return { allowed: false, role: null, account: null }
@@ -18,6 +18,37 @@ export async function getAccountAccess(uid) {
     }
   } catch {
     return { allowed: false, role: null, account: null }
+  }
+}
+
+async function getNeonAccountAccess(uid) {
+  const user = auth.currentUser
+  if (!user || user.uid !== uid) throw new Error('登入狀態尚未就緒')
+  const token = await user.getIdToken()
+  const response = await fetch('/api/neon-auth-profile', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+  })
+  const data = await response.json().catch(() => ({}))
+  if (response.ok && data.ok) {
+    return {
+      allowed:data.allowed === true,
+      role:data.role || null,
+      account:data.account || null,
+    }
+  }
+  if (response.status >= 400 && response.status < 500) {
+    return { allowed:false, role:null, account:null }
+  }
+  throw new Error(data.error || `Neon access check failed: ${response.status}`)
+}
+
+export async function getAccountAccess(uid) {
+  try {
+    return await getNeonAccountAccess(uid)
+  } catch (err) {
+    console.error('[Neon auth fallback] using Firestore account access', err)
+    return getFirestoreAccountAccess(uid)
   }
 }
 
