@@ -59,6 +59,53 @@ async function syncProduct(sql,row){
   return legacyId
 }
 
+async function listOrders(sql){
+  const orders=await sql`
+    SELECT
+      o.id AS neon_id,o.legacy_id AS id,c.legacy_id AS customer_id,
+      o.customer_name,o.customer_phone,o.customer_phone_last2,o.total_amount,o.status,o.payment_status,
+      o.payable_status,o.refund_amount,o.is_virtual,o.source,o.fulfillment_type,o.note,o.created_by_uid,
+      o.created_by_name,o.order_date,o.shipped_at,o.cancelled_at,o.cancellation_reason,o.archived,o.archived_at,
+      o.status_history,o.refunds,o.created_at,o.updated_at,h.legacy_id AS helper_entry_id
+    FROM orders o
+    LEFT JOIN customers c ON c.id=o.customer_id
+    LEFT JOIN helper_entries h ON h.id=o.helper_entry_id
+    ORDER BY o.order_date DESC
+  `
+  const items=await sql`
+    SELECT
+      oi.order_id,p.legacy_id AS product_id,oi.product_name,oi.category,oi.supplier,oi.sale_price,oi.cost_price,
+      oi.qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
+      oi.fulfillment_type,oi.arrived_qty,oi.arrived_at,oi.supplier_payment_term,oi.supplier_paid_amount,
+      oi.supplier_payment_status,oi.supplier_payment_refs,oi.created_at,oi.updated_at,oi.line_no
+    FROM order_items oi
+    LEFT JOIN products p ON p.id=oi.product_id
+    ORDER BY oi.order_id,oi.line_no
+  `
+  const byOrder=new Map()
+  for(const item of items){
+    const row={
+      id:item.product_id||'',product_id:item.product_id||'',name:item.product_name,product_name:item.product_name,
+      category:item.category,supplier:item.supplier,price:Number(item.sale_price||0),sale_price:Number(item.sale_price||0),
+      cost_price:Number(item.cost_price||0),qty:Number(item.qty||0),subtotal:Number(item.subtotal||0),
+      cost_subtotal:Number(item.cost_subtotal||0),note:item.note||'',
+      spec:{package:item.spec_package||'',flavor:item.spec_flavor||'',color:item.spec_color||'',size:item.spec_size||''},
+      fulfillment_type:item.fulfillment_type,arrived_qty:Number(item.arrived_qty||0),arrived_at:item.arrived_at,
+      supplier_payment_term:item.supplier_payment_term,supplier_paid_amount:Number(item.supplier_paid_amount||0),
+      supplier_payment_status:item.supplier_payment_status,supplier_payment_refs:item.supplier_payment_refs||[],
+      created_at:item.created_at,updated_at:item.updated_at,
+    }
+    if(!byOrder.has(item.order_id)) byOrder.set(item.order_id,[])
+    byOrder.get(item.order_id).push(row)
+  }
+  return orders.map(({neon_id,...order})=>({
+    ...order,
+    total_amount:Number(order.total_amount||0),
+    refund_amount:Number(order.refund_amount||0),
+    items:byOrder.get(neon_id)||[],
+  }))
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return json(res,405,{ok:false,error:'Method Not Allowed'})
   try{
@@ -83,6 +130,20 @@ export default async function handler(req,res){
       const rows=includeArchived
         ? await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products ORDER BY created_at DESC`
         : await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products WHERE active<>false ORDER BY created_at DESC`
+      return json(res,200,{ok:true,rows})
+    }
+
+    if(action==='list_orders'){
+      requireStaff(account)
+      return json(res,200,{ok:true,rows:await listOrders(sql)})
+    }
+
+    if(action==='list_expenses'){
+      requireStaff(account)
+      const includeArchived=req.body?.includeArchived===true
+      const rows=includeArchived
+        ? await sql`SELECT legacy_id AS id,month,supplier,type,amount,note,active,archived_at,created_at,updated_at FROM expenses ORDER BY month DESC,created_at DESC`
+        : await sql`SELECT legacy_id AS id,month,supplier,type,amount,note,active,archived_at,created_at,updated_at FROM expenses WHERE active<>false ORDER BY month DESC,created_at DESC`
       return json(res,200,{ok:true,rows})
     }
 
