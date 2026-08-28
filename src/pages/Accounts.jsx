@@ -3,6 +3,7 @@ import { useToast, Modal } from '../components/UI'
 import { useAuth } from '../components/AuthGuard'
 import { MaintenanceAPI } from '../lib/db'
 import { db } from '../lib/firebase'
+import { neonAccountsRuntime } from '../lib/neonRuntime'
 import { collection, doc, setDoc, getDocs, getDoc, query, orderBy, updateDoc } from 'firebase/firestore'
 import { Plus, Shield, User, Mail, Eye, EyeOff, RefreshCw, Power } from 'lucide-react'
 
@@ -28,6 +29,10 @@ async function createAuthUser(email,password,apiKey) {
 async function getAccounts() {
   const snap = await getDocs(query(collection(db,ACCOUNTS_COL),orderBy('created_at','asc')))
   return snap.docs.map(d => ({ id:d.id,...d.data() }))
+}
+
+async function syncNeonAccount(row) {
+  await neonAccountsRuntime('sync',{ row })
 }
 
 export default function Accounts() {
@@ -64,8 +69,14 @@ export default function Accounts() {
       const apiKey = import.meta.env.VITE_FIREBASE_API_KEY
       if (!apiKey) throw new Error('找不到 Firebase API Key')
       const uid = await createAuthUser(form.email.trim(),form.password,apiKey)
-      await setDoc(doc(db,ACCOUNTS_COL,uid), { email:form.email.trim().toLowerCase(), display_name:form.display_name.trim(), role:form.role, disabled:false, created_at:new Date().toISOString() })
-      toast(`帳號「${form.display_name}」建立成功 ✓`)
+      const payload = { email:form.email.trim().toLowerCase(), display_name:form.display_name.trim(), role:form.role, disabled:false, created_at:new Date().toISOString() }
+      await setDoc(doc(db,ACCOUNTS_COL,uid), payload)
+      try {
+        await syncNeonAccount({ id:uid,...payload })
+      } catch (syncErr) {
+        throw new Error(`Firebase 帳號已建立，但 Neon 權限同步失敗：${syncErr.message}`)
+      }
+      toast(`帳號「${form.display_name}」建立成功，Firebase／Neon 權限已同步 ✓`)
       setShowModal(false); setForm({ display_name:'', email:'', password:'', role:'staff' }); await load()
     } catch (err) { toast(err.message,'error') }
     finally { setSaving(false) }
@@ -74,9 +85,16 @@ export default function Accounts() {
   async function toggleDisabled(account) {
     if (!isOwner) return
     if (account.id === user?.uid) { toast('不能停用自己的帳號','error'); return }
+    const nextDisabled = account.disabled !== true
     try {
-      await updateDoc(doc(db,ACCOUNTS_COL,account.id), { disabled:account.disabled !== true })
-      if (account.disabled) toast('帳號已重新啟用'); else toast('帳號已停用；對方下次驗證會被拒絕','warning')
+      await updateDoc(doc(db,ACCOUNTS_COL,account.id), { disabled:nextDisabled })
+      try {
+        await syncNeonAccount({ ...account, disabled:nextDisabled })
+      } catch (syncErr) {
+        throw new Error(`Firebase 狀態已變更，但 Neon 權限同步失敗：${syncErr.message}`)
+      }
+      if (nextDisabled) toast('帳號已停用，Firebase／Neon 權限已同步','warning')
+      else toast('帳號已重新啟用，Firebase／Neon 權限已同步')
       await load()
     } catch (err) { toast('更新失敗：'+err.message,'error') }
   }
@@ -93,8 +111,16 @@ export default function Accounts() {
 
   async function changeRole(account,role) {
     if (!isOwner || account.id === user?.uid) return
-    try { await updateDoc(doc(db,ACCOUNTS_COL,account.id),{ role }); toast(`已將「${account.display_name}」設為${ROLES[role].label}`); await load() }
-    catch (err) { toast('角色更新失敗：'+err.message,'error') }
+    try {
+      await updateDoc(doc(db,ACCOUNTS_COL,account.id),{ role })
+      try {
+        await syncNeonAccount({ ...account, role })
+      } catch (syncErr) {
+        throw new Error(`Firebase 角色已變更，但 Neon 權限同步失敗：${syncErr.message}`)
+      }
+      toast(`已將「${account.display_name}」設為${ROLES[role].label}，Firebase／Neon 已同步`)
+      await load()
+    } catch (err) { toast('角色更新失敗：'+err.message,'error') }
   }
 
   return <div className="animate-fade">
@@ -103,8 +129,8 @@ export default function Accounts() {
       <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}><button className="btn btn-ghost btn-sm" onClick={load}><RefreshCw size={13}/>重新整理</button>{isOwner && <button className="btn btn-ghost btn-sm" disabled={migrating} onClick={backfillSnapshots}>{migrating ? '升級歷史資料中...' : '升級舊訂單快照'}</button>}{isOwner && <button className="btn btn-primary" onClick={() => setShowModal(true)}><Plus size={15}/>新增帳號</button>}</div>
     </div>
 
-    <div style={{ background:'var(--amber-light)',border:'1px solid #fde68a',borderRadius:10,padding:'12px 14px',marginBottom:16,fontSize:13,color:'#92400e',display:'flex',gap:9 }}><Shield size={16} style={{ flexShrink:0 }}/><div>權限真正由 <strong>Firestore Security Rules</strong> 控制；前端只負責顯示。停用帳號不刪除 Firebase Auth 使用者，但會讓該 UID 無法通過白名單與 Firestore 權限驗證，保留稽核歷史。</div></div>
-    {!roleLoaded && !loading && <div style={{ background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:16 }}>目前登入 UID 尚未建立 accounts 文件。首次部署請依 README 的「建立第一位 Owner」步驟在 Firebase Console 建立。</div>}
+    <div style={{ background:'var(--amber-light)',border:'1px solid #fde68a',borderRadius:10,padding:'12px 14px',marginBottom:16,fontSize:13,color:'#92400e',display:'flex',gap:9 }}><Shield size={16} style={{ flexShrink:0 }}/><div>登入仍由 <strong>Firebase Authentication</strong> 負責；業務 API 權限由 <strong>Neon accounts</strong> 驗證。新增帳號、停用/啟用與角色調整會同步更新兩邊。密碼不會寫入 Neon。</div></div>
+    {!roleLoaded && !loading && <div style={{ background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:16 }}>目前登入 UID 尚未建立 accounts 文件。請先確認 Firebase accounts 白名單資料。</div>}
 
     <div className="card"><div className="table-container"><table><thead><tr><th>姓名</th><th>Email</th><th>角色</th><th>狀態</th><th>建立時間</th>{isOwner && <th style={{ textAlign:'right' }}>操作</th>}</tr></thead><tbody>
       {loading && <tr><td colSpan={6} style={{ textAlign:'center',padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
