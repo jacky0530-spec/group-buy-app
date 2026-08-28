@@ -9,6 +9,7 @@ import './report-tabs-highlight.css'
 import './lib/enableNeonDualWrite.js'
 import './lib/enableNeonHelperReads.js'
 import './lib/enableNeonOrderRead.js'
+import './lib/enableNeonPaymentRead.js'
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
