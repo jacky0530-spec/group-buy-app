@@ -10,13 +10,22 @@ const fulfillment=v=>v==='stock'?'stock':'preorder'
 const orderStatus=v=>['pending','shipped','cancelled'].includes(v)?v:'pending'
 const cleanSpec=row=>{const s=row?.spec||{};return{package:text(s.package??row?.spec_package),flavor:text(s.flavor??row?.spec_flavor),color:text(s.color??row?.spec_color),size:text(s.size??row?.spec_size)}}
 
-async function requireStaff(sql,auth){
+async function requireAccount(sql,auth){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
   const account=rows[0]
   if(!account) throw new Error('Neon 找不到登入帳號')
   if(account.disabled) throw new Error('帳號已停用')
-  if(!['owner','staff'].includes(account.role)) throw new Error('權限不足')
+  if(!['owner','staff','helper'].includes(account.role)) throw new Error('權限不足')
   return account
+}
+
+function requireStaff(account){
+  if(!['owner','staff'].includes(account.role)) throw new Error('權限不足')
+}
+
+function requireOwnHelperOrder(account,auth,row){
+  if(account.role!=='helper') return
+  if(text(row?.source)!=='helper' || text(row?.created_by_uid)!==auth.uid) throw new Error('只能同步自己建立的小幫手訂單')
 }
 
 async function customerUuid(sql,legacyId){
@@ -119,13 +128,16 @@ export default async function handler(req,res){
     if(!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing')
     const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
-    await requireStaff(sql,auth)
+    const account=await requireAccount(sql,auth)
     const action=text(req.body?.action)
     if(action==='sync'){
-      const result=await syncOrder(sql,req.body?.row||{})
+      const row=req.body?.row||{}
+      requireOwnHelperOrder(account,auth,row)
+      const result=await syncOrder(sql,row)
       return res.status(200).json({ok:true,result})
     }
     if(action==='delete'){
+      requireStaff(account)
       const ids=Array.isArray(req.body?.ids)?req.body.ids:[]
       if(ids.length>400) throw new Error('單次最多刪除 400 筆')
       return res.status(200).json({ok:true,deleted:await deleteOrders(sql,ids)})
