@@ -155,13 +155,10 @@ async function applyRefund(sql,legacyId,amount,note){
   const entry={amount:addAmount,note:text(note),at:new Date().toISOString()}
   const rows=await sql`
     UPDATE orders SET
-      refund_amount=${nextRefund},
-      payment_status=${paymentStatus},
-      refunded_at=now(),
-      refunds=COALESCE(refunds,'[]'::jsonb) || ${JSON.stringify([entry])}::jsonb,
-      updated_at=now()
+      refund_amount=${nextRefund},payment_status=${paymentStatus},
+      refunds=COALESCE(refunds,'[]'::jsonb) || ${JSON.stringify([entry])}::jsonb,updated_at=now()
     WHERE legacy_id=${text(legacyId)}
-    RETURNING legacy_id AS id,refund_amount,payment_status,refunded_at,refunds,updated_at
+    RETURNING legacy_id AS id,refund_amount,payment_status,refunds,updated_at
   `
   return rows[0]
 }
@@ -169,11 +166,58 @@ async function applyRefund(sql,legacyId,amount,note){
 async function clearRefunds(sql,legacyId){
   await existingOrder(sql,legacyId)
   const rows=await sql`
-    UPDATE orders SET refund_amount=0,refunds='[]'::jsonb,refunded_at=NULL,payment_status='paid',updated_at=now()
+    UPDATE orders SET refund_amount=0,refunds='[]'::jsonb,payment_status='paid',updated_at=now()
     WHERE legacy_id=${text(legacyId)}
-    RETURNING legacy_id AS id,refund_amount,payment_status,refunded_at,refunds,updated_at
+    RETURNING legacy_id AS id,refund_amount,payment_status,refunds,updated_at
   `
   return rows[0]
+}
+
+async function updateArrival(sql,legacyId,items){
+  const order=await existingOrder(sql,legacyId)
+  const current=await sql`SELECT line_no,qty FROM order_items WHERE order_id=${order.id} ORDER BY line_no`
+  const incoming=Array.isArray(items)?items:[]
+  if(current.length!==incoming.length) throw new Error('訂單品項數量不一致，請重新整理後再試')
+  let allArrived=current.length>0
+  for(let i=0;i<current.length;i++){
+    const qty=Math.max(0,Math.trunc(num(current[i].qty)))
+    const arrived=Math.min(qty,Math.max(0,Math.trunc(num(incoming[i]?.arrived_qty))))
+    const arrivedAt=arrived>=qty&&qty>0?(iso(incoming[i]?.arrived_at)||new Date().toISOString()):null
+    if(!(qty>0&&arrived>=qty)) allArrived=false
+    await sql`UPDATE order_items SET arrived_qty=${arrived},arrived_at=${arrivedAt},updated_at=now() WHERE order_id=${order.id} AND line_no=${current[i].line_no}`
+  }
+  await sql`UPDATE orders SET updated_at=now() WHERE id=${order.id}`
+  return {allArrived}
+}
+
+async function updateItemQty(sql,legacyId,itemIndex,qty){
+  const order=await existingOrder(sql,legacyId)
+  const nextQty=Math.trunc(num(qty))
+  if(nextQty<1) throw new Error('訂購量至少為 1')
+  const lineNo=Math.trunc(num(itemIndex))+1
+  const rows=await sql`
+    SELECT line_no,sale_price,cost_price,qty,arrived_qty,supplier_paid_amount,supplier_payment_status
+    FROM order_items WHERE order_id=${order.id} AND line_no=${lineNo} LIMIT 1
+  `
+  const item=rows[0]
+  if(!item) throw new Error('找不到訂單商品')
+  const salePrice=num(item.sale_price)
+  const costPrice=num(item.cost_price)
+  const paid=Math.max(0,num(item.supplier_paid_amount))
+  const nextCost=costPrice*nextQty
+  if(paid>nextCost+0.01) throw new Error(`此品項已付供應商 ${paid} 元，數量不可降到已付款成本以下`)
+  const arrived=Math.min(nextQty,Math.max(0,Math.trunc(num(item.arrived_qty))))
+  const supplierStatus=paid>0?(paid>=nextCost-0.01?'paid':'partial'):(item.supplier_payment_status||'unpaid')
+  await sql`
+    UPDATE order_items SET qty=${nextQty},subtotal=${salePrice*nextQty},cost_subtotal=${nextCost},
+      arrived_qty=${arrived},arrived_at=${arrived>=nextQty?new Date().toISOString():null},
+      supplier_payment_status=${supplierStatus},updated_at=now()
+    WHERE order_id=${order.id} AND line_no=${lineNo}
+  `
+  const totals=await sql`SELECT COALESCE(SUM(subtotal),0)::numeric AS total_amount FROM order_items WHERE order_id=${order.id}`
+  const total=num(totals[0]?.total_amount)
+  await sql`UPDATE orders SET total_amount=${total},updated_at=now() WHERE id=${order.id}`
+  return {total_amount:total}
 }
 
 async function deleteOrders(sql,ids){
@@ -205,32 +249,16 @@ export default async function handler(req,res){
       const result=await syncOrder(sql,row)
       return res.status(200).json({ok:true,result})
     }
-    if(action==='update_payment'){
-      requireStaff(account)
-      return res.status(200).json({ok:true,result:await updatePayment(sql,req.body?.id,req.body?.payment_status)})
-    }
-    if(action==='update_payable'){
-      requireStaff(account)
-      return res.status(200).json({ok:true,result:await updatePayable(sql,req.body?.id,req.body?.payable_status)})
-    }
-    if(action==='archive'){
-      requireStaff(account)
-      return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,true)})
-    }
-    if(action==='unarchive'){
-      requireStaff(account)
-      return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,false)})
-    }
-    if(action==='apply_refund'){
-      requireStaff(account)
-      return res.status(200).json({ok:true,result:await applyRefund(sql,req.body?.id,req.body?.amount,req.body?.note)})
-    }
-    if(action==='clear_refunds'){
-      requireStaff(account)
-      return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
-    }
+    requireStaff(account)
+    if(action==='update_payment') return res.status(200).json({ok:true,result:await updatePayment(sql,req.body?.id,req.body?.payment_status)})
+    if(action==='update_payable') return res.status(200).json({ok:true,result:await updatePayable(sql,req.body?.id,req.body?.payable_status)})
+    if(action==='archive') return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,true)})
+    if(action==='unarchive') return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,false)})
+    if(action==='apply_refund') return res.status(200).json({ok:true,result:await applyRefund(sql,req.body?.id,req.body?.amount,req.body?.note)})
+    if(action==='clear_refunds') return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
+    if(action==='update_arrival') return res.status(200).json({ok:true,result:await updateArrival(sql,req.body?.id,req.body?.items)})
+    if(action==='update_item_qty') return res.status(200).json({ok:true,result:await updateItemQty(sql,req.body?.id,req.body?.item_index,req.body?.qty)})
     if(action==='delete'){
-      requireStaff(account)
       const ids=Array.isArray(req.body?.ids)?req.body.ids:[]
       if(ids.length>400) throw new Error('單次最多刪除 400 筆')
       return res.status(200).json({ok:true,deleted:await deleteOrders(sql,ids)})
