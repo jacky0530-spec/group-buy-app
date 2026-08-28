@@ -151,7 +151,7 @@ export const InventoryAPI = {
     })
   },
 
-  async createHelperStockOrder({ uid, displayName = '', customer, inventory, qty = 1, note = '' }) {
+  async createHelperStockOrder({ uid, displayName = '', customer, inventory, qty = 1, note = '', orderId = '', helperEntryId = '' }) {
     const amount = Number(qty)
     if (!uid) throw new Error('登入狀態失效')
     if (!customer?.id) throw new Error('請選擇客戶')
@@ -160,8 +160,8 @@ export const InventoryAPI = {
 
     const invRef = doc(db,'stock_inventory',inventory.id)
     const productRef = doc(db,'products',inventory.product_id)
-    const entryRef = doc(collection(db,'helper_entries'))
-    const orderRef = doc(collection(db,'orders'))
+    const entryRef = helperEntryId ? doc(db,'helper_entries',helperEntryId) : doc(collection(db,'helper_entries'))
+    const orderRef = orderId ? doc(db,'orders',orderId) : doc(collection(db,'orders'))
 
     await runTransaction(db,async tx => {
       const [invSnap,productSnap] = await Promise.all([tx.get(invRef),tx.get(productRef)])
