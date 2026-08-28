@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, Timestamp } from 'firebase/firestore'
+import { arrayUnion, collection, doc, getDoc, getDocs, runTransaction, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
 import { CustomersAPI, OrdersAPI, ProductsAPI, SupplierPaymentsAPI } from './db'
 import { InventoryAPI } from './inventory'
@@ -12,6 +12,7 @@ import {
   bestEffortNeonOrderSync,
   bestEffortNeonPaymentSync,
   bestEffortNeonStockConsume,
+  bestEffortNeonStockOrderState,
   bestEffortNeonStockSet,
   bestEffortNeonSync,
   neonRuntime,
@@ -31,6 +32,9 @@ function clean(value){
   }
   return value
 }
+
+const now=()=>Timestamp.now()
+const nowISO=()=>new Date().toISOString()
 
 async function readFirestoreDocument(collectionName,id){
   if(!id) return null
@@ -92,9 +96,103 @@ function wrapCustomerImport(){
   }
 }
 
+function stockGroups(order){
+  const groups=new Map()
+  for(const item of order?.items||[]){
+    if(item?.fulfillment_type!=='stock'&&!item?.stock_inventory_id) continue
+    const inventoryId=String(item.stock_inventory_id||'').trim()
+    if(!inventoryId) continue
+    const qty=Math.max(1,Math.trunc(Number(item.qty||1)))
+    groups.set(inventoryId,(groups.get(inventoryId)||0)+qty)
+  }
+  return [...groups.entries()].map(([inventoryId,qty])=>({inventoryId,qty}))
+}
+
+async function healNeonStockFromFirestore(groups){
+  for(const group of groups){
+    try{
+      const inventory=await readFirestoreDocument('stock_inventory',group.inventoryId)
+      if(inventory) await bestEffortNeonInventorySync(inventory)
+    }catch(err){
+      console.error(`[Neon heal] stock_inventory/${group.inventoryId}`,err)
+    }
+  }
+}
+
+async function updateStockOrderStatus(id,status,{reason=''}={}){
+  const ref=doc(db,'orders',id)
+  let groups=[]
+  let wasCancelled=false
+  await runTransaction(db,async tx=>{
+    const orderSnap=await tx.get(ref)
+    if(!orderSnap.exists()) throw new Error('找不到訂單')
+    const order=orderSnap.data()
+    groups=stockGroups(order)
+    wasCancelled=order.status==='cancelled'
+    const nextCancelled=status==='cancelled'
+    const shouldRestore=!wasCancelled&&nextCancelled&&order.stock_inventory_state!=='restored'
+    const shouldConsume=wasCancelled&&!nextCancelled&&order.stock_inventory_state==='restored'
+
+    const inventoryRows=[]
+    for(const group of groups){
+      const inventoryRef=doc(db,'stock_inventory',group.inventoryId)
+      const snap=await tx.get(inventoryRef)
+      if(!snap.exists()) throw new Error(`找不到現貨庫存 ${group.inventoryId}`)
+      inventoryRows.push({ ...group,ref:inventoryRef,data:snap.data() })
+    }
+
+    if(shouldConsume){
+      for(const row of inventoryRows){
+        const available=Math.max(0,Number(row.data.available_qty||0))
+        if(available<row.qty) throw new Error(`現貨不足，無法恢復訂單。目前可售 ${available} 件，需要 ${row.qty} 件`)
+      }
+    }
+
+    if(shouldRestore){
+      for(const row of inventoryRows){
+        const available=Math.max(0,Number(row.data.available_qty||0))
+        tx.update(row.ref,{available_qty:available+row.qty,updated_at:now()})
+      }
+    }else if(shouldConsume){
+      for(const row of inventoryRows){
+        const available=Math.max(0,Number(row.data.available_qty||0))
+        tx.update(row.ref,{available_qty:available-row.qty,updated_at:now()})
+      }
+    }
+
+    const patch={
+      status,
+      updated_at:now(),
+      status_history:arrayUnion({status,at:nowISO(),note:reason||''}),
+    }
+    if(status==='shipped'){
+      patch.shipped_at=now();patch.cancelled_at=null;patch.cancellation_reason=''
+      if(!['partial_refund','refunded'].includes(order.payment_status)) patch.payment_status='paid'
+    }else if(status==='cancelled'){
+      patch.cancelled_at=now();patch.cancellation_reason=reason||''
+    }else if(status==='pending'){
+      patch.shipped_at=null;patch.cancelled_at=null;patch.cancellation_reason=''
+    }
+    if(groups.length){
+      if(shouldRestore) patch.stock_inventory_state='restored'
+      else if(shouldConsume) patch.stock_inventory_state='consumed'
+      else if(!order.stock_inventory_state) patch.stock_inventory_state=nextCancelled?'restored':'consumed'
+      patch.stock_inventory_state_at=now()
+    }
+    tx.update(ref,patch)
+  })
+
+  await syncOrderId(id)
+  if(groups.length&&wasCancelled!== (status==='cancelled')){
+    const neonResult=await bestEffortNeonStockOrderState({order_id:id,cancelled:status==='cancelled'})
+    if(!neonResult) await healNeonStockFromFirestore(groups)
+  }
+}
+
 function wrapOrders(){
+  const originalUpdateStatus=OrdersAPI.updateStatus
   const singleIdMethods=[
-    'create','update','updateArrival','updateStatus','updatePayment','updatePayable',
+    'create','update','updateArrival','updatePayment','updatePayable',
     'applyRefund','clearRefunds','archive','unarchive','updateItemQty',
   ]
   for(const method of singleIdMethods){
@@ -103,6 +201,22 @@ function wrapOrders(){
     OrdersAPI[method]=async function(...args){
       const result=await original.apply(this,args)
       const id=method==='create'?result?.id:args[0]
+      await syncOrderId(id)
+      return result
+    }
+  }
+
+  if(typeof originalUpdateStatus==='function'){
+    OrdersAPI.updateStatus=async function(id,status,options={}){
+      try{
+        const snap=await getDoc(doc(db,'orders',id))
+        const groups=snap.exists()?stockGroups(snap.data()):[]
+        if(groups.length) return await updateStockOrderStatus(id,status,options)
+      }catch(err){
+        if(String(err?.message||'').includes('現貨不足')||String(err?.message||'').includes('找不到現貨庫存')) throw err
+        console.error('[stock status] inspect failed, using normal status path',err)
+      }
+      const result=await originalUpdateStatus.apply(this,[id,status,options])
       await syncOrderId(id)
       return result
     }
@@ -117,10 +231,23 @@ function wrapOrders(){
     }
   }
 
-  for(const method of ['batchUpdateStatus','updateVirtual']){
-    const original=OrdersAPI[method]
-    if(typeof original!=='function') continue
-    OrdersAPI[method]=async function(...args){
+  if(typeof OrdersAPI.batchUpdateStatus==='function'){
+    const original=OrdersAPI.batchUpdateStatus
+    OrdersAPI.batchUpdateStatus=async function(ids,status,...rest){
+      const targetIds=Array.isArray(ids)?ids:[]
+      if(status==='cancelled'||status==='pending'){
+        for(const id of targetIds) await OrdersAPI.updateStatus(id,status,...rest)
+        return
+      }
+      const result=await original.apply(this,[ids,status,...rest])
+      for(const id of targetIds) await syncOrderId(id)
+      return result
+    }
+  }
+
+  if(typeof OrdersAPI.updateVirtual==='function'){
+    const original=OrdersAPI.updateVirtual
+    OrdersAPI.updateVirtual=async function(...args){
       const result=await original.apply(this,args)
       const ids=Array.isArray(args[0])?args[0]:[]
       for(const id of ids) await syncOrderId(id)
