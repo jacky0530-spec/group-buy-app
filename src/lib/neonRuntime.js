@@ -30,6 +30,10 @@ export async function neonHelperRuntime(action,payload={}){
   return postAuthed('/api/neon-helper-runtime',{action,...payload})
 }
 
+export async function neonInventoryRuntime(action,payload={}){
+  return postAuthed('/api/neon-inventory-runtime',{action,...payload})
+}
+
 export async function bestEffortNeonSync(action,row){
   try{
     return await neonRuntime(action,{row})
@@ -80,6 +84,24 @@ export async function bestEffortNeonHelpersSync(rows){
     return await neonHelperRuntime('sync_many',{rows})
   }catch(err){
     console.error('[Neon dual-write] helper entries sync failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonInventorySync(row){
+  try{
+    return await neonInventoryRuntime('sync_inventory',{row})
+  }catch(err){
+    console.error('[Neon dual-write] inventory sync failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonExtraSync(row){
+  try{
+    return await neonInventoryRuntime('sync_extra',{row})
+  }catch(err){
+    console.error('[Neon dual-write] extra purchase sync failed',err)
     return null
   }
 }
