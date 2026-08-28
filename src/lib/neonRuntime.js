@@ -22,6 +22,10 @@ export async function neonOrdersRuntime(action,payload={}){
   return postAuthed('/api/neon-orders-runtime',{action,...payload})
 }
 
+export async function neonPaymentsRuntime(action,payload={}){
+  return postAuthed('/api/neon-payments-runtime',{action,...payload})
+}
+
 export async function bestEffortNeonSync(action,row){
   try{
     return await neonRuntime(action,{row})
@@ -45,6 +49,15 @@ export async function bestEffortNeonOrderDelete(ids){
     return await neonOrdersRuntime('delete',{ids})
   }catch(err){
     console.error('[Neon dual-write] order delete failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonPaymentSync(row){
+  try{
+    return await neonPaymentsRuntime('sync',{row})
+  }catch(err){
+    console.error('[Neon dual-write] supplier payment sync failed',err)
     return null
   }
 }
