@@ -135,6 +135,7 @@ export default async function handler(req,res){
     if(action==='ping') return json(res,200,{ok:true,role:account.role})
 
     if(action==='list_customers'){
+      requireStaff(account)
       const includeArchived=req.body?.includeArchived===true
       const rows=includeArchived
         ? await sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note,active,joined_at,archived_at,updated_at FROM customers ORDER BY joined_at DESC`
@@ -143,6 +144,7 @@ export default async function handler(req,res){
     }
 
     if(action==='list_products'){
+      requireStaff(account)
       const includeArchived=req.body?.includeArchived===true
       const rows=includeArchived
         ? await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products ORDER BY created_at DESC`
@@ -168,6 +170,15 @@ export default async function handler(req,res){
       requireStaff(account)
       const id=await syncCustomer(sql,req.body?.row||{})
       return json(res,200,{ok:true,id})
+    }
+
+    if(action==='sync_customers'){
+      requireStaff(account)
+      const rows=Array.isArray(req.body?.rows)?req.body.rows:[]
+      if(rows.length>250) throw new Error('單次最多同步 250 位客戶')
+      let done=0
+      for(const row of rows){await syncCustomer(sql,row);done++}
+      return json(res,200,{ok:true,done})
     }
 
     if(action==='sync_product'){
