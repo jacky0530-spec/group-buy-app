@@ -130,8 +130,8 @@ async function updateStockOrder(sql,auth,legacyOrderId,status,reason=''){
       LEFT JOIN stock_inventory s ON s.product_id=g.product_id AND s.spec_package=g.spec_package AND s.spec_flavor=g.spec_flavor AND s.spec_color=g.spec_color AND s.spec_size=g.spec_size
     ), movement_state AS (
       SELECT r.product_id,r.spec_package,r.spec_flavor,r.spec_color,r.spec_size,r.qty,r.inventory_id,r.available_qty,
-        COALESCE(SUM(it.qty_change) FILTER (WHERE it.transaction_type IN ('sale','stock_sale','restore','return','reconsume')),0)::int AS net,
-        COUNT(it.id) FILTER (WHERE it.transaction_type IN ('sale','stock_sale','restore','return','reconsume'))::int AS movement_count
+        COALESCE(SUM(it.qty_change) FILTER (WHERE it.transaction_type IN ('stock_sale','return')),0)::int AS net,
+        COUNT(it.id) FILTER (WHERE it.transaction_type IN ('stock_sale','return'))::int AS movement_count
       FROM resolved r LEFT JOIN target_order o ON true
       LEFT JOIN inventory_transactions it ON it.inventory_id=r.inventory_id AND it.order_id=o.id
       GROUP BY r.product_id,r.spec_package,r.spec_flavor,r.spec_color,r.spec_size,r.qty,r.inventory_id,r.available_qty
