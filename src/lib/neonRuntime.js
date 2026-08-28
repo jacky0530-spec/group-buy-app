@@ -26,6 +26,10 @@ export async function neonPaymentsRuntime(action,payload={}){
   return postAuthed('/api/neon-payments-runtime',{action,...payload})
 }
 
+export async function neonHelperRuntime(action,payload={}){
+  return postAuthed('/api/neon-helper-runtime',{action,...payload})
+}
+
 export async function bestEffortNeonSync(action,row){
   try{
     return await neonRuntime(action,{row})
@@ -58,6 +62,24 @@ export async function bestEffortNeonPaymentSync(row){
     return await neonPaymentsRuntime('sync',{row})
   }catch(err){
     console.error('[Neon dual-write] supplier payment sync failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonHelperSync(row){
+  try{
+    return await neonHelperRuntime('sync',{row})
+  }catch(err){
+    console.error('[Neon dual-write] helper entry sync failed',err)
+    return null
+  }
+}
+
+export async function bestEffortNeonHelpersSync(rows){
+  try{
+    return await neonHelperRuntime('sync_many',{rows})
+  }catch(err){
+    console.error('[Neon dual-write] helper entries sync failed',err)
     return null
   }
 }
