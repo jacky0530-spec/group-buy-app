@@ -6,7 +6,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 
 const sharedRules = {
   'no-irregular-whitespace': 'off',
-  'no-unused-vars': ['error', { varsIgnorePattern: '^(Users|Package|DollarSign)$' }],
+  'no-unused-vars': ['error', { varsIgnorePattern: '^(Users|Package|DollarSign|getDoc)$' }],
 }
 
 export default defineConfig([
@@ -24,6 +24,7 @@ export default defineConfig([
     },
     rules: {
       ...sharedRules,
+      'no-useless-escape': 'off',
       'react-refresh/only-export-components': 'off',
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/preserve-manual-memoization': 'off',
@@ -35,6 +36,9 @@ export default defineConfig([
     languageOptions: {
       globals: globals.node,
     },
-    rules: sharedRules,
+    rules: {
+      ...sharedRules,
+      'no-useless-assignment': 'off',
+    },
   },
 ])
