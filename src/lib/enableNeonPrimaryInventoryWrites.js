@@ -1,6 +1,7 @@
 import { doc, setDoc, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
 import { InventoryAPI, normalizeStockSpec, stockSpecLabel } from './inventory'
+import { getRawInventoryMethods } from './captureLegacyInventoryMethods'
 import { neonInventoryRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-inventory-writes-installed')
@@ -19,11 +20,20 @@ async function mirror(label,fn){
   catch(err){console.error(`[Firestore mirror] ${label} failed after Neon success`,err);return null}
 }
 
+async function neonHelperStockOrder(payload){
+  try{return await neonInventoryRuntime('create_helper_stock_order',payload)}
+  catch(firstErr){
+    console.warn('[Neon primary] helper stock order first attempt failed; retrying with same IDs',firstErr)
+    return neonInventoryRuntime('create_helper_stock_order',payload)
+  }
+}
+
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
 
   const firestoreReceive=InventoryAPI.receiveExtraPurchase
   const firestoreAdjust=InventoryAPI.adjustAvailable
+  const rawHelperStockOrder=getRawInventoryMethods().createHelperStockOrder
 
   InventoryAPI.createExtraPurchase=async function({product,spec={},qty=1,note=''}){
     const amount=Math.max(1,Number(qty||1))
@@ -73,5 +83,37 @@ if(!globalThis[INSTALLED]){
     })
     await mirror('InventoryAPI.adjustAvailable',()=>firestoreAdjust.call(this,inventoryId,qty,note))
     return primary?.result
+  }
+
+  InventoryAPI.createHelperStockOrder=async function({uid,displayName='',customer,inventory,qty=1,note=''}){
+    const amount=Number(qty)
+    if(!uid) throw new Error('登入狀態失效')
+    if(!customer?.id) throw new Error('請選擇客戶')
+    if(!inventory?.id||!inventory?.product_id) throw new Error('請選擇現貨商品')
+    if(!Number.isInteger(amount)||amount<1) throw new Error('數量至少為 1')
+
+    const orderId=randomLegacyId()
+    const helperEntryId=randomLegacyId()
+    const primary=await neonHelperStockOrder({
+      order_id:orderId,
+      helper_entry_id:helperEntryId,
+      customer_id:customer.id,
+      product_id:inventory.product_id,
+      spec:inventory.spec||{},
+      qty:amount,
+      note:String(note||'').trim(),
+      display_name:displayName,
+    })
+    const result=primary?.result||{}
+    if(result.order_id!==orderId) throw new Error('Neon 現貨訂單 ID 驗證失敗')
+
+    if(typeof rawHelperStockOrder==='function'){
+      await mirror('InventoryAPI.createHelperStockOrder',()=>rawHelperStockOrder({
+        uid,displayName,customer,inventory,qty:amount,note,
+        orderId,
+        helperEntryId:result.helper_entry_id||helperEntryId,
+      }))
+    }
+    return orderId
   }
 }
