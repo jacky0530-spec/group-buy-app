@@ -46,6 +46,12 @@ async function helperUuid(sql,legacyId){
   return rows[0]?.id||null
 }
 
+async function existingOrder(sql,legacyId){
+  const rows=await sql`SELECT id,legacy_id FROM orders WHERE legacy_id=${text(legacyId)} LIMIT 1`
+  if(!rows[0]) throw new Error('Neon 找不到訂單')
+  return rows[0]
+}
+
 async function syncOrder(sql,row){
   const legacyId=text(row?.id||row?.legacy_id)
   if(!legacyId) throw new Error('訂單缺少 legacy id')
@@ -107,6 +113,36 @@ async function syncOrder(sql,row){
   return {id:legacyId,items:itemRows.length}
 }
 
+async function updatePayment(sql,legacyId,paymentStatus){
+  await existingOrder(sql,legacyId)
+  const allowed=['unpaid','paid','partial_refund','refunded']
+  if(!allowed.includes(paymentStatus)) throw new Error('付款狀態不正確')
+  const rows=await sql`UPDATE orders SET payment_status=${paymentStatus},updated_at=now() WHERE legacy_id=${text(legacyId)} RETURNING legacy_id AS id,payment_status,updated_at`
+  return rows[0]
+}
+
+async function updatePayable(sql,legacyId,payableStatus){
+  await existingOrder(sql,legacyId)
+  const allowed=['unpaid','paid']
+  if(!allowed.includes(payableStatus)) throw new Error('應付狀態不正確')
+  const rows=await sql`
+    UPDATE orders SET payable_status=${payableStatus},payable_paid_at=${payableStatus==='paid'?new Date().toISOString():null},updated_at=now()
+    WHERE legacy_id=${text(legacyId)}
+    RETURNING legacy_id AS id,payable_status,payable_paid_at,updated_at
+  `
+  return rows[0]
+}
+
+async function updateArchive(sql,legacyId,archived){
+  await existingOrder(sql,legacyId)
+  const rows=await sql`
+    UPDATE orders SET archived=${archived===true},archived_at=${archived===true?new Date().toISOString():null},updated_at=now()
+    WHERE legacy_id=${text(legacyId)}
+    RETURNING legacy_id AS id,archived,archived_at,updated_at
+  `
+  return rows[0]
+}
+
 async function deleteOrders(sql,ids){
   let deleted=0
   for(const legacyId of [...new Set(ids.map(text).filter(Boolean))]){
@@ -135,6 +171,22 @@ export default async function handler(req,res){
       requireOwnHelperOrder(account,auth,row)
       const result=await syncOrder(sql,row)
       return res.status(200).json({ok:true,result})
+    }
+    if(action==='update_payment'){
+      requireStaff(account)
+      return res.status(200).json({ok:true,result:await updatePayment(sql,req.body?.id,req.body?.payment_status)})
+    }
+    if(action==='update_payable'){
+      requireStaff(account)
+      return res.status(200).json({ok:true,result:await updatePayable(sql,req.body?.id,req.body?.payable_status)})
+    }
+    if(action==='archive'){
+      requireStaff(account)
+      return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,true)})
+    }
+    if(action==='unarchive'){
+      requireStaff(account)
+      return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,false)})
     }
     if(action==='delete'){
       requireStaff(account)
