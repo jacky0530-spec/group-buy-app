@@ -66,15 +66,43 @@ async function setStock(sql,auth,payload){
 }
 
 async function receiveExtra(sql,auth,payload){
-  const legacyId=text(payload?.extra_id),incoming=Math.max(1,Math.trunc(num(payload?.qty)||1));if(!legacyId) throw new Error('缺少額外叫貨 ID')
-  const rows=await sql`WITH extra AS (SELECT id,product_id,supplier,spec_package,spec_flavor,spec_color,spec_size FROM stock_purchase_extras WHERE legacy_id=${legacyId} LIMIT 1),
-    guard AS (SELECT e.* FROM extra e WHERE NOT EXISTS (SELECT 1 FROM inventory_transactions it WHERE it.extra_purchase_id=e.id AND it.transaction_type='receive')),
-    upsert_inventory AS (INSERT INTO stock_inventory (product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,available_qty,created_at,updated_at) SELECT product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,${incoming},now(),now() FROM guard ON CONFLICT (product_id,spec_package,spec_flavor,spec_color,spec_size) DO UPDATE SET available_qty=stock_inventory.available_qty+${incoming},updated_at=now() RETURNING id,available_qty),
-    linked AS (UPDATE stock_purchase_extras e SET stock_inventory_id=u.id,received_qty=e.ordered_qty,status='received',received_at=now(),updated_at=now() FROM upsert_inventory u,guard g WHERE e.id=g.id RETURNING e.id,u.id AS inventory_id,u.available_qty),
-    movement AS (INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,extra_purchase_id,note,created_by_uid) SELECT l.inventory_id,${incoming},l.available_qty,'receive',l.id,${text(payload?.note)||'額外叫貨入庫'},${auth.uid} FROM linked l RETURNING id)
-    SELECT 'received'::text AS state,available_qty FROM linked UNION ALL SELECT 'already'::text AS state,s.available_qty FROM extra e JOIN stock_inventory s ON s.id=e.stock_inventory_id WHERE NOT EXISTS (SELECT 1 FROM guard) LIMIT 1`
-  if(!rows.length) throw new Error('Neon 找不到額外叫貨或庫存')
-  return {state:rows[0].state,available_qty:Number(rows[0].available_qty||0)}
+  const legacyId=text(payload?.extra_id);if(!legacyId) throw new Error('缺少額外叫貨 ID')
+  const rows=await sql`WITH extra AS (
+      SELECT id,product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,stock_inventory_id,ordered_qty,received_qty,status
+      FROM stock_purchase_extras WHERE legacy_id=${legacyId} LIMIT 1
+    ),
+    guard AS (
+      SELECT e.*,GREATEST(e.ordered_qty-e.received_qty,0)::integer AS incoming
+      FROM extra e
+      WHERE e.status<>'cancelled' AND e.ordered_qty>e.received_qty
+        AND NOT EXISTS (SELECT 1 FROM inventory_transactions it WHERE it.extra_purchase_id=e.id AND it.transaction_type='receive')
+    ),
+    upsert_inventory AS (
+      INSERT INTO stock_inventory (product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,available_qty,created_at,updated_at)
+      SELECT product_id,supplier,spec_package,spec_flavor,spec_color,spec_size,incoming,now(),now() FROM guard
+      ON CONFLICT (product_id,spec_package,spec_flavor,spec_color,spec_size)
+      DO UPDATE SET available_qty=stock_inventory.available_qty+EXCLUDED.available_qty,updated_at=now()
+      RETURNING id,available_qty
+    ),
+    linked AS (
+      UPDATE stock_purchase_extras e
+      SET stock_inventory_id=u.id,received_qty=e.ordered_qty,status='received',received_at=now(),updated_at=now()
+      FROM upsert_inventory u,guard g WHERE e.id=g.id
+      RETURNING e.id,u.id AS inventory_id,u.available_qty,g.incoming
+    ),
+    movement AS (
+      INSERT INTO inventory_transactions (inventory_id,qty_change,balance_after,transaction_type,extra_purchase_id,note,created_by_uid)
+      SELECT l.inventory_id,l.incoming,l.available_qty,'receive',l.id,${text(payload?.note)||'額外叫貨入庫'},${auth.uid} FROM linked l
+      RETURNING id
+    )
+    SELECT 'received'::text AS state,available_qty,incoming FROM linked
+    UNION ALL
+    SELECT 'already'::text AS state,s.available_qty,0::integer AS incoming
+    FROM extra e JOIN stock_inventory s ON s.id=e.stock_inventory_id
+    WHERE NOT EXISTS (SELECT 1 FROM guard) AND e.stock_inventory_id IS NOT NULL
+    LIMIT 1`
+  if(!rows.length) throw new Error('Neon 找不到額外叫貨、此筆已取消，或庫存狀態不完整')
+  return {state:rows[0].state,available_qty:Number(rows[0].available_qty||0),received:Number(rows[0].incoming||0)}
 }
 
 async function createHelperStockOrder(sql,auth,payload){
