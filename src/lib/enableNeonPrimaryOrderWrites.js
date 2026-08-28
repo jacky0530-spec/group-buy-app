@@ -24,4 +24,6 @@ if(!globalThis[INSTALLED]){
   install('updatePayable','update_payable',(_id,payable_status)=>({payable_status}))
   install('archive','archive',()=>({}))
   install('unarchive','unarchive',()=>({}))
+  install('applyRefund','apply_refund',(_id,{amount,note='' }={})=>({amount,note}))
+  install('clearRefunds','clear_refunds',()=>({}))
 }
