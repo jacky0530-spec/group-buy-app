@@ -15,7 +15,7 @@ async function hydrate(sql,orders){
   const ids=orders.map(o=>o.neon_id)
   const items=await sql`
     SELECT oi.order_id,p.legacy_id AS product_id,oi.product_name,oi.category,oi.supplier,oi.sale_price,oi.cost_price,
-      oi.qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
+      oi.qty,oi.original_qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
       oi.fulfillment_type,oi.arrived_qty,oi.arrived_at,oi.supplier_payment_term,oi.supplier_paid_amount,
       oi.supplier_payment_status,oi.supplier_payment_refs,oi.created_at,oi.updated_at,oi.line_no
     FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id
@@ -28,7 +28,7 @@ async function hydrate(sql,orders){
     map.get(i.order_id).push({
       id:i.product_id||'',product_id:i.product_id||'',name:i.product_name,product_name:i.product_name,
       category:i.category,supplier:i.supplier,price:Number(i.sale_price||0),sale_price:Number(i.sale_price||0),cost_price:Number(i.cost_price||0),
-      qty:Number(i.qty||0),subtotal:Number(i.subtotal||0),cost_subtotal:Number(i.cost_subtotal||0),note:i.note||'',
+      qty:Number(i.qty||0),original_qty:Number(i.original_qty??i.qty??0),subtotal:Number(i.subtotal||0),cost_subtotal:Number(i.cost_subtotal||0),note:i.note||'',
       spec:{package:i.spec_package||'',flavor:i.spec_flavor||'',color:i.spec_color||'',size:i.spec_size||''},
       fulfillment_type:i.fulfillment_type,arrived_qty:Number(i.arrived_qty||0),arrived_at:i.arrived_at,
       supplier_payment_term:i.supplier_payment_term,supplier_paid_amount:Number(i.supplier_paid_amount||0),
