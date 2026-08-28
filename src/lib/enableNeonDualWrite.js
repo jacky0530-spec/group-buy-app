@@ -4,12 +4,15 @@ import { CustomersAPI, OrdersAPI, ProductsAPI, SupplierPaymentsAPI } from './db'
 import { InventoryAPI } from './inventory'
 import {
   bestEffortNeonCustomersSync,
+  bestEffortNeonExtraReceive,
   bestEffortNeonExtraSync,
   bestEffortNeonHelperSync,
   bestEffortNeonInventorySync,
   bestEffortNeonOrderDelete,
   bestEffortNeonOrderSync,
   bestEffortNeonPaymentSync,
+  bestEffortNeonStockConsume,
+  bestEffortNeonStockSet,
   bestEffortNeonSync,
   neonRuntime,
 } from './neonRuntime'
@@ -173,11 +176,18 @@ function wrapInventory(){
       const extraId=args[0]
       const result=await original.apply(this,args)
       try{
-        const inventory=await readFirestoreDocument('stock_inventory',result?.inventory_id)
-        if(inventory) await bestEffortNeonInventorySync(inventory)
         const extra=await readFirestoreDocument('stock_purchase_extras',extraId)
         if(extra) await bestEffortNeonExtraSync(extra)
-      }catch(err){console.error('[Neon dual-write] receive extra purchase readback failed',err)}
+        const received=await bestEffortNeonExtraReceive({
+          extra_id:extraId,
+          qty:Number(result?.received||0),
+          note:extra?.note||'額外叫貨入庫',
+        })
+        if(!received){
+          const inventory=await readFirestoreDocument('stock_inventory',result?.inventory_id)
+          if(inventory) await bestEffortNeonInventorySync(inventory)
+        }
+      }catch(err){console.error('[Neon dual-write] receive extra purchase transaction failed',err)}
       return result
     }
   }
@@ -189,8 +199,16 @@ function wrapInventory(){
       const result=await original.apply(this,args)
       try{
         const inventory=await readFirestoreDocument('stock_inventory',inventoryId)
-        if(inventory) await bestEffortNeonInventorySync(inventory)
-      }catch(err){console.error(`[Neon dual-write] stock_inventory/${inventoryId} readback failed`,err)}
+        if(inventory){
+          const adjusted=await bestEffortNeonStockSet({
+            product_id:inventory.product_id,
+            spec:inventory.spec||{},
+            available_qty:Number(inventory.available_qty||0),
+            note:inventory.adjustment_note||String(args[2]||'手動調整庫存'),
+          })
+          if(!adjusted) await bestEffortNeonInventorySync(inventory)
+        }
+      }catch(err){console.error(`[Neon dual-write] stock_inventory/${inventoryId} adjustment failed`,err)}
       return result
     }
   }
@@ -198,15 +216,27 @@ function wrapInventory(){
   if(typeof InventoryAPI.createHelperStockOrder==='function'){
     const original=InventoryAPI.createHelperStockOrder
     InventoryAPI.createHelperStockOrder=async function(...args){
+      const request=args[0]||{}
       const orderId=await original.apply(this,args)
       await syncOrderId(orderId)
       try{
+        const consumed=await bestEffortNeonStockConsume({
+          order_id:orderId,
+          product_id:request.inventory?.product_id,
+          spec:request.inventory?.spec||{},
+          qty:Number(request.qty||1),
+          note:'小幫手現貨開單',
+        })
+        if(!consumed){
+          const inventory=await readFirestoreDocument('stock_inventory',request.inventory?.id)
+          if(inventory) await bestEffortNeonInventorySync(inventory)
+        }
         const order=await readFirestoreDocument('orders',orderId)
         if(order?.helper_entry_id){
           const entry=await readFirestoreDocument('helper_entries',order.helper_entry_id)
           if(entry) await bestEffortNeonHelperSync(entry)
         }
-      }catch(err){console.error('[Neon dual-write] helper stock order linkage failed',err)}
+      }catch(err){console.error('[Neon dual-write] helper stock order transaction failed',err)}
       return orderId
     }
   }
