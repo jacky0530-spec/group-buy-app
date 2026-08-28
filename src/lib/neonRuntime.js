@@ -34,6 +34,10 @@ export async function neonInventoryRuntime(action,payload={}){
   return postAuthed('/api/neon-inventory-runtime',{action,...payload})
 }
 
+export async function neonAccountsRuntime(action,payload={}){
+  return postAuthed('/api/neon-accounts-runtime',{action,...payload})
+}
+
 export async function bestEffortNeonSync(action,row){
   try{
     return await neonRuntime(action,{row})
