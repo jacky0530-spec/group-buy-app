@@ -85,6 +85,7 @@ async function syncOrder(sql,row){
   `
   const orderId=inserted[0]?.id
   if(!orderId) throw new Error('Neon 訂單同步失敗')
+  const previousItems=await sql`SELECT line_no,product_id,spec_package,spec_flavor,spec_color,spec_size,qty,original_qty FROM order_items WHERE order_id=${orderId}`
   await sql`DELETE FROM order_items WHERE order_id=${orderId}`
   let lineNo=0
   for(const item of itemRows){
@@ -93,16 +94,19 @@ async function syncOrder(sql,row){
     const productId=await productUuid(sql,legacyProductId)
     const spec=cleanSpec(item)
     const qty=Math.max(1,Math.trunc(num(item.qty)||1))
+    const previous=previousItems.find(x=>Number(x.line_no)===lineNo&&text(x.product_id)===text(productId)&&text(x.spec_package)===spec.package&&text(x.spec_flavor)===spec.flavor&&text(x.spec_color)===spec.color&&text(x.spec_size)===spec.size)
+    const suppliedOriginal=Math.max(1,Math.trunc(num(item.original_qty)||qty))
+    const originalQty=previous?Math.max(1,Math.trunc(num(previous.original_qty??previous.qty)||qty)):suppliedOriginal
     const salePrice=num(item.sale_price??item.price)
     const costPrice=num(item.cost_price)
     await sql`
       INSERT INTO order_items (
-        order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,subtotal,cost_subtotal,note,
+        order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,original_qty,subtotal,cost_subtotal,note,
         spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,supplier_payment_term,
         supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at
       ) VALUES (
         ${orderId},${lineNo},${productId},${text(item.product_name||item.name)},${text(item.category)||'other'},${text(item.supplier)},
-        ${salePrice},${costPrice},${qty},${num(item.subtotal||salePrice*qty)},${num(item.cost_subtotal||costPrice*qty)},${text(item.note)},
+        ${salePrice},${costPrice},${qty},${originalQty},${num(item.subtotal||salePrice*qty)},${num(item.cost_subtotal||costPrice*qty)},${text(item.note)},
         ${spec.package},${spec.flavor},${spec.color},${spec.size},${fulfillment(item.fulfillment_type||orderFulfillment)},
         ${Math.max(0,Math.trunc(num(item.arrived_qty)))},${iso(item.arrived_at)},${text(item.supplier_payment_term)||'manual'},
         ${num(item.supplier_paid_amount)},${text(item.supplier_payment_status)||'unpaid'},${j(item.supplier_payment_refs)}::jsonb,
