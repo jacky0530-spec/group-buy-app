@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArchiveRestore, History, PackageCheck, Plus, RefreshCw, Search, Warehouse } from 'lucide-react'
+import { ArchiveRestore, History, PackageCheck, Pencil, Plus, RefreshCw, Search, Trash2, Warehouse } from 'lucide-react'
 import { ProductsAPI } from '../lib/db'
 import { InventoryAPI, stockSpecLabel } from '../lib/inventory'
+import { neonInventoryRuntime } from '../lib/neonRuntime'
 import { useToast } from '../components/UI'
 import QuantityInput from '../components/QuantityInput'
 
@@ -47,6 +48,9 @@ export default function StockInventory(){
   const [qty,setQty]=useState(1)
   const [note,setNote]=useState('')
   const [saving,setSaving]=useState(false)
+  const [editingExtraId,setEditingExtraId]=useState('')
+  const [editExtra,setEditExtra]=useState(null)
+  const [extraBusyId,setExtraBusyId]=useState('')
 
   const load=useCallback(async()=>{
     try{
@@ -98,13 +102,52 @@ export default function StockInventory(){
     try{await InventoryAPI.adjustAvailable(row.id,n,'後台手動調整');toast('現貨數量已更新 ✓');await load()}
     catch(err){toast('調整失敗：'+err.message,'error')}
   }
+  function beginEditExtra(row){
+    setEditingExtraId(row.id)
+    setEditExtra({ordered_qty:Number(row.ordered_qty||0),unit_cost:Number(row.unit_cost||0),note:String(row.note||'')})
+  }
+  function cancelEditExtra(){setEditingExtraId('');setEditExtra(null)}
+  async function saveExtra(row){
+    if(!editExtra)return
+    const received=Math.max(0,Number(row.received_qty||0))
+    const ordered=Number(editExtra.ordered_qty)
+    const cost=Number(editExtra.unit_cost)
+    if(received===0&&(!Number.isInteger(ordered)||ordered<1))return toast('叫貨數量必須是 1 以上整數','error')
+    if(received===0&&(!Number.isFinite(cost)||cost<0))return toast('單位成本不可小於 0','error')
+    setExtraBusyId(row.id)
+    try{
+      const next={...row,note:String(editExtra.note||'').trim(),updated_at:new Date().toISOString()}
+      if(received===0){next.ordered_qty=ordered;next.unit_cost=cost}
+      await neonInventoryRuntime('sync_extra',{row:next})
+      toast('額外叫貨已修改 ✓')
+      cancelEditExtra();await load()
+    }catch(err){toast('修改額外叫貨失敗：'+err.message,'error')}
+    finally{setExtraBusyId('')}
+  }
+  async function deleteExtra(row){
+    const received=Math.max(0,Number(row.received_qty||0))
+    if(received>0)return toast('已有入庫紀錄，為避免庫存與付款失真，不能刪除此筆叫貨','error')
+    if(!window.confirm(`確定刪除「${row.product_name}」這筆額外叫貨？\n刪除後會從待入庫清單移除，但保留取消狀態供稽核。`))return
+    setExtraBusyId(row.id)
+    try{
+      await neonInventoryRuntime('sync_extra',{row:{...row,status:'cancelled',updated_at:new Date().toISOString()}})
+      toast('額外叫貨已刪除 ✓')
+      if(editingExtraId===row.id)cancelEditExtra()
+      await load()
+    }catch(err){toast('刪除額外叫貨失敗：'+err.message,'error')}
+    finally{setExtraBusyId('')}
+  }
 
   return <div className="animate-fade">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:18}}><div><h2 style={{fontSize:22,fontWeight:900}}>現貨庫存</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>額外叫貨入庫後成為可售現貨；現貨開單會直接扣庫存。所有庫存異動以 Neon 流水帳記錄。</p></div><button className="btn btn-ghost" onClick={load}><RefreshCw size={14}/>重新整理</button></div>
 
     <div className="card" style={{marginBottom:16}}><div className="card-header"><strong><Plus size={15}/> 新增額外叫貨</strong></div><div className="card-body"><div className="search-input-wrap" style={{width:'100%',maxWidth:760,marginBottom:8}}><Search size={17}/><input value={productSearch} onChange={e=>{setProductSearch(e.target.value);if(product&&e.target.value!==product.name){setProduct(null);setSpec(blankSpec())}}} placeholder="搜尋商品..." style={{paddingLeft:36,height:46,fontSize:15}}/></div>{productSearch&&!product&&<div style={{border:'1px solid var(--border)',borderRadius:10,maxHeight:220,overflowY:'auto',marginBottom:10,maxWidth:760}}>{productMatches.map(p=><button type="button" key={p.id} onClick={()=>{setProduct(p);setProductSearch(p.name);setSpec(blankSpec())}} style={{display:'flex',justifyContent:'space-between',width:'100%',padding:'11px 12px',border:0,borderBottom:'1px solid var(--border)',background:'#fff',cursor:'pointer'}}><strong>{p.name}</strong><span style={{color:'#2563eb'}}>{p.supplier||'未設定廠商'}</span></button>)}</div>}{product&&<div><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><SpecFields product={product} spec={spec} onChange={(k,v)=>setSpec(s=>({...s,[k]:v}))}/><span>額外數量</span><QuantityInput value={qty} min={1} onChange={setQty} style={{width:110,height:44,fontSize:18,fontWeight:900,textAlign:'center'}}/><input value={note} onChange={e=>setNote(e.target.value)} placeholder="備註" style={{minWidth:180,flex:1}}/><button className="btn btn-primary" disabled={saving||Boolean(specError)} onClick={createExtra}>{saving?'建立中...':'建立額外叫貨'}</button></div><div style={{marginTop:9,fontSize:12,color:specError?'#dc2626':'var(--text-secondary)'}}>{specError?`⚠ ${specError}`:`目前規格：${stockSpecLabel(spec)}｜單位成本：NT$${unitCost.toLocaleString()}`}</div></div>}</div></div>
 
-    <div className="card" style={{marginBottom:16}}><div className="card-header"><strong><PackageCheck size={15}/> 待入庫的額外叫貨</strong></div><div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>叫貨</th><th>已入庫</th><th>單位成本</th><th>操作</th></tr></thead><tbody>{extras.filter(x=>x.status!=='received'&&x.status!=='cancelled').length===0&&<tr><td colSpan={7} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>目前沒有待入庫的額外叫貨</td></tr>}{extras.filter(x=>x.status!=='received'&&x.status!=='cancelled').map(r=><tr key={r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td>{r.ordered_qty}</td><td>{r.received_qty||0}</td><td>NT${Number(r.unit_cost||0).toLocaleString()}</td><td><button className="btn btn-sm btn-primary" onClick={()=>receive(r)}><ArchiveRestore size={13}/>全部到貨並轉現貨</button></td></tr>)}</tbody></table></div></div>
+    <div className="card" style={{marginBottom:16}}><div className="card-header"><strong><PackageCheck size={15}/> 待入庫的額外叫貨</strong></div><div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>叫貨</th><th>已入庫</th><th>單位成本</th><th>備註</th><th>操作</th></tr></thead><tbody>{extras.filter(x=>x.status!=='received'&&x.status!=='cancelled').length===0&&<tr><td colSpan={8} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>目前沒有待入庫的額外叫貨</td></tr>}{extras.filter(x=>x.status!=='received'&&x.status!=='cancelled').map(r=>{
+      const editing=editingExtraId===r.id
+      const received=Math.max(0,Number(r.received_qty||0))
+      return <tr key={r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td>{editing&&received===0?<input type="number" min="1" value={editExtra?.ordered_qty??r.ordered_qty} onChange={e=>setEditExtra(v=>({...v,ordered_qty:e.target.value}))} style={{width:80,height:36,textAlign:'center'}}/>:r.ordered_qty}</td><td>{received}</td><td>{editing&&received===0?<input type="number" min="0" step="0.01" value={editExtra?.unit_cost??r.unit_cost} onChange={e=>setEditExtra(v=>({...v,unit_cost:e.target.value}))} style={{width:90,height:36,textAlign:'center'}}/>:`NT$${Number(r.unit_cost||0).toLocaleString()}`}</td><td>{editing?<input value={editExtra?.note??''} onChange={e=>setEditExtra(v=>({...v,note:e.target.value}))} placeholder="備註" style={{minWidth:140,height:36}}/>:(r.note||'—')}</td><td><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{editing?<><button className="btn btn-sm btn-primary" disabled={extraBusyId===r.id} onClick={()=>saveExtra(r)}>{extraBusyId===r.id?'儲存中...':'儲存'}</button><button className="btn btn-sm btn-ghost" onClick={cancelEditExtra}>取消</button></>:<><button className="btn btn-sm btn-ghost" onClick={()=>beginEditExtra(r)}><Pencil size={13}/>修改</button><button className="btn btn-sm btn-danger" disabled={received>0||extraBusyId===r.id} title={received>0?'已有入庫紀錄，不能刪除':'刪除這筆待入庫叫貨'} onClick={()=>deleteExtra(r)}><Trash2 size={13}/>刪除</button><button className="btn btn-sm btn-primary" onClick={()=>receive(r)}><ArchiveRestore size={13}/>全部到貨並轉現貨</button></>}</div>{received>0&&<div style={{fontSize:11,color:'#b45309',marginTop:5}}>已有入庫，只能修改備註</div>}</td></tr>
+    })}</tbody></table></div></div>
 
     <div className="card" style={{marginBottom:16}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><Warehouse size={15}/> 可售現貨</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>目前共 {total} 件</span></div><div className="card-body"><div className="search-input-wrap" style={{width:'100%',maxWidth:760,marginBottom:12}}><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋商品／規格／供應商" style={{paddingLeft:36,height:46,fontSize:15}}/></div><div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>可售現貨</th><th>手動調整</th></tr></thead><tbody>{filtered.length===0&&<tr><td colSpan={5} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>目前沒有符合的現貨</td></tr>}{filtered.map(r=><tr key={r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td><strong style={{fontSize:18,color:Number(r.available_qty||0)>0?'#059669':'#94a3b8'}}>{r.available_qty||0}</strong></td><td><input type="number" min="0" defaultValue={r.available_qty||0} onBlur={e=>adjust(r,e.target.value)} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}} style={{width:100,height:40,textAlign:'center',fontWeight:900}}/></td></tr>)}</tbody></table></div></div></div>
 
