@@ -30,6 +30,10 @@ export async function neonHelperRuntime(action,payload={}){
   return postAuthed('/api/neon-helper-runtime',{action,...payload})
 }
 
+export async function neonHelperAdminRuntime(payload={}){
+  return postAuthed('/api/neon-helper-admin',payload)
+}
+
 export async function neonInventoryRuntime(action,payload={}){
   return postAuthed('/api/neon-inventory-runtime',{action,...payload})
 }
