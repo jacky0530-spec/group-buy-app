@@ -11,7 +11,6 @@ import ExcelOrderImport from './pages/ExcelOrderImport'
 import Reports from './pages/Reports'
 import PendingProductReport from './pages/PendingProductReportFiltered'
 import StockInventory from './pages/StockInventory'
-import DataMigration from './pages/DataMigration'
 import Expenses from './pages/Expenses'
 import SupplierPayments from './pages/SupplierPayments'
 import Accounts from './pages/Accounts'
@@ -42,7 +41,6 @@ export default function App() {
                   <Route path="supplier-payments" element={<SupplierPayments />} />
                   <Route path="helper-entries" element={<HelperEntries />} />
                   <Route path="accounts" element={<Accounts />} />
-                  <Route path="data-migration" element={<DataMigration />} />
                 </Route>
               </Route>
               <Route element={<RoleGuard roles={['helper']} />}>
