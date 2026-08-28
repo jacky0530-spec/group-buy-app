@@ -120,8 +120,19 @@ async function syncEntry(sql,auth,account,row){
 }
 
 async function listCatalog(sql){
-  const rows=await sql`SELECT legacy_id AS id,name,price,category,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,active,updated_at FROM products WHERE active<>false ORDER BY name ASC`
-  return rows.map(row=>({...row,price:Number(row.price||0),price_options:(row.price_options||[]).map(option=>({label:option?.label||'',price:Number(option?.price||0)}))}))
+  const rows=await sql`
+    SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.active,p.updated_at,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE oi.product_id=p.id AND o.archived<>true AND o.status='shipped'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE oi.product_id=p.id AND o.archived<>true AND o.status='pending'
+      ) THEN true ELSE false END AS shipped_out
+    FROM products p
+    WHERE p.active<>false
+    ORDER BY p.name ASC`
+  return rows.map(row=>({...row,price:Number(row.price||0),shipped_out:row.shipped_out===true,price_options:(row.price_options||[]).map(option=>({label:option?.label||'',price:Number(option?.price||0)}))}))
 }
 async function listCustomers(sql){return sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note FROM customers WHERE active<>false ORDER BY name ASC`}
 async function listMyEntries(sql,auth){
