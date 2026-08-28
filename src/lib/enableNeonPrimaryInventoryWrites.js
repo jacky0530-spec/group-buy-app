@@ -123,9 +123,15 @@ if(!globalThis[INSTALLED]){
     if(!inventory?.id||!inventory?.product_id) throw new Error('請選擇現貨商品')
     if(!Number.isInteger(amount)||amount<1) throw new Error('數量至少為 1')
     const orderId=randomLegacyId(),helperEntryId=randomLegacyId()
-    const primary=await neonHelperStockOrder({order_id:orderId,helper_entry_id:helperEntryId,customer_id:customer.id,product_id:inventory.product_id,spec:inventory.spec||{},qty:amount,note:String(note||'').trim(),display_name:displayName})
+    const payload={order_id:orderId,helper_entry_id:helperEntryId,customer_id:customer.id,product_id:inventory.product_id,spec:inventory.spec||{},qty:amount,note:String(note||'').trim(),display_name:displayName}
+    const primary=await neonHelperStockOrder(payload)
     const result=primary?.result||{}
     if(result.order_id!==orderId) throw new Error('Neon 現貨訂單 ID 驗證失敗')
+    // Retry recovery: an earlier request may have created the order but missed the stock movement.
+    // consume_stock is idempotent for orders that already have a sale movement.
+    if(result.state==='already'){
+      await neonInventoryRuntime('consume_stock',{order_id:orderId,product_id:inventory.product_id,spec:inventory.spec||{},qty:amount,note:'小幫手現貨開單重試補扣'})
+    }
     return orderId
   }
 }
