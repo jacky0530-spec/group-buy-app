@@ -10,6 +10,7 @@ import './lib/enableNeonDualWrite.js'
 import './lib/enableNeonHelperReads.js'
 import './lib/enableNeonOrderRead.js'
 import './lib/enableNeonPaymentRead.js'
+import './lib/enableNeonInventoryReads.js'
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
