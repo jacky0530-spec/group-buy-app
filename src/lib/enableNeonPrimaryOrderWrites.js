@@ -1,5 +1,6 @@
 import { OrdersAPI } from './db'
 import { neonOrdersRuntime } from './neonRuntime'
+import { neonOrderStatusRuntime } from './neonOrderStatusRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-order-writes-installed')
 
@@ -18,6 +19,24 @@ function install(method,action,payload){
   }
 }
 
+function installPreorderStatus(){
+  const firestoreOrStockFlow=OrdersAPI.updateStatus
+  if(typeof firestoreOrStockFlow!=='function') return
+  OrdersAPI.updateStatus=async function(id,status,options={}){
+    const meta=await neonOrderStatusRuntime('meta',{id})
+    if(meta?.result?.fulfillment_type==='stock'){
+      return firestoreOrStockFlow.apply(this,[id,status,options])
+    }
+    const primary=await neonOrderStatusRuntime('update',{id,status,reason:options?.reason||''})
+    try{
+      await firestoreOrStockFlow.apply(this,[id,status,options])
+    }catch(err){
+      console.error('[Firestore mirror] preorder status failed after Neon success',err)
+    }
+    return primary?.result
+  }
+}
+
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
   install('updatePayment','update_payment',(_id,payment_status)=>({payment_status}))
@@ -28,4 +47,5 @@ if(!globalThis[INSTALLED]){
   install('clearRefunds','clear_refunds',()=>({}))
   install('updateArrival','update_arrival',(_id,items)=>({items}))
   install('updateItemQty','update_item_qty',(_id,item_index,qty)=>({item_index,qty}))
+  installPreorderStatus()
 }
