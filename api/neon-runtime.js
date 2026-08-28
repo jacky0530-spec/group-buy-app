@@ -76,6 +76,62 @@ async function syncExpense(sql,row){
   return legacyId
 }
 
+async function writeCustomer(sql,body){
+  const op=text(body?.op)||'update'
+  const id=text(body?.id||body?.row?.id)
+  if(!id) throw new Error('缺少客戶 ID')
+  const now=new Date().toISOString()
+  if(op==='create'){
+    const row={...(body.row||{}),id,active:true,joined_at:body.row?.joined_at||now,updated_at:now}
+    await syncCustomer(sql,row)
+    return row
+  }
+  const rows=await sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note,active,joined_at,archived_at,updated_at FROM customers WHERE legacy_id=${id} LIMIT 1`
+  if(!rows[0]) throw new Error('Neon 找不到客戶')
+  let row={...rows[0],...(body.data||{}),id,updated_at:now}
+  if(op==='archive') row={...row,active:false,archived_at:now}
+  if(op==='restore') row={...row,active:true,archived_at:null}
+  await syncCustomer(sql,row)
+  return row
+}
+
+async function writeProduct(sql,body){
+  const op=text(body?.op)||'update'
+  const id=text(body?.id||body?.row?.id)
+  if(!id) throw new Error('缺少商品 ID')
+  const now=new Date().toISOString()
+  if(op==='create'){
+    const row={...(body.row||{}),id,active:true,created_at:body.row?.created_at||now,updated_at:now}
+    await syncProduct(sql,row)
+    return row
+  }
+  const rows=await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products WHERE legacy_id=${id} LIMIT 1`
+  if(!rows[0]) throw new Error('Neon 找不到商品')
+  let row={...rows[0],...(body.data||{}),id,updated_at:now}
+  if(op==='archive') row={...row,active:false,archived_at:now}
+  if(op==='restore') row={...row,active:true,archived_at:null}
+  await syncProduct(sql,row)
+  return row
+}
+
+async function writeExpense(sql,body){
+  const op=text(body?.op)||'update'
+  const id=text(body?.id||body?.row?.id)
+  if(!id) throw new Error('缺少費用 ID')
+  const now=new Date().toISOString()
+  if(op==='create'){
+    const row={...(body.row||{}),id,active:true,created_at:body.row?.created_at||now,updated_at:now}
+    await syncExpense(sql,row)
+    return row
+  }
+  const rows=await sql`SELECT legacy_id AS id,month,supplier,type,amount,note,active,archived_at,created_at,updated_at FROM expenses WHERE legacy_id=${id} LIMIT 1`
+  if(!rows[0]) throw new Error('Neon 找不到費用')
+  let row={...rows[0],...(body.data||{}),id,updated_at:now}
+  if(op==='archive') row={...row,active:false,archived_at:now}
+  await syncExpense(sql,row)
+  return row
+}
+
 async function listOrders(sql){
   const orders=await sql`
     SELECT
@@ -191,6 +247,21 @@ export default async function handler(req,res){
       requireStaff(account)
       const id=await syncExpense(sql,req.body?.row||{})
       return json(res,200,{ok:true,id})
+    }
+
+    if(action==='write_customer'){
+      requireStaff(account)
+      return json(res,200,{ok:true,result:await writeCustomer(sql,req.body||{})})
+    }
+
+    if(action==='write_product'){
+      requireStaff(account)
+      return json(res,200,{ok:true,result:await writeProduct(sql,req.body||{})})
+    }
+
+    if(action==='write_expense'){
+      requireStaff(account)
+      return json(res,200,{ok:true,result:await writeExpense(sql,req.body||{})})
     }
 
     throw new Error('未知的 Neon runtime 動作')
