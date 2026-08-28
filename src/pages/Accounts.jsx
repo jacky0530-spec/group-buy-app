@@ -4,7 +4,7 @@ import { useAuth } from '../components/AuthGuard'
 import { MaintenanceAPI } from '../lib/db'
 import { db } from '../lib/firebase'
 import { neonAccountsRuntime } from '../lib/neonRuntime'
-import { collection, doc, setDoc, getDocs, getDoc, query, orderBy, updateDoc } from 'firebase/firestore'
+import { collection, doc, setDoc, getDocs, query, orderBy, updateDoc } from 'firebase/firestore'
 import { Plus, Shield, User, Mail, Eye, EyeOff, RefreshCw, Power } from 'lucide-react'
 
 const ROLES = {
@@ -26,9 +26,21 @@ async function createAuthUser(email,password,apiKey) {
   }
   return data.localId
 }
-async function getAccounts() {
+
+async function getFirestoreAccounts() {
   const snap = await getDocs(query(collection(db,ACCOUNTS_COL),orderBy('created_at','asc')))
   return snap.docs.map(d => ({ id:d.id,...d.data() }))
+}
+
+async function getAccounts() {
+  try {
+    const result = await neonAccountsRuntime('list')
+    if (!Array.isArray(result?.rows)) throw new Error('Neon 帳號清單格式錯誤')
+    return result.rows
+  } catch (err) {
+    console.error('[Neon read fallback] accounts',err)
+    return getFirestoreAccounts()
+  }
 }
 
 async function syncNeonAccount(row) {
@@ -37,24 +49,22 @@ async function syncNeonAccount(row) {
 
 export default function Accounts() {
   const toast = useToast()
-  const { user } = useAuth()
+  const { user, role:authRole } = useAuth()
   const [accounts,setAccounts] = useState([])
-  const [myRole,setMyRole] = useState(null)
-  const [roleLoaded,setRoleLoaded] = useState(false)
   const [loading,setLoading] = useState(true)
   const [showModal,setShowModal] = useState(false)
   const [saving,setSaving] = useState(false)
   const [showPwd,setShowPwd] = useState(false)
   const [migrating,setMigrating] = useState(false)
   const [form,setForm] = useState({ display_name:'', email:'', password:'', role:'staff' })
-  const isOwner = roleLoaded && myRole === 'owner'
+  const roleLoaded = Boolean(authRole)
+  const isOwner = authRole === 'owner'
 
   const load = useCallback(async () => {
     if (!user) return
     setLoading(true)
     try {
-      const [list,mine] = await Promise.all([getAccounts(),getDoc(doc(db,ACCOUNTS_COL,user.uid))])
-      setAccounts(list); setMyRole(mine.exists() ? (mine.data().role || 'staff') : null); setRoleLoaded(true)
+      setAccounts(await getAccounts())
     } catch (err) { toast('帳號資料載入失敗：'+err.message,'error') }
     finally { setLoading(false) }
   },[user,toast])
@@ -129,8 +139,8 @@ export default function Accounts() {
       <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}><button className="btn btn-ghost btn-sm" onClick={load}><RefreshCw size={13}/>重新整理</button>{isOwner && <button className="btn btn-ghost btn-sm" disabled={migrating} onClick={backfillSnapshots}>{migrating ? '升級歷史資料中...' : '升級舊訂單快照'}</button>}{isOwner && <button className="btn btn-primary" onClick={() => setShowModal(true)}><Plus size={15}/>新增帳號</button>}</div>
     </div>
 
-    <div style={{ background:'var(--amber-light)',border:'1px solid #fde68a',borderRadius:10,padding:'12px 14px',marginBottom:16,fontSize:13,color:'#92400e',display:'flex',gap:9 }}><Shield size={16} style={{ flexShrink:0 }}/><div>登入仍由 <strong>Firebase Authentication</strong> 負責；業務 API 權限由 <strong>Neon accounts</strong> 驗證。新增帳號、停用/啟用與角色調整會同步更新兩邊。密碼不會寫入 Neon。</div></div>
-    {!roleLoaded && !loading && <div style={{ background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:16 }}>目前登入 UID 尚未建立 accounts 文件。請先確認 Firebase accounts 白名單資料。</div>}
+    <div style={{ background:'var(--amber-light)',border:'1px solid #fde68a',borderRadius:10,padding:'12px 14px',marginBottom:16,fontSize:13,color:'#92400e',display:'flex',gap:9 }}><Shield size={16} style={{ flexShrink:0 }}/><div>登入由 <strong>Firebase Authentication</strong> 負責；登入後角色、帳號清單與業務 API 權限以 <strong>Neon accounts</strong> 為主。新增帳號、停用/啟用與角色調整仍同步 Firebase 白名單，方便回退。密碼不會寫入 Neon。</div></div>
+    {!roleLoaded && !loading && <div style={{ background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:16 }}>目前登入帳號尚未取得有效角色，請確認 Neon accounts 與 Firebase Auth UID 對應。</div>}
 
     <div className="card"><div className="table-container"><table><thead><tr><th>姓名</th><th>Email</th><th>角色</th><th>狀態</th><th>建立時間</th>{isOwner && <th style={{ textAlign:'right' }}>操作</th>}</tr></thead><tbody>
       {loading && <tr><td colSpan={6} style={{ textAlign:'center',padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
