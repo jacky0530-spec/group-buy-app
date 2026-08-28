@@ -68,6 +68,16 @@ async function listCatalog(sql){
   }))
 }
 
+async function listCustomers(sql){
+  const rows=await sql`
+    SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note
+    FROM customers
+    WHERE active<>false
+    ORDER BY name ASC
+  `
+  return rows
+}
+
 async function listMyEntries(sql,auth){
   const rows=await sql`
     SELECT h.legacy_id AS id,h.payload,h.created_by_uid,h.created_by_name,c.legacy_id AS customer_id,
@@ -152,6 +162,7 @@ export default async function handler(req,res){
     const account=await requireAccount(sql,auth)
     const action=text(req.body?.action)
     if(action==='catalog') return res.status(200).json({ok:true,rows:await listCatalog(sql)})
+    if(action==='customers') return res.status(200).json({ok:true,rows:await listCustomers(sql)})
     if(action==='my_entries') return res.status(200).json({ok:true,rows:await listMyEntries(sql,auth)})
     if(action==='my_pending_orders') return res.status(200).json({ok:true,rows:await listMyPendingOrders(sql,auth)})
     if(action==='sync') return res.status(200).json({ok:true,id:await syncEntry(sql,auth,account,req.body?.row||{})})
