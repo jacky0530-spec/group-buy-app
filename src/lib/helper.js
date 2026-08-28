@@ -1,5 +1,6 @@
 import { collection, doc, getDoc, getDocs, updateDoc, writeBatch, Timestamp, query, where } from 'firebase/firestore'
 import { db } from './firebase'
+import { bestEffortNeonHelperSync, bestEffortNeonOrderSync } from './neonRuntime'
 
 const now = () => Timestamp.now()
 const nowISO = () => new Date().toISOString()
@@ -8,6 +9,45 @@ const normalize = d => {
   const x = { id:d.id, ...d.data() }
   ;['created_at','updated_at','converted_at','order_date'].forEach(k => { if (x[k]) x[k] = toISO(x[k]) })
   return x
+}
+
+function cleanForNeon(value) {
+  if (value == null) return value
+  if (value instanceof Timestamp) return value.toDate().toISOString()
+  if (typeof value?.toDate === 'function') return value.toDate().toISOString()
+  if (Array.isArray(value)) return value.map(cleanForNeon)
+  if (typeof value === 'object') {
+    const out = {}
+    Object.entries(value).forEach(([key,item]) => { out[key] = cleanForNeon(item) })
+    return out
+  }
+  return value
+}
+
+async function syncPairRows(entryRow, orderRow) {
+  if (orderRow) await bestEffortNeonOrderSync(cleanForNeon(orderRow))
+  if (entryRow) await bestEffortNeonHelperSync(cleanForNeon(entryRow))
+}
+
+async function syncPairById(entryId, orderId) {
+  try {
+    const [entrySnap,orderSnap] = await Promise.all([
+      entryId ? getDoc(doc(db,'helper_entries',entryId)) : Promise.resolve(null),
+      orderId ? getDoc(doc(db,'orders',orderId)) : Promise.resolve(null),
+    ])
+    await syncPairRows(
+      entrySnap?.exists?.() ? { id:entrySnap.id,...entrySnap.data() } : null,
+      orderSnap?.exists?.() ? { id:orderSnap.id,...orderSnap.data() } : null,
+    )
+  } catch (err) {
+    console.error('[Neon dual-write] helper pair readback failed',err)
+  }
+}
+
+async function syncPairsInBackground(pairs=[]) {
+  for (let i=0;i<pairs.length;i+=8) {
+    await Promise.all(pairs.slice(i,i+8).map(pair => syncPairRows(pair.entry,pair.order)))
+  }
 }
 
 function snapshotItem(product, line = {}) {
@@ -96,9 +136,6 @@ export const HelperAPI = {
     return snap.docs.map(normalize).sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
   },
   async myPendingOrders(uid){
-    // Firestore rules only allow helpers to read orders that are both their own
-    // and explicitly marked source='helper'. The query must carry both
-    // constraints; filtering source only after getDocs is rejected by Rules.
     const snap = await getDocs(query(
       collection(db,'orders'),
       where('created_by_uid','==',uid),
@@ -129,10 +166,12 @@ export const HelperAPI = {
       created_at:at,
       updated_at:at,
     }
+    const fullOrder = { ...orderPayload, order_date:at, created_at:at, updated_at:at }
     const batch = writeBatch(db)
     batch.set(entryRef,entryPayload)
-    batch.set(orderRef,{ ...orderPayload, order_date:at, created_at:at, updated_at:at })
+    batch.set(orderRef,fullOrder)
     await batch.commit()
+    await syncPairRows({ id:entryRef.id,...entryPayload },{ id:orderRef.id,...fullOrder })
     return { entry_id:entryRef.id, order_id:orderRef.id }
   },
   async createDirectEntries(entries=[]){
@@ -145,11 +184,12 @@ export const HelperAPI = {
     for (let i=0; i<prepared.length; i+=190) {
       const batch = writeBatch(db)
       const at = now()
+      const neonPairs = []
       prepared.slice(i,i+190).forEach(({ data,items }) => {
         const entryRef = doc(collection(db,'helper_entries'))
         const orderRef = doc(collection(db,'orders'))
         const orderPayload = orderPayloadFromEntry(data,items,entryRef.id)
-        batch.set(entryRef,{
+        const entryPayload = {
           ...data,
           items:(data.items || []).map((x,index) => ({ ...x, sale_price:items[index]?.sale_price ?? x.sale_price ?? 0 })),
           total_amount:items.reduce((s,item)=>s+Number(item.subtotal||0),0),
@@ -159,11 +199,15 @@ export const HelperAPI = {
           direct_order:true,
           created_at:at,
           updated_at:at,
-        })
-        batch.set(orderRef,{ ...orderPayload, order_date:at, created_at:at, updated_at:at })
+        }
+        const fullOrder = { ...orderPayload, order_date:at, created_at:at, updated_at:at }
+        batch.set(entryRef,entryPayload)
+        batch.set(orderRef,fullOrder)
+        neonPairs.push({ entry:{ id:entryRef.id,...entryPayload },order:{ id:orderRef.id,...fullOrder } })
         created += 1
       })
       await batch.commit()
+      void syncPairsInBackground(neonPairs)
     }
     return created
   },
@@ -195,9 +239,19 @@ export const HelperAPI = {
       }
     }
     await batch.commit()
+    await syncPairById(current.helper_entry_id,orderId)
     return true
   },
-  async updateEntry(id,data){ await updateDoc(doc(db,'helper_entries',id),{...data,updated_at:now()}) },
+  async updateEntry(id,data){
+    const ref = doc(db,'helper_entries',id)
+    await updateDoc(ref,{...data,updated_at:now()})
+    try {
+      const snap = await getDoc(ref)
+      if (snap.exists()) await bestEffortNeonHelperSync({ id:snap.id,...cleanForNeon(snap.data()) })
+    } catch (err) {
+      console.error(`[Neon dual-write] helper_entries/${id} readback failed`,err)
+    }
+  },
   async syncCatalog(products=[]){
     for(let i=0;i<products.length;i+=400){
       const batch=writeBatch(db)
