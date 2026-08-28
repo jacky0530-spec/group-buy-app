@@ -26,6 +26,10 @@ export async function neonOrdersRuntime(action,payload={}){
   return postAuthed('/api/neon-orders-runtime',{action,...payload})
 }
 
+export async function neonOrderEditRuntime(payload={}){
+  return postAuthed('/api/neon-order-edit',payload)
+}
+
 export async function neonPaymentsRuntime(action,payload={}){
   return postAuthed('/api/neon-payments-runtime',{action,...payload})
 }
