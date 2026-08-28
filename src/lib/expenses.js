@@ -1,34 +1,4 @@
-import { addDoc, collection, getDocs, getDoc, orderBy, query, Timestamp, updateDoc, doc } from 'firebase/firestore'
-import { db } from './firebase'
-import { bestEffortNeonSync, neonRuntime } from './neonRuntime'
-
-const now = () => Timestamp.now()
-
-function normalize(snap) {
-  const data = { id:snap.id, ...snap.data() }
-  for (const field of ['created_at','updated_at','archived_at']) {
-    const value = data[field]
-    if (value?.toDate) data[field] = value.toDate().toISOString()
-  }
-  return data
-}
-
-async function syncExpense(id) {
-  try {
-    const snap = await getDoc(doc(db,'expenses',id))
-    if (!snap.exists()) return null
-    return await bestEffortNeonSync('sync_expense', normalize(snap))
-  } catch (err) {
-    console.error(`[Neon dual-write] expenses/${id} readback failed`,err)
-    return null
-  }
-}
-
-async function listFirestore(includeArchived) {
-  const snap = await getDocs(query(collection(db,'expenses'), orderBy('month','desc')))
-  const rows = snap.docs.map(normalize)
-  return includeArchived ? rows : rows.filter(row => row.active !== false)
-}
+import { neonRuntime } from './neonRuntime'
 
 export const EXPENSE_TYPES = [
   { id:'shipping', label:'運費', sign:1 },
@@ -41,42 +11,43 @@ export function expenseSignedAmount(row) {
   return row?.type === 'discount' ? -amount : amount
 }
 
+function randomLegacyId(){
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const bytes=new Uint8Array(20)
+  if(globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
+  else for(let i=0;i<bytes.length;i++) bytes[i]=Math.floor(Math.random()*256)
+  return Array.from(bytes,b=>chars[b%chars.length]).join('')
+}
+
 export const ExpensesAPI = {
   async list({ includeArchived = false } = {}) {
-    try {
-      const result = await neonRuntime('list_expenses',{ includeArchived })
-      if (Array.isArray(result?.rows)) return result.rows
-      throw new Error('Neon 回傳格式錯誤')
-    } catch (err) {
-      console.error('[Neon read fallback] expenses',err)
-      return listFirestore(includeArchived)
-    }
+    const result = await neonRuntime('list_expenses',{ includeArchived })
+    if (!Array.isArray(result?.rows)) throw new Error('Neon 費用回傳格式錯誤')
+    return result.rows
   },
   async create(data) {
-    const payload = {
+    const id=randomLegacyId()
+    const at=new Date().toISOString()
+    const row={
+      id,
       month:String(data.month || ''),
       supplier:String(data.supplier || '').trim(),
       type:String(data.type || 'shipping'),
       amount:Math.abs(Number(data.amount || 0)),
       note:String(data.note || '').trim(),
       active:true,
-      created_at:now(),
-      updated_at:now(),
+      created_at:at,
+      updated_at:at,
     }
-    const ref = await addDoc(collection(db,'expenses'), payload)
-    await syncExpense(ref.id)
-    return { id:ref.id, ...payload }
+    const result=await neonRuntime('write_expense',{op:'create',id,row})
+    return {...row,...(result?.result||{})}
   },
   async update(id, data) {
-    await updateDoc(doc(db,'expenses',id), {
-      ...data,
-      amount:data.amount == null ? undefined : Math.abs(Number(data.amount || 0)),
-      updated_at:now(),
-    })
-    await syncExpense(id)
+    const clean={...data}
+    if(data.amount!=null) clean.amount=Math.abs(Number(data.amount||0))
+    return (await neonRuntime('write_expense',{op:'update',id,data:clean}))?.result
   },
   async archive(id) {
-    await updateDoc(doc(db,'expenses',id), { active:false, archived_at:now(), updated_at:now() })
-    await syncExpense(id)
+    return (await neonRuntime('write_expense',{op:'archive',id}))?.result
   },
 }
