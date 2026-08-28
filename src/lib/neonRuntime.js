@@ -18,6 +18,10 @@ export async function neonRuntime(action,payload={}){
   return postAuthed('/api/neon-runtime',{action,...payload})
 }
 
+export async function neonOrderQuery(action,payload={}){
+  return postAuthed('/api/neon-order-query',{action,...payload})
+}
+
 export async function neonOrdersRuntime(action,payload={}){
   return postAuthed('/api/neon-orders-runtime',{action,...payload})
 }
