@@ -1,7 +1,11 @@
 import { doc, getDoc, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
 import { CustomersAPI, OrdersAPI, ProductsAPI, SupplierPaymentsAPI } from './db'
+import { InventoryAPI } from './inventory'
 import {
+  bestEffortNeonExtraSync,
+  bestEffortNeonHelperSync,
+  bestEffortNeonInventorySync,
   bestEffortNeonOrderDelete,
   bestEffortNeonOrderSync,
   bestEffortNeonPaymentSync,
@@ -133,6 +137,64 @@ function wrapSupplierPayments(){
   }
 }
 
+function wrapInventory(){
+  if(typeof InventoryAPI.createExtraPurchase==='function'){
+    const original=InventoryAPI.createExtraPurchase
+    InventoryAPI.createExtraPurchase=async function(...args){
+      const id=await original.apply(this,args)
+      try{
+        const row=await readFirestoreDocument('stock_purchase_extras',id)
+        if(row) await bestEffortNeonExtraSync(row)
+      }catch(err){console.error(`[Neon dual-write] stock_purchase_extras/${id} readback failed`,err)}
+      return id
+    }
+  }
+
+  if(typeof InventoryAPI.receiveExtraPurchase==='function'){
+    const original=InventoryAPI.receiveExtraPurchase
+    InventoryAPI.receiveExtraPurchase=async function(...args){
+      const extraId=args[0]
+      const result=await original.apply(this,args)
+      try{
+        const inventory=await readFirestoreDocument('stock_inventory',result?.inventory_id)
+        if(inventory) await bestEffortNeonInventorySync(inventory)
+        const extra=await readFirestoreDocument('stock_purchase_extras',extraId)
+        if(extra) await bestEffortNeonExtraSync(extra)
+      }catch(err){console.error('[Neon dual-write] receive extra purchase readback failed',err)}
+      return result
+    }
+  }
+
+  if(typeof InventoryAPI.adjustAvailable==='function'){
+    const original=InventoryAPI.adjustAvailable
+    InventoryAPI.adjustAvailable=async function(...args){
+      const inventoryId=args[0]
+      const result=await original.apply(this,args)
+      try{
+        const inventory=await readFirestoreDocument('stock_inventory',inventoryId)
+        if(inventory) await bestEffortNeonInventorySync(inventory)
+      }catch(err){console.error(`[Neon dual-write] stock_inventory/${inventoryId} readback failed`,err)}
+      return result
+    }
+  }
+
+  if(typeof InventoryAPI.createHelperStockOrder==='function'){
+    const original=InventoryAPI.createHelperStockOrder
+    InventoryAPI.createHelperStockOrder=async function(...args){
+      const orderId=await original.apply(this,args)
+      await syncOrderId(orderId)
+      try{
+        const order=await readFirestoreDocument('orders',orderId)
+        if(order?.helper_entry_id){
+          const entry=await readFirestoreDocument('helper_entries',order.helper_entry_id)
+          if(entry) await bestEffortNeonHelperSync(entry)
+        }
+      }catch(err){console.error('[Neon dual-write] helper stock order linkage failed',err)}
+      return orderId
+    }
+  }
+}
+
 function sameIds(a,b){
   if(a.length!==b.length) return false
   const left=[...a].map(x=>String(x?.id||'')).sort()
@@ -178,6 +240,7 @@ if(!globalThis[INSTALLED]){
   wrapCrud(ProductsAPI,'products','sync_product')
   wrapOrders()
   wrapSupplierPayments()
+  wrapInventory()
   wrapShadowList(CustomersAPI,'list_customers','customers')
   wrapNeonFirstList(ProductsAPI,'list_products','products')
 }
