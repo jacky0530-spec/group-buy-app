@@ -1,7 +1,4 @@
-import { doc, setDoc, Timestamp } from 'firebase/firestore'
-import { db } from './firebase'
 import { InventoryAPI, normalizeStockSpec, stockSpecLabel } from './inventory'
-import { getRawInventoryMethods } from './captureLegacyInventoryMethods'
 import { neonInventoryRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-inventory-writes-installed')
@@ -15,11 +12,6 @@ function randomLegacyId(){
   return Array.from(bytes,b=>chars[b%chars.length]).join('')
 }
 
-async function mirror(label,fn){
-  try{return await fn()}
-  catch(err){console.error(`[Firestore mirror] ${label} failed after Neon success`,err);return null}
-}
-
 async function neonHelperStockOrder(payload){
   try{return await neonInventoryRuntime('create_helper_stock_order',payload)}
   catch(firstErr){
@@ -31,29 +23,32 @@ async function neonHelperStockOrder(payload){
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
 
-  const firestoreReceive=InventoryAPI.receiveExtraPurchase
-  const firestoreAdjust=InventoryAPI.adjustAvailable
-  const rawHelperStockOrder=getRawInventoryMethods().createHelperStockOrder
+  InventoryAPI.listStock=async function(){
+    const result=await neonInventoryRuntime('list_stock')
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 現貨回傳格式錯誤')
+    return result.rows
+  }
+
+  InventoryAPI.listExtras=async function(){
+    const result=await neonInventoryRuntime('list_extras')
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 額外叫貨回傳格式錯誤')
+    return result.rows
+  }
+
+  InventoryAPI.listMovements=async function(limit=200){
+    const result=await neonInventoryRuntime('list_movements',{limit})
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 庫存流水回傳格式錯誤')
+    return result.rows
+  }
 
   InventoryAPI.createExtraPurchase=async function({product,spec={},qty=1,note=''}){
     const amount=Math.max(1,Number(qty||1))
     if(!product?.id) throw new Error('請選擇商品')
     if(!Number.isInteger(amount)) throw new Error('額外叫貨數量必須是整數')
     const cleanSpec=normalizeStockSpec(spec)
-    const id=randomLegacyId()
-    const createdAt=nowISO()
-    const row={
-      id,product_id:product.id,product_name:product.name||'',supplier:product.supplier||'',
-      spec:cleanSpec,spec_label:stockSpecLabel(cleanSpec),ordered_qty:amount,received_qty:0,
-      unit_cost:Number(product.cost||0),note:String(note||'').trim(),status:'ordered',
-      created_at:createdAt,updated_at:createdAt,
-    }
+    const id=randomLegacyId(),createdAt=nowISO()
+    const row={id,product_id:product.id,product_name:product.name||'',supplier:product.supplier||'',spec:cleanSpec,spec_label:stockSpecLabel(cleanSpec),ordered_qty:amount,received_qty:0,unit_cost:Number(product.cost||0),note:String(note||'').trim(),status:'ordered',created_at:createdAt,updated_at:createdAt}
     await neonInventoryRuntime('sync_extra',{row})
-    await mirror('InventoryAPI.createExtraPurchase',()=>setDoc(doc(db,'stock_purchase_extras',id),{
-      product_id:row.product_id,product_name:row.product_name,supplier:row.supplier,spec:row.spec,spec_label:row.spec_label,
-      ordered_qty:row.ordered_qty,received_qty:0,unit_cost:row.unit_cost,note:row.note,status:'ordered',
-      created_at:Timestamp.now(),updated_at:Timestamp.now(),
-    }))
     return id
   }
 
@@ -64,12 +59,7 @@ if(!globalThis[INSTALLED]){
     const incoming=Math.max(0,Number(extra.ordered_qty||0)-Number(extra.received_qty||0))
     if(incoming<=0) throw new Error('此筆額外叫貨已全部入庫')
     const primary=await neonInventoryRuntime('receive_extra',{extra_id:extraId,qty:incoming,note:extra.note||'額外叫貨入庫'})
-    await mirror('InventoryAPI.receiveExtraPurchase',()=>firestoreReceive.call(this,extraId))
-    return {
-      inventory_id:extra.stock_inventory_id||null,
-      received:incoming,
-      available:Number(primary?.result?.available_qty||0),
-    }
+    return {inventory_id:extra.stock_inventory_id||null,received:incoming,available:Number(primary?.result?.available_qty||0)}
   }
 
   InventoryAPI.adjustAvailable=async function(inventoryId,nextQty,note=''){
@@ -78,10 +68,7 @@ if(!globalThis[INSTALLED]){
     const list=await neonInventoryRuntime('list_stock')
     const inventory=(list?.rows||[]).find(row=>row.id===inventoryId)
     if(!inventory) throw new Error('Neon 找不到要調整的庫存')
-    const primary=await neonInventoryRuntime('set_stock',{
-      product_id:inventory.product_id,spec:inventory.spec||{},available_qty:qty,note:String(note||'').trim()||'後台手動調整',
-    })
-    await mirror('InventoryAPI.adjustAvailable',()=>firestoreAdjust.call(this,inventoryId,qty,note))
+    const primary=await neonInventoryRuntime('set_stock',{product_id:inventory.product_id,spec:inventory.spec||{},available_qty:qty,note:String(note||'').trim()||'後台手動調整'})
     return primary?.result
   }
 
@@ -91,29 +78,10 @@ if(!globalThis[INSTALLED]){
     if(!customer?.id) throw new Error('請選擇客戶')
     if(!inventory?.id||!inventory?.product_id) throw new Error('請選擇現貨商品')
     if(!Number.isInteger(amount)||amount<1) throw new Error('數量至少為 1')
-
-    const orderId=randomLegacyId()
-    const helperEntryId=randomLegacyId()
-    const primary=await neonHelperStockOrder({
-      order_id:orderId,
-      helper_entry_id:helperEntryId,
-      customer_id:customer.id,
-      product_id:inventory.product_id,
-      spec:inventory.spec||{},
-      qty:amount,
-      note:String(note||'').trim(),
-      display_name:displayName,
-    })
+    const orderId=randomLegacyId(),helperEntryId=randomLegacyId()
+    const primary=await neonHelperStockOrder({order_id:orderId,helper_entry_id:helperEntryId,customer_id:customer.id,product_id:inventory.product_id,spec:inventory.spec||{},qty:amount,note:String(note||'').trim(),display_name:displayName})
     const result=primary?.result||{}
     if(result.order_id!==orderId) throw new Error('Neon 現貨訂單 ID 驗證失敗')
-
-    if(typeof rawHelperStockOrder==='function'){
-      await mirror('InventoryAPI.createHelperStockOrder',()=>rawHelperStockOrder({
-        uid,displayName,customer,inventory,qty:amount,note,
-        orderId,
-        helperEntryId:result.helper_entry_id||helperEntryId,
-      }))
-    }
     return orderId
   }
 }
