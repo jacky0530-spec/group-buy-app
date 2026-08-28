@@ -59,6 +59,23 @@ async function syncProduct(sql,row){
   return legacyId
 }
 
+async function syncExpense(sql,row){
+  const legacyId=text(row?.id||row?.legacy_id)
+  if(!legacyId) throw new Error('費用缺少 legacy id')
+  const type=['shipping','other','discount'].includes(row?.type)?row.type:'other'
+  await sql`
+    INSERT INTO expenses (legacy_id,month,supplier,type,amount,note,active,archived_at,created_at,updated_at)
+    VALUES (
+      ${legacyId},${text(row.month)||null},${text(row.supplier)},${type},${Math.abs(num(row.amount))},${text(row.note)},
+      ${row.active!==false},${iso(row.archived_at)},${iso(row.created_at)||new Date().toISOString()},${iso(row.updated_at)||new Date().toISOString()}
+    )
+    ON CONFLICT (legacy_id) DO UPDATE SET
+      month=EXCLUDED.month,supplier=EXCLUDED.supplier,type=EXCLUDED.type,amount=EXCLUDED.amount,note=EXCLUDED.note,
+      active=EXCLUDED.active,archived_at=EXCLUDED.archived_at,updated_at=EXCLUDED.updated_at
+  `
+  return legacyId
+}
+
 async function listOrders(sql){
   const orders=await sql`
     SELECT
@@ -156,6 +173,12 @@ export default async function handler(req,res){
     if(action==='sync_product'){
       requireStaff(account)
       const id=await syncProduct(sql,req.body?.row||{})
+      return json(res,200,{ok:true,id})
+    }
+
+    if(action==='sync_expense'){
+      requireStaff(account)
+      const id=await syncExpense(sql,req.body?.row||{})
       return json(res,200,{ok:true,id})
     }
 
