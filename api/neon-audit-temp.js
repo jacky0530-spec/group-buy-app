@@ -19,8 +19,7 @@ export default async function handler(req,res){
         (SELECT count(*)::int FROM orders WHERE customer_id IS NULL AND COALESCE(customer_name,'') <> '') AS orders_missing_customer_link,
         (SELECT count(*)::int FROM order_items WHERE product_id IS NULL AND COALESCE(product_name,'') <> '') AS items_missing_product_link
     `
-    console.log('NEON_MIGRATION_AUDIT', JSON.stringify(rows[0]))
-    return res.status(200).json({ok:true})
+    return res.status(200).json({ok:true,counts:rows[0]})
   }catch(err){
     console.error('NEON_MIGRATION_AUDIT_ERROR',err)
     return res.status(500).json({ok:false})
