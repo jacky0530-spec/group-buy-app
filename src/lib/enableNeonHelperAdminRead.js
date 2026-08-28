@@ -5,17 +5,9 @@ const INSTALLED=Symbol.for('group-buy.neon-helper-admin-read-installed')
 
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
-  const firestoreAllEntries=HelperAPI.allEntries
-  if(typeof firestoreAllEntries==='function'){
-    HelperAPI.allEntries=async function(...args){
-      try{
-        const result=await neonHelperAdminRuntime()
-        if(!Array.isArray(result?.rows)) throw new Error('Neon 回傳格式錯誤')
-        return [...result.rows].sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
-      }catch(err){
-        console.error('[Neon helper read fallback] allEntries',err)
-        return firestoreAllEntries.apply(this,args)
-      }
-    }
+  HelperAPI.allEntries=async function(){
+    const result=await neonHelperAdminRuntime()
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 回傳格式錯誤')
+    return [...result.rows].sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
   }
 }
