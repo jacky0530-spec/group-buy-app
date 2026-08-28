@@ -1,7 +1,7 @@
 import { doc, getDoc, Timestamp } from 'firebase/firestore'
 import { db } from './firebase'
 import { CustomersAPI, ProductsAPI } from './db'
-import { bestEffortNeonSync } from './neonRuntime'
+import { bestEffortNeonSync, neonRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-dual-write-installed')
 
@@ -43,8 +43,34 @@ function wrapCrud(api,collectionName,action){
   }
 }
 
+function sameIds(a,b){
+  if(a.length!==b.length) return false
+  const left=[...a].map(x=>String(x?.id||'')).sort()
+  const right=[...b].map(x=>String(x?.id||'')).sort()
+  return left.every((id,index)=>id===right[index])
+}
+
+function wrapShadowList(api,action,label){
+  const original=api.list
+  if(typeof original!=='function') return
+  api.list=async function(options={}){
+    const firestoreRows=await original.apply(this,[options])
+    void neonRuntime(action,{includeArchived:options?.includeArchived===true})
+      .then(result=>{
+        const neonRows=Array.isArray(result?.rows)?result.rows:[]
+        if(!sameIds(firestoreRows,neonRows)){
+          console.warn(`[Neon shadow-read mismatch] ${label}: Firestore=${firestoreRows.length}, Neon=${neonRows.length}`)
+        }
+      })
+      .catch(err=>console.error(`[Neon shadow-read] ${label} failed`,err))
+    return firestoreRows
+  }
+}
+
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
   wrapCrud(CustomersAPI,'customers','sync_customer')
   wrapCrud(ProductsAPI,'products','sync_product')
+  wrapShadowList(CustomersAPI,'list_customers','customers')
+  wrapShadowList(ProductsAPI,'list_products','products')
 }
