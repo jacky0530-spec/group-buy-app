@@ -2,6 +2,7 @@ import { neon } from '@neondatabase/serverless'
 import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
 
 const text=v=>String(v??'').trim()
+const num=v=>Number.isFinite(Number(v))?Number(v):0
 
 async function requireStaff(sql,auth){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
@@ -55,6 +56,13 @@ async function updateStatus(sql,legacyId,status,reason){
   return rows[0]
 }
 
+async function correctSupplierState(sql,legacyId,itemIndex,resetArrival){
+  const hasItem=itemIndex!==undefined&&itemIndex!==null&&itemIndex!==''
+  const lineNo=hasItem?Math.max(1,Math.trunc(num(itemIndex))+1):null
+  const rows=await sql`SELECT correct_preorder_supplier_state(${text(legacyId)},${lineNo},${resetArrival===true}) AS result`
+  return rows[0]?.result||{}
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -69,6 +77,9 @@ export default async function handler(req,res){
     }
     if(action==='update'){
       return res.status(200).json({ok:true,result:await updateStatus(sql,req.body?.id,text(req.body?.status),req.body?.reason)})
+    }
+    if(action==='correct_supplier_state'){
+      return res.status(200).json({ok:true,result:await correctSupplierState(sql,req.body?.id,req.body?.item_index,req.body?.reset_arrival)})
     }
     throw new Error('未知的訂單狀態動作')
   }catch(err){
