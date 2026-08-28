@@ -43,6 +43,18 @@ export async function bestEffortNeonSync(action,row){
   }
 }
 
+export async function bestEffortNeonCustomersSync(rows=[]){
+  try{
+    for(let i=0;i<rows.length;i+=200){
+      await neonRuntime('sync_customers',{rows:rows.slice(i,i+200)})
+    }
+    return rows.length
+  }catch(err){
+    console.error('[Neon dual-write] bulk customer sync failed',err)
+    return null
+  }
+}
+
 export async function bestEffortNeonOrderSync(row){
   try{
     return await neonOrdersRuntime('sync',{row})
