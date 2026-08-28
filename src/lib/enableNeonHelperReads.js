@@ -22,6 +22,7 @@ function installNeonFirst(method,action,sorter=null){
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
   installNeonFirst('catalog','catalog',(a,b)=>String(a.name||'').localeCompare(String(b.name||''),'zh-Hant'))
+  installNeonFirst('customers','customers',(a,b)=>String(a.name||'').localeCompare(String(b.name||''),'zh-Hant'))
   installNeonFirst('myEntries','my_entries',(a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
   installNeonFirst('myPendingOrders','my_pending_orders',(a,b)=>String(b.order_date||b.created_at||'').localeCompare(String(a.order_date||a.created_at||'')))
 }
