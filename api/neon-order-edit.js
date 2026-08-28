@@ -26,6 +26,18 @@ async function customerUuid(sql,legacyId){
   return rows[0]?.id||null
 }
 
+async function validateNewOrder(sql,row,index=0){
+  const id=text(row?.id)
+  if(!id) throw new Error(`第 ${index+1} 筆缺少訂單 ID`)
+  const items=Array.isArray(row?.items)?row.items:[]
+  if(!items.length) throw new Error(`第 ${index+1} 筆訂單至少需要一個品項`)
+  if(row.customer_id&&!await customerUuid(sql,row.customer_id)) throw new Error(`第 ${index+1} 筆找不到對應客戶`)
+  for(let i=0;i<items.length;i++){
+    const legacyProduct=text(items[i].original_product_id||items[i].product_id||items[i].id).replace(/^stock:/,'')
+    if(!legacyProduct||!await productUuid(sql,legacyProduct)) throw new Error(`第 ${index+1} 筆第 ${i+1} 項找不到對應商品`)
+  }
+}
+
 async function insertItems(sql,orderId,items,{preserve=[]}={}){
   for(let i=0;i<items.length;i++){
     const item=items[i]
@@ -59,16 +71,13 @@ async function insertItems(sql,orderId,items,{preserve=[]}={}){
 
 async function createOrder(sql,row){
   const id=text(row?.id)
-  if(!id) throw new Error('缺少訂單 ID')
   const items=Array.isArray(row?.items)?row.items:[]
-  if(!items.length) throw new Error('訂單至少需要一個品項')
   const customerId=await customerUuid(sql,row.customer_id)
-  if(row.customer_id&&!customerId) throw new Error('Neon 找不到客戶')
   const total=items.reduce((s,i)=>s+num(i.subtotal||num(i.sale_price??i.price)*Math.max(1,Math.trunc(num(i.qty)||1))),0)
   const created=row.created_at||nowISO()
   const orderDate=row.order_date||created
   const history=Array.isArray(row.status_history)&&row.status_history.length?row.status_history:[{status:row.status||'pending',at:created,note:'建立訂單'}]
-  const inserted=await sql`
+  const upserted=await sql`
     INSERT INTO orders (
       legacy_id,customer_id,customer_name,customer_phone,customer_phone_last2,total_amount,status,payment_status,payable_status,
       refund_amount,is_virtual,source,fulfillment_type,note,created_by_uid,created_by_name,order_date,status_history,refunds,archived,created_at,updated_at
@@ -78,11 +87,18 @@ async function createOrder(sql,row){
       ${num(row.refund_amount)},${row.is_virtual===true},${text(row.source)||'admin'},'preorder',${text(row.note)},${text(row.created_by_uid)},${text(row.created_by_name)},
       ${orderDate},${JSON.stringify(history)}::jsonb,${JSON.stringify(row.refunds||[])}::jsonb,${row.archived===true},${created},${row.updated_at||created}
     )
-    ON CONFLICT (legacy_id) DO NOTHING
+    ON CONFLICT (legacy_id) DO UPDATE SET
+      customer_id=EXCLUDED.customer_id,customer_name=EXCLUDED.customer_name,customer_phone=EXCLUDED.customer_phone,
+      customer_phone_last2=EXCLUDED.customer_phone_last2,total_amount=EXCLUDED.total_amount,status=EXCLUDED.status,
+      payment_status=EXCLUDED.payment_status,payable_status=EXCLUDED.payable_status,refund_amount=EXCLUDED.refund_amount,
+      is_virtual=EXCLUDED.is_virtual,source=EXCLUDED.source,note=EXCLUDED.note,order_date=EXCLUDED.order_date,
+      status_history=EXCLUDED.status_history,refunds=EXCLUDED.refunds,archived=EXCLUDED.archived,updated_at=EXCLUDED.updated_at
     RETURNING id
   `
-  if(!inserted[0]?.id) throw new Error(`訂單 ${id} 已存在`)
-  await insertItems(sql,inserted[0].id,items)
+  const orderId=upserted[0]?.id
+  if(!orderId) throw new Error(`訂單 ${id} 建立失敗`)
+  await sql`DELETE FROM order_items WHERE order_id=${orderId}`
+  await insertItems(sql,orderId,items)
   return {id,total_amount:total,items:items.length,order_date:orderDate,created_at:created}
 }
 
@@ -134,11 +150,16 @@ export default async function handler(req,res){
     await requireStaff(sql,auth.uid)
     const action=text(req.body?.action)||'edit'
     if(action==='edit') return res.status(200).json({ok:true,result:await editOrder(sql,text(req.body?.id),req.body?.data||{})})
-    if(action==='create') return res.status(200).json({ok:true,result:await createOrder(sql,req.body?.row||{})})
+    if(action==='create'){
+      const row=req.body?.row||{}
+      await validateNewOrder(sql,row,0)
+      return res.status(200).json({ok:true,result:await createOrder(sql,row)})
+    }
     if(action==='create_many'){
       const rows=Array.isArray(req.body?.rows)?req.body.rows:[]
       if(!rows.length) throw new Error('沒有可建立的訂單')
-      if(rows.length>100) throw new Error('單次最多建立 100 筆訂單')
+      if(rows.length>250) throw new Error('單次最多建立 250 筆訂單，請分批匯入')
+      for(let i=0;i<rows.length;i++) await validateNewOrder(sql,rows[i],i)
       const created=[]
       for(const row of rows) created.push(await createOrder(sql,row))
       return res.status(200).json({ok:true,rows:created})
