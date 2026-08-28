@@ -41,9 +41,9 @@ if(!globalThis[INSTALLED]){
     const primary=await neonRuntime('write_customer',{op:'create',id,row})
     return {...row,...(primary?.result||{})}
   }
-  CustomersAPI.update=async function(id,data={})=> (await neonRuntime('write_customer',{op:'update',id,data:customerData(data)}))?.result
-  CustomersAPI.archive=async function(id)=> (await neonRuntime('write_customer',{op:'archive',id}))?.result
-  CustomersAPI.restore=async function(id)=> (await neonRuntime('write_customer',{op:'restore',id}))?.result
+  CustomersAPI.update=async function(id,data={}){return (await neonRuntime('write_customer',{op:'update',id,data:customerData(data)}))?.result}
+  CustomersAPI.archive=async function(id){return (await neonRuntime('write_customer',{op:'archive',id}))?.result}
+  CustomersAPI.restore=async function(id){return (await neonRuntime('write_customer',{op:'restore',id}))?.result}
   CustomersAPI.isDuplicateIdentity=async function({phone='',line_nick='',fb_name=''},excludeId=null){
     const rows=(await CustomersAPI.list({includeArchived:false}))||[]
     const checks=[['phone',phone.trim()],['line_nick',line_nick.trim()],['fb_name',fb_name.trim()]].filter(([,v])=>v)
@@ -103,9 +103,9 @@ if(!globalThis[INSTALLED]){
     const primary=await neonRuntime('write_product',{op:'create',id,row})
     return {...row,...(primary?.result||{})}
   }
-  ProductsAPI.update=async function(id,data={})=> (await neonRuntime('write_product',{op:'update',id,data:stripUndefined(data)}))?.result
-  ProductsAPI.archive=async function(id)=> (await neonRuntime('write_product',{op:'archive',id}))?.result
-  ProductsAPI.restore=async function(id)=> (await neonRuntime('write_product',{op:'restore',id}))?.result
+  ProductsAPI.update=async function(id,data={}){return (await neonRuntime('write_product',{op:'update',id,data:stripUndefined(data)}))?.result}
+  ProductsAPI.archive=async function(id){return (await neonRuntime('write_product',{op:'archive',id}))?.result}
+  ProductsAPI.restore=async function(id){return (await neonRuntime('write_product',{op:'restore',id}))?.result}
   ProductsAPI.isDuplicate=async function(name,excludeId=null){
     const rows=await ProductsAPI.list({includeArchived:false})
     return rows.some(row=>row.id!==excludeId&&row.active!==false&&String(row.name||'')===String(name||''))
