@@ -1,5 +1,6 @@
-import { addDoc, collection, getDocs, orderBy, query, Timestamp, updateDoc, doc } from 'firebase/firestore'
+import { addDoc, collection, getDocs, getDoc, orderBy, query, Timestamp, updateDoc, doc } from 'firebase/firestore'
 import { db } from './firebase'
+import { bestEffortNeonSync } from './neonRuntime'
 
 const now = () => Timestamp.now()
 
@@ -10,6 +11,17 @@ function normalize(snap) {
     if (value?.toDate) data[field] = value.toDate().toISOString()
   }
   return data
+}
+
+async function syncExpense(id) {
+  try {
+    const snap = await getDoc(doc(db,'expenses',id))
+    if (!snap.exists()) return null
+    return await bestEffortNeonSync('sync_expense', normalize(snap))
+  } catch (err) {
+    console.error(`[Neon dual-write] expenses/${id} readback failed`,err)
+    return null
+  }
 }
 
 export const EXPENSE_TYPES = [
@@ -41,6 +53,7 @@ export const ExpensesAPI = {
       updated_at:now(),
     }
     const ref = await addDoc(collection(db,'expenses'), payload)
+    await syncExpense(ref.id)
     return { id:ref.id, ...payload }
   },
   async update(id, data) {
@@ -49,8 +62,10 @@ export const ExpensesAPI = {
       amount:data.amount == null ? undefined : Math.abs(Number(data.amount || 0)),
       updated_at:now(),
     })
+    await syncExpense(id)
   },
   async archive(id) {
     await updateDoc(doc(db,'expenses',id), { active:false, archived_at:now(), updated_at:now() })
+    await syncExpense(id)
   },
 }
