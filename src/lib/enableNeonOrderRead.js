@@ -11,7 +11,7 @@ function withOriginalQtyLabels(rows=[]){
       const original=Number(item.original_qty??current)
       if(order.is_virtual===true && original>0 && original!==current){
         const base=String(item.product_name||item.name||'')
-        const label=`${base}〔原訂 ${original}／目前 ${current}〕`
+        const label=`${base}〔原訂 ${original} → 實際 ${current}〕`
         return {...item,original_qty:original,original_product_name:base,product_name:label,name:label}
       }
       return {...item,original_qty:original}
