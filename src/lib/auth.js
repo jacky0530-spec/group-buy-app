@@ -3,23 +3,7 @@ import {
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth'
-import { auth, db } from './firebase'
-import { doc, getDoc } from 'firebase/firestore'
-
-async function getFirestoreAccountAccess(uid) {
-  try {
-    const snap = await getDoc(doc(db, 'accounts', uid))
-    if (!snap.exists()) return { allowed: false, role: null, account: null }
-    const account = snap.data()
-    return {
-      allowed: account.disabled !== true,
-      role: account.role || 'staff',
-      account,
-    }
-  } catch {
-    return { allowed: false, role: null, account: null }
-  }
-}
+import { auth } from './firebase'
 
 async function getNeonAccountAccess(uid) {
   const user = auth.currentUser
@@ -44,12 +28,7 @@ async function getNeonAccountAccess(uid) {
 }
 
 export async function getAccountAccess(uid) {
-  try {
-    return await getNeonAccountAccess(uid)
-  } catch (err) {
-    console.error('[Neon auth fallback] using Firestore account access', err)
-    return getFirestoreAccountAccess(uid)
-  }
+  return getNeonAccountAccess(uid)
 }
 
 export async function isEmailAllowed(uid) {
