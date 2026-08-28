@@ -1,5 +1,3 @@
-import { collection, doc, getDoc, Timestamp, writeBatch } from 'firebase/firestore'
-import { db } from './firebase'
 import { SupplierPaymentsAPI } from './db'
 import { neonPaymentsRuntime } from './neonRuntime'
 
@@ -13,57 +11,15 @@ function randomLegacyId(){
   return Array.from(bytes,b=>chars[b%chars.length]).join('')
 }
 
-async function mirrorPayment(id,request,result){
-  try{
-    const allocations=Array.isArray(result?.allocations)?result.allocations:[]
-    const byOrder=new Map()
-    for(const a of allocations){
-      if(!byOrder.has(a.order_id)) byOrder.set(a.order_id,[])
-      byOrder.get(a.order_id).push(a)
-    }
-    const orderUpdates=[]
-    for(const [orderId,rows] of byOrder.entries()){
-      const ref=doc(db,'orders',orderId)
-      const snap=await getDoc(ref)
-      if(!snap.exists()) continue
-      const items=[...(snap.data().items||[])]
-      for(const a of rows){
-        const index=Math.max(0,Number(a.item_index||0))
-        if(!items[index]) continue
-        const item={...items[index]}
-        const costTotal=Number(item.cost_price||0)*Number(item.qty||0)
-        const oldPaid=Math.max(0,Number(item.supplier_paid_amount||0))
-        const nextPaid=Math.min(costTotal,oldPaid+Number(a.amount||0))
-        item.supplier_paid_amount=nextPaid
-        item.supplier_payment_status=nextPaid>=costTotal-0.01?'paid':nextPaid>0?'partial':'unpaid'
-        item.supplier_payment_refs=[...new Set([...(item.supplier_payment_refs||[]),id])]
-        item.supplier_paid_at=request.payment_date||new Date().toISOString().slice(0,10)
-        items[index]=item
-      }
-      orderUpdates.push({ref,items})
-    }
-
-    const batch=writeBatch(db)
-    for(const row of orderUpdates) batch.update(row.ref,{items:row.items,updated_at:Timestamp.now()})
-    batch.set(doc(collection(db,'supplier_payments'),id),{
-      supplier:String(request.supplier||'').trim(),
-      payment_date:request.payment_date||new Date().toISOString().slice(0,10),
-      amount:Number(request.amount||0),
-      note:String(request.note||'').trim(),
-      allocations:allocations.map(a=>({
-        order_id:a.order_id,item_index:Number(a.item_index||0),customer_name:a.customer_name||'',
-        product_name:a.product_name||'',supplier:a.supplier||request.supplier||'',amount:Number(a.amount||0),
-      })),
-      created_at:Timestamp.now(),updated_at:Timestamp.now(),
-    })
-    await batch.commit()
-  }catch(err){
-    console.error('[Firestore mirror] supplier payment failed after Neon success',err)
-  }
-}
-
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
+
+  SupplierPaymentsAPI.list=async function(){
+    const result=await neonPaymentsRuntime('list')
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 付款回傳格式錯誤')
+    return result.rows
+  }
+
   SupplierPaymentsAPI.createPayment=async function(request={}){
     const supplier=String(request.supplier||'').trim()
     const amount=Number(request.amount||0)
@@ -76,7 +32,6 @@ if(!globalThis[INSTALLED]){
       note:String(request.note||'').trim(),lines:request.lines,
     })
     const result=response?.result||{}
-    await mirrorPayment(id,request,result)
     return {id,amount,allocation_count:Number(result.allocation_count||result.allocations?.length||0)}
   }
 }
