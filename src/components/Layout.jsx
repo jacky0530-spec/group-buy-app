@@ -3,7 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第13版：即將到貨批次工作區正式版；預先拉貨、理貨、批次完成到貨、同頁 Neon 付款與列印到貨表單。
+// 第13版：即將到貨批次工作區正式版；預先拉貨、理貨、批次完成到貨、同頁 Neon 付款與列印到貨表單。Production trigger.
 const APP_VERSION = '第13版｜2026/08/29'
 
 const NAV = [
