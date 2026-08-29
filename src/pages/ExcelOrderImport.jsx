@@ -44,9 +44,13 @@ function parseCellValue(value,header){
   return null
 }
 function likelySummaryRow(row){
-  const name=clean(row?.[1]);if(name)return false
+  const rawName=row?.[1]
+  const name=clean(rawName)
   const nums=(row||[]).slice(2).filter(v=>qtyNumber(v)>0).length
-  return nums>0
+  if(!nums)return false
+  if(!name)return true
+  if(typeof rawName==='number'&&!clean(row?.[0]))return true
+  return false
 }
 function parseSheetRows(rows,fileName,sheetName){
   const title=clean(rows?.[0]?.[0]) || fileName.replace(/\.xlsx?$/i,'')
@@ -151,7 +155,17 @@ function validationError(product,resolved){
   if(['color_size','size_only'].includes(product.spec_mode)&&!resolved.spec.size)return `找不到尺寸「${resolved.spec.size||resolved.raw_label||'空白'}」`
   return''
 }
-function signature(fileName,sheetName,customerId,productId,items){return norm(`${fileName}|${sheetName}|${customerId}|${productId}|${items.map(i=>`${i.raw_label}:${i.spec.color}:${i.spec.size}:${i.spec.flavor}:${i.spec.package}:${i.qty}`).join('|')}`)}
+function signature(customerId,productId,items){
+  return norm(`${customerId}|${productId}|${(items||[]).map(i=>{const s=i.spec||{};return `${s.package||''}:${s.flavor||''}:${s.color||''}:${s.size||''}:${Number(i.original_qty??i.qty??0)}`}).join('|')}`)
+}
+function existingOrderSignature(order){
+  if(order?.source!=='excel_import'||!order?.customer_id)return''
+  const items=Array.isArray(order.items)?order.items:[]
+  if(!items.length)return''
+  const productIds=[...new Set(items.map(i=>clean(i.product_id||i.id)).filter(Boolean))]
+  if(productIds.length!==1)return''
+  return signature(order.customer_id,productIds[0],items)
+}
 
 export default function ExcelOrderImport(){
   const toast=useToast();const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[orders,setOrders]=useState([]);const[groups,setGroups]=useState([]);const[loading,setLoading]=useState(true);const[parsing,setParsing]=useState(false);const[saving,setSaving]=useState(false)
@@ -168,16 +182,16 @@ export default function ExcelOrderImport(){
   }
   function patchGroup(id,patch){setGroups(v=>v.map(g=>g.id===id?{...g,...patch}:g))}
   function patchBuyer(groupId,key,patch){setGroups(v=>v.map(g=>g.id!==groupId?g:{...g,buyers:g.buyers.map(b=>b.key===key?{...b,...patch}:b)}))}
-  const existingSigs=useMemo(()=>new Set(orders.map(o=>o.import_signature).filter(Boolean)),[orders])
-  const preview=useMemo(()=>groups.map(g=>{const product=products.find(p=>p.id===g.product_id)||null;const buyers=g.buyers.map(b=>{const customer=customers.find(c=>c.id===b.customer_id)||null;const resolved=product?b.items.map(i=>resolveImportedItem(product,i)):[];const errors=[];if(!product)errors.push('未選商品');if(!customer)errors.push('未配對客戶');if(product)resolved.forEach(x=>{const e=validationError(product,x);if(e)errors.push(e)});const sig=product&&customer?signature(g.fileName,g.sheetName,customer.id,product.id,resolved):'';const duplicate=sig&&existingSigs.has(sig);return{...b,customer,resolved,errors,sig,duplicate}});return{...g,product,buyers}}),[groups,products,customers,existingSigs])
+  const existingSigs=useMemo(()=>new Set(orders.map(existingOrderSignature).filter(Boolean)),[orders])
+  const preview=useMemo(()=>groups.map(g=>{const product=products.find(p=>p.id===g.product_id)||null;const buyers=g.buyers.map(b=>{const customer=customers.find(c=>c.id===b.customer_id)||null;const resolved=product?b.items.map(i=>resolveImportedItem(product,i)):[];const errors=[];if(!product)errors.push('未選商品');if(!customer)errors.push('未配對客戶');if(product)resolved.forEach(x=>{const e=validationError(product,x);if(e)errors.push(e)});const sig=product&&customer?signature(customer.id,product.id,resolved):'';const duplicate=sig&&existingSigs.has(sig);return{...b,customer,resolved,errors,sig,duplicate}});return{...g,product,buyers}}),[groups,products,customers,existingSigs])
   const counts=useMemo(()=>{const buyers=preview.flatMap(g=>g.buyers);return{files:preview.length,buyers:buyers.length,ready:buyers.filter(b=>!b.errors.length&&!b.duplicate).length,errors:buyers.filter(b=>b.errors.length).length,duplicates:buyers.filter(b=>b.duplicate).length}},[preview])
   async function importOrders(){
     const bad=preview.flatMap(g=>g.buyers).filter(b=>b.errors.length);if(bad.length){toast(`仍有 ${bad.length} 位客戶需要完成商品／客戶／規格配對`,'error');return}
     const rows=[];const batchId=`IMP-${new Date().toISOString().replace(/[-:TZ.]/g,'').slice(0,14)}`
     preview.forEach(g=>g.buyers.forEach(b=>{if(b.duplicate)return;const items=b.resolved.map(r=>snapshotOrderItem(g.product,{qty:r.qty,spec:r.spec,priceOption:r.priceOption}));rows.push({customer_id:b.customer.id,customer_name:b.customer.name,customer_phone:b.customer.phone||'',customer_phone_last2:getCustomerPhoneLast2(b.customer),items,total_amount:items.reduce((s,i)=>s+i.subtotal,0),note:`Excel匯入：${g.fileName}${b.marker?`；原表標記：${b.marker}`:''}`,is_virtual:Boolean(b.is_virtual),source:'excel_import',import_batch_id:batchId,import_source_file:g.fileName,import_source_sheet:g.sheetName,import_signature:b.sig,imported_at:new Date().toISOString()})}))
     if(!rows.length){toast('沒有新的可匯入訂單','warning');return}
-    if(!window.confirm(`確定建立 ${rows.length} 筆訂單？\n重複匯入資料會自動略過。`))return
-    setSaving(true);try{let created=0;for(let i=0;i<rows.length;i+=400){const part=await OrdersAPI.batchCreate(rows.slice(i,i+400));created+=part.length}toast(`Excel 匯入完成：建立 ${created} 筆訂單 ✓`);setGroups([]);await load()}catch(err){toast('匯入失敗：'+err.message,'error')}finally{setSaving(false)}
+    if(!window.confirm(`確定建立 ${rows.length} 筆訂單？\n相同客戶＋商品＋規格＋原訂數量的既有 Excel 訂單會自動略過。`))return
+    setSaving(true);try{let created=0;for(let i=0;i<rows.length;i+=250){const part=await OrdersAPI.batchCreate(rows.slice(i,i+250));created+=part.length}toast(`Excel 匯入完成：建立 ${created} 筆訂單 ✓`);setGroups([]);await load()}catch(err){toast('匯入失敗：'+err.message,'error')}finally{setSaving(false)}
   }
   return <div className="animate-fade">
     <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:18}}><div><h2 style={{fontSize:22,fontWeight:800}}>Excel 匯入訂單</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>支援舊團購表：單純數量、橫向規格、顏色＋Mx1/Lx1/2Lx1。先預覽確認，再正式建立訂單。</p></div><div style={{display:'flex',gap:8}}><label className="btn btn-primary" style={{cursor:'pointer'}}><Upload size={14}/>{parsing?'解析中...':'選擇 Excel'}<input type="file" accept=".xlsx,.xls" multiple hidden onChange={pickFiles} disabled={parsing}/></label><button className="btn btn-ghost" onClick={load} disabled={loading}><RefreshCw size={14}/>重整資料</button></div></div>
