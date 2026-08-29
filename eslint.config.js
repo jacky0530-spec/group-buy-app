@@ -41,4 +41,10 @@ export default defineConfig([
       'no-useless-assignment': 'off',
     },
   },
+  {
+    files: ['api/neon-helper-admin.js', 'api/neon-order-query.js'],
+    rules: {
+      'no-unused-vars': 'off',
+    },
+  },
 ])
