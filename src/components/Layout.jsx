@@ -3,7 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第12版正式部署：歷史訂單清理預設 60 天，支援 14／30／60 天快捷與自訂天數。
+// 第12版正式部署：歷史訂單清理預設 60 天；本次僅觸發即將到貨後端 bootstrap。
 const APP_VERSION = '第12版｜2026/08/29'
 
 const NAV = [
