@@ -15,6 +15,7 @@ import PendingProductReport from './pages/PendingProductReportFiltered'
 import StockInventory from './pages/StockInventory'
 import Expenses from './pages/Expenses'
 import SupplierPayments from './pages/SupplierPayments'
+import IncomingBatches from './pages/IncomingBatches'
 import Accounts from './pages/Accounts'
 import HelperPortal from './pages/HelperPortalV4'
 import HelperEntries from './pages/HelperEntries'
@@ -42,6 +43,7 @@ export default function App() {
                   <Route path="order-import" element={<ExcelOrderImport />} />
                   <Route path="reports" element={<Reports />} />
                   <Route path="pending-report" element={<PendingProductReport />} />
+                  <Route path="incoming" element={<IncomingBatches />} />
                   <Route path="stock" element={<StockInventory />} />
                   <Route path="expenses" element={<Expenses />} />
                   <Route path="supplier-payments" element={<SupplierPayments />} />
