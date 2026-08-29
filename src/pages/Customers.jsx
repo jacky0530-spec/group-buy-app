@@ -5,6 +5,9 @@ import { customerMatchesSearch, derivePhoneLast2, getCustomerPhoneLast2, normali
 import { Plus, Pencil, Archive, Search, Users, RotateCcw, Upload, ArrowUpDown } from 'lucide-react'
 
 const EMPTY = { name:'', line_nick:'', fb_name:'', phone:'', phone_last2:'', note:'' }
+const INITIAL_RENDER = 100
+const RENDER_STEP = 100
+const ORDER_COUNT_PAGE = 250
 
 const SORT_OPTIONS = [
   { value:'last2_asc', label:'末碼：小 → 大' },
@@ -29,8 +32,10 @@ function compareLast2(a,b,direction='asc') {
 export default function Customers() {
   const toast = useToast()
   const importRef = useRef(null)
+  const loadSeqRef = useRef(0)
   const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
+  const [countsLoading, setCountsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('last2_asc')
   const [showArchived, setShowArchived] = useState(false)
@@ -41,28 +46,56 @@ export default function Customers() {
   const [importing, setImporting] = useState(false)
   const [confirmArchive, setConfirmArchive] = useState(null)
   const [orderCounts, setOrderCounts] = useState({})
+  const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER)
+
+  const loadOrderCountsInBackground = useCallback(async seq => {
+    setCountsLoading(true)
+    const counts = {}
+    try {
+      let cursor = null
+      let hasMore = true
+      while (hasMore) {
+        const page = await OrdersAPI.listPage({ pageSize:ORDER_COUNT_PAGE, cursor })
+        if (seq !== loadSeqRef.current) return
+        for (const order of page.rows || []) {
+          if (order.status === 'cancelled' || order.archived || !order.customer_id) continue
+          counts[order.customer_id] = (counts[order.customer_id] || 0) + 1
+        }
+        setOrderCounts({ ...counts })
+        hasMore = page.hasMore === true && Boolean(page.nextCursor)
+        cursor = hasMore ? page.nextCursor : null
+        if (hasMore) await new Promise(resolve => setTimeout(resolve, 25))
+      }
+    } catch (err) {
+      console.error('客戶有效訂單數背景統計失敗', err)
+    } finally {
+      if (seq === loadSeqRef.current) setCountsLoading(false)
+    }
+  }, [])
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
+    setCountsLoading(false)
+    setOrderCounts({})
     try {
-      const [custs, orders] = await Promise.all([
-        CustomersAPI.list({ includeArchived: showArchived }),
-        OrdersAPI.list(),
-      ])
+      const custs = await CustomersAPI.list({ includeArchived: showArchived })
+      if (seq !== loadSeqRef.current) return
       setCustomers(custs)
-      const counts = {}
-      orders.filter(o => o.status !== 'cancelled' && !o.archived).forEach(o => {
-        if (o.customer_id) counts[o.customer_id] = (counts[o.customer_id] || 0) + 1
-      })
-      setOrderCounts(counts)
+      setRenderLimit(INITIAL_RENDER)
+      setLoading(false)
+      setTimeout(() => {
+        if (seq === loadSeqRef.current) loadOrderCountsInBackground(seq)
+      }, 50)
     } catch (err) {
+      if (seq !== loadSeqRef.current) return
       toast('載入失敗：' + err.message, 'error')
-    } finally {
       setLoading(false)
     }
-  }, [showArchived, toast])
+  }, [showArchived, toast, loadOrderCountsInBackground])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setRenderLimit(INITIAL_RENDER) }, [search, sortBy, showArchived])
 
   const q = search.toLowerCase().trim()
   const filtered = customers.filter(c => customerMatchesSearch(c,q)).sort((a,b) => {
@@ -74,6 +107,7 @@ export default function Customers() {
     }
     return compareLast2(a,b,'asc')
   })
+  const displayed = filtered.slice(0, renderLimit)
 
   function openAdd() {
     setForm({ ...EMPTY })
@@ -170,6 +204,7 @@ export default function Customers() {
           <h2 style={{ fontSize:22, fontWeight:800 }}>客戶管理</h2>
           <p style={{ color:'var(--text-secondary)', fontSize:13, marginTop:2 }}>
             共 {customers.length} 位　姓名可重複；辨識末碼可自訂 2 碼、3 碼以上
+            {countsLoading && <span style={{ marginLeft:8, color:'var(--indigo)' }}>・有效訂單數背景整理中</span>}
           </p>
         </div>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
@@ -181,7 +216,7 @@ export default function Customers() {
       </div>
 
       <div style={{ background:'var(--sky-light)', borderRadius:8, padding:'9px 12px', marginBottom:14, fontSize:12, color:'#0369a1' }}>
-        📱 辨識末碼可重複，也可自行輸入 2～3 碼以上，例如「00」或「000」；完整電話填入後會自動帶出末兩碼。搜尋也支援客戶備註。
+        📱 辨識末碼可重複，也可自行輸入 2～3 碼以上，例如「00」或「000」；完整電話填入後會自動帶出末兩碼。搜尋會掃描目前完整載入的全部客戶，也支援客戶備註。
       </div>
 
       <div style={{ marginBottom:14, display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
@@ -199,14 +234,18 @@ export default function Customers() {
         </div>
       </div>
 
+      {!loading && <div style={{ fontSize:11, color:'var(--text-muted)', margin:'-5px 0 10px' }}>
+        {q ? <>搜尋結果 <strong>{filtered.length}</strong> 位；搜尋範圍為全部 {customers.length} 位客戶。</> : <>目前顯示 {Math.min(displayed.length, filtered.length)} / {filtered.length} 位客戶。</>}
+      </div>}
+
       <div className="card">
         <div className="table-container">
           <table>
             <thead><tr><th>姓名</th><th>辨識末碼</th><th>Line 暱稱</th><th>FB 名稱</th><th>完整電話</th><th>有效訂單數</th><th>備註</th><th style={{ textAlign:'right' }}>操作</th></tr></thead>
             <tbody>
               {loading && <tr><td colSpan={8} style={{ textAlign:'center', padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/></td></tr>}
-              {!loading && filtered.length === 0 && <tr><td colSpan={8}><div className="empty-state"><Users size={36}/><span>尚無客戶</span></div></td></tr>}
-              {filtered.map(c => {
+              {!loading && filtered.length === 0 && <tr><td colSpan={8}><div className="empty-state"><Users size={36}/><span>找不到符合的客戶</span></div></td></tr>}
+              {displayed.map(c => {
                 const archived = c.active === false
                 const last2 = getCustomerPhoneLast2(c)
                 return (
@@ -219,7 +258,7 @@ export default function Customers() {
                     <td>{c.line_nick ? <span className="badge badge-emerald">🟢 {c.line_nick}</span> : '—'}</td>
                     <td>{c.fb_name ? <span className="badge badge-sky">📘 {c.fb_name}</span> : '—'}</td>
                     <td style={{ color:'var(--text-secondary)' }}>{c.phone || '—'}</td>
-                    <td>{orderCounts[c.id] ? <span className="badge badge-indigo">{orderCounts[c.id]} 筆</span> : '0'}</td>
+                    <td>{countsLoading && orderCounts[c.id] == null ? <span style={{ color:'var(--text-muted)' }}>…</span> : orderCounts[c.id] ? <span className="badge badge-indigo">{orderCounts[c.id]} 筆</span> : '0'}</td>
                     <td style={{ color:'var(--text-secondary)', fontSize:13 }}>{c.note || '—'}</td>
                     <td style={{ textAlign:'right' }}><div style={{ display:'flex', gap:6, justifyContent:'flex-end' }}>
                       {!archived && <button className="btn-icon btn" onClick={() => openEdit(c)}><Pencil size={13}/></button>}
@@ -233,6 +272,9 @@ export default function Customers() {
             </tbody>
           </table>
         </div>
+        {!loading && displayed.length < filtered.length && <div style={{ padding:12, textAlign:'center', borderTop:'1px solid var(--border)' }}>
+          <button className="btn btn-ghost" onClick={() => setRenderLimit(v => v + RENDER_STEP)}>顯示更多客戶（{displayed.length} / {filtered.length}）</button>
+        </div>}
       </div>
 
       {showModal && (
