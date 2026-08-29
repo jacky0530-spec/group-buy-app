@@ -102,17 +102,12 @@ export default function PendingProductReportSql(){
 
   useEffect(()=>{
     let active=true
-    if(shipmentView!=='shipped'){
-      setShipmentProductKeys(null)
-      setShipmentCatalogLoading(false)
-      return()=>{active=false}
-    }
     ;(async()=>{
       setShipmentCatalogLoading(true)
       try{
-        const shippedRows=await fetchAllOrders({status:'shipped',includeArchived:showArchived})
+        const rows=await fetchAllOrders({status:shipmentView,includeArchived:shipmentView==='shipped'&&showArchived})
         const ids=new Set(),names=new Set()
-        shippedRows.forEach(order=>(order.items||[]).forEach(item=>{
+        rows.forEach(order=>(order.items||[]).forEach(item=>{
           if(itemQty(item)<=0)return
           const id=item.product_id||item.id
           const name=item.original_product_name||item.product_name||item.name
@@ -121,7 +116,8 @@ export default function PendingProductReportSql(){
         }))
         if(active)setShipmentProductKeys({ids,names})
       }catch(err){
-        if(active){setShipmentProductKeys({ids:new Set(),names:new Set()});setError(`已出貨商品目錄 SQL 查詢失敗：${err.message}`)}
+        const label=shipmentView==='shipped'?'已出貨':'待出貨'
+        if(active){setShipmentProductKeys({ids:new Set(),names:new Set()});setError(`${label}商品目錄 SQL 查詢失敗：${err.message}`)}
       }finally{if(active)setShipmentCatalogLoading(false)}
     })()
     return()=>{active=false}
@@ -133,10 +129,16 @@ export default function PendingProductReportSql(){
     if(mode==='buyer'&&!buyerSearch.trim()){setOrders([]);setLoading(false);return}
     setLoading(true);setError('')
     try{
-      const rows=await fetchAllOrders({status:shipmentView,productId:mode==='product'?(selectedProduct?.id||''):'',search:mode==='buyer'?buyerSearch.trim():'',includeArchived:shipmentView==='shipped'&&showArchived})
+      const directProductId=mode==='product'&&selectedProduct&&shipmentProductKeys?.ids?.has(selectedProduct.id)
+      const rows=await fetchAllOrders({
+        status:shipmentView,
+        productId:directProductId?(selectedProduct?.id||''):'',
+        search:mode==='buyer'?buyerSearch.trim():(mode==='product'&&!directProductId?(selectedProduct?.name||''):''),
+        includeArchived:shipmentView==='shipped'&&showArchived,
+      })
       if(seq===querySeq.current)setOrders(rows)
     }catch(err){if(seq===querySeq.current)setError(`出貨報表 SQL 查詢失敗：${err.message}`)}finally{if(seq===querySeq.current)setLoading(false)}
-  },[mode,selectedProduct,buyerSearch,shipmentView,showArchived])
+  },[mode,selectedProduct,buyerSearch,shipmentView,showArchived,shipmentProductKeys])
 
   useEffect(()=>{const timer=setTimeout(queryOrders,mode==='buyer'?280:0);return()=>clearTimeout(timer)},[queryOrders,mode])
 
@@ -144,11 +146,11 @@ export default function PendingProductReportSql(){
   const productOptions=useMemo(()=>{
     const q=productSearch.trim().toLowerCase()
     return products
-      .filter(p=>shipmentView!=='shipped'||Boolean(shipmentProductKeys&&(shipmentProductKeys.ids.has(p.id)||shipmentProductKeys.names.has(p.name))))
+      .filter(p=>Boolean(shipmentProductKeys&&(shipmentProductKeys.ids.has(p.id)||shipmentProductKeys.names.has(p.name))))
       .filter(p=>!q||String(p.name||'').toLowerCase().includes(q))
       .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'zh-Hant'))
       .slice(0,250)
-  },[products,productSearch,shipmentView,shipmentProductKeys])
+  },[products,productSearch,shipmentProductKeys])
   const effectiveArrivalView=shipmentView==='shipped'?'all':arrivalView
   const sourceOrders=useMemo(()=>orders.filter(order=>order.status===shipmentView&&(shipmentView!=='shipped'||showArchived||order.archived!==true)),[orders,shipmentView,showArchived])
   const productRows=useMemo(()=>selectedProduct?buildRows(sourceOrders,customerMap,selectedProduct,effectiveArrivalView,shipmentView==='shipped'):[],[sourceOrders,customerMap,selectedProduct,effectiveArrivalView,shipmentView])
@@ -181,11 +183,11 @@ export default function PendingProductReportSql(){
   const modeCardStyle=active=>({flex:1,minWidth:220,borderRadius:14,padding:'14px 16px',cursor:'pointer',textAlign:'left',border:`2px solid ${active?'var(--indigo)':'var(--border)'}`,background:active?'var(--indigo-light)':'var(--surface)',fontFamily:'inherit'})
 
   return <div className="animate-fade">
-    <div className="no-print" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:20}}><div><h2 style={{fontSize:22,fontWeight:800}}>出貨查詢報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>SQL 篩選版：不再進頁下載全部訂單，只查目前商品或買家條件</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" disabled={!canOutput} onClick={exportCurrent}><Download size={14}/>匯出 CSV</button><button className="btn btn-primary" disabled={!canOutput} onClick={()=>window.print()}><Printer size={14}/>列印</button></div></div>
+    <div className="no-print" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:20}}><div><h2 style={{fontSize:22,fontWeight:800}}>出貨查詢報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>SQL 篩選版：只顯示目前狀態下實際有數量的商品或買家</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" disabled={!canOutput} onClick={exportCurrent}><Download size={14}/>匯出 CSV</button><button className="btn btn-primary" disabled={!canOutput} onClick={()=>window.print()}><Printer size={14}/>列印</button></div></div>
     {error&&<div className="no-print" style={{background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:14}}>{error}</div>}
-    <div className="no-print" style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10,marginBottom:14}}><button type="button" onClick={()=>{setShipmentView('pending');setArrivalView('all');setShowArchived(false);setSelectedBuyerKey('');setSelectedProduct(null);setProductSearch('');setProductBuyerSearch('')}} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='pending'?'#d97706':'var(--border)'}`,background:shipmentView==='pending'?'#fff7ed':'var(--surface)',fontWeight:900,color:shipmentView==='pending'?'#b45309':'var(--text-secondary)'}}><Truck size={16}/> 待出貨訂單</button><button type="button" onClick={()=>{setShipmentView('shipped');setSelectedBuyerKey('');setSelectedProduct(null);setProductSearch('');setProductBuyerSearch('')}} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='shipped'?'#059669':'var(--border)'}`,background:shipmentView==='shipped'?'#ecfdf5':'var(--surface)',fontWeight:900,color:shipmentView==='shipped'?'#047857':'var(--text-secondary)'}}><PackageCheck size={16}/> 已出貨查詢</button></div>
-    {shipmentView==='shipped'&&<div className="no-print" style={{display:'flex',justifyContent:'flex-end',gap:10,alignItems:'center',marginBottom:14}}><button className={`btn btn-sm ${showArchived?'btn-primary':'btn-ghost'}`} onClick={()=>{setShowArchived(v=>!v);setSelectedBuyerKey('');setSelectedProduct(null);setProductBuyerSearch('')}}>{showArchived?<><ArchiveRestore size={13}/>隱藏封存</>:<><Archive size={13}/>顯示封存</>}</button></div>}
-    <div className="no-print" style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:14}}><button type="button" style={modeCardStyle(mode==='product')} onClick={()=>{setMode('product');setSelectedBuyerKey('')}}><div style={{fontSize:16,fontWeight:900}}>📦 依商品查詢</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>SQL 只抓此商品相關訂單</div></button><button type="button" style={modeCardStyle(mode==='buyer')} onClick={()=>{setMode('buyer');setSelectedProduct(null)}}><div style={{fontSize:16,fontWeight:900}}>👥 依買家查詢</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>輸入後才送 SQL 搜尋</div></button></div>
+    <div className="no-print" style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10,marginBottom:14}}><button type="button" onClick={()=>{setShipmentView('pending');setArrivalView('all');setShowArchived(false);setSelectedBuyerKey('');setSelectedProduct(null);setProductSearch('');setProductBuyerSearch('');setOrders([])}} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='pending'?'#d97706':'var(--border)'}`,background:shipmentView==='pending'?'#fff7ed':'var(--surface)',fontWeight:900,color:shipmentView==='pending'?'#b45309':'var(--text-secondary)'}}><Truck size={16}/> 待出貨訂單</button><button type="button" onClick={()=>{setShipmentView('shipped');setSelectedBuyerKey('');setSelectedProduct(null);setProductSearch('');setProductBuyerSearch('');setOrders([])}} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='shipped'?'#059669':'var(--border)'}`,background:shipmentView==='shipped'?'#ecfdf5':'var(--surface)',fontWeight:900,color:shipmentView==='shipped'?'#047857':'var(--text-secondary)'}}><PackageCheck size={16}/> 已出貨查詢</button></div>
+    {shipmentView==='shipped'&&<div className="no-print" style={{display:'flex',justifyContent:'flex-end',gap:10,alignItems:'center',marginBottom:14}}><button className={`btn btn-sm ${showArchived?'btn-primary':'btn-ghost'}`} onClick={()=>{setShowArchived(v=>!v);setSelectedBuyerKey('');setSelectedProduct(null);setProductBuyerSearch('');setOrders([])}}>{showArchived?<><ArchiveRestore size={13}/>隱藏封存</>:<><Archive size={13}/>顯示封存</>}</button></div>}
+    <div className="no-print" style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:14}}><button type="button" style={modeCardStyle(mode==='product')} onClick={()=>{setMode('product');setSelectedBuyerKey('')}}><div style={{fontSize:16,fontWeight:900}}>📦 依商品查詢</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>只顯示此狀態下有數量的商品</div></button><button type="button" style={modeCardStyle(mode==='buyer')} onClick={()=>{setMode('buyer');setSelectedProduct(null)}}><div style={{fontSize:16,fontWeight:900}}>👥 依買家查詢</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>輸入後才送 SQL 搜尋</div></button></div>
     {shipmentView==='pending'&&<div className="no-print" style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:16}}><button className={`btn btn-sm ${arrivalView==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setArrivalView('all')}><Layers3 size={13}/>全部待出貨</button><button className={`btn btn-sm ${arrivalView==='arrived'?'btn-primary':'btn-ghost'}`} onClick={()=>setArrivalView('arrived')}><PackageCheck size={13}/>已到貨可取貨</button><button className={`btn btn-sm ${arrivalView==='missing'?'btn-primary':'btn-ghost'}`} onClick={()=>setArrivalView('missing')}><PackageX size={13}/>尚未到貨</button></div>}
 
     {mode==='product'&&<div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{fontWeight:800}}>挑選有{statusLabel}訂單的商品</div><div className="card-body"><div className="search-input-wrap" style={{marginBottom:10}}><Search size={14}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder={`搜尋${statusLabel}商品...`} style={{padding:'8px 8px 8px 32px',width:'100%'}}/></div><div style={{display:'flex',gap:7,flexWrap:'wrap',maxHeight:210,overflowY:'auto'}}>{(catalogLoading||shipmentCatalogLoading)&&<span>讀取{statusLabel}商品中...</span>}{!catalogLoading&&!shipmentCatalogLoading&&productOptions.length===0&&<span style={{color:'var(--text-muted)'}}>目前沒有符合的{statusLabel}商品</span>}{!catalogLoading&&!shipmentCatalogLoading&&productOptions.map(product=><button key={product.id} className={`btn btn-sm ${selectedProduct?.id===product.id?'btn-primary':'btn-ghost'}`} onClick={()=>setSelectedProduct(product)}>{product.name}{product.active===false?'（已封存）':''}</button>)}</div>{selectedProduct&&<div style={{marginTop:10,fontSize:12,color:'var(--text-muted)'}}>目前只從 Neon SQL 查詢「{selectedProduct.name}」的{statusLabel}訂單。</div>}{shipmentView==='pending'&&selectedProduct&&orderingSummary.totalMissing>0&&<button className="btn btn-ghost btn-sm" style={{marginTop:10}} disabled={marking} onClick={markSelectedProductArrived}><PackageCheck size={13}/>{marking?'更新中...':`此商品全部到貨（尚欠 ${orderingSummary.totalMissing} 件）`}</button>}</div></div>}
