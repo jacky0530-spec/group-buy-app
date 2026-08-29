@@ -4,12 +4,16 @@ import { Modal, useToast } from '../components/UI'
 import { neonOrderStatusRuntime } from '../lib/neonOrderStatusRuntime'
 
 const MAX_DELETE=400
+const MIN_DAYS=14
+const MAX_DAYS=3650
+const DEFAULT_DAYS=60
 const money=value=>`NT$${Math.round(Number(value||0)).toLocaleString()}`
 const dateText=value=>value?new Date(value).toLocaleDateString('zh-TW'):'—'
 
 export default function OrderCleanup(){
   const toast=useToast()
-  const [days,setDays]=useState(14)
+  const [days,setDays]=useState(DEFAULT_DAYS)
+  const [customDays,setCustomDays]=useState('')
   const [rows,setRows]=useState([])
   const [totalCount,setTotalCount]=useState(0)
   const [loading,setLoading]=useState(true)
@@ -46,6 +50,12 @@ export default function OrderCleanup(){
   const allSelected=rows.length>0&&selected.length===rows.length
   function toggle(id){setSelected(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id])}
   function toggleAll(){setSelected(allSelected?[]:rows.map(row=>row.id))}
+  function chooseDays(value){setDays(value);setCustomDays('')}
+  function applyCustomDays(){
+    const value=Math.trunc(Number(customDays))
+    if(!Number.isFinite(value)||value<MIN_DAYS||value>MAX_DAYS){toast(`自訂天數需介於 ${MIN_DAYS}～${MAX_DAYS} 天`,'warning');return}
+    setDays(value)
+  }
   function openImpact(){if(!selectedRows.length){toast('請先勾選要刪除的歷史訂單','warning');return}setConfirmText('');setConfirmOpen(true)}
   async function confirmDelete(){
     if(confirmText!=='永久刪除'||deleting)return
@@ -60,7 +70,7 @@ export default function OrderCleanup(){
 
   return <div className="animate-fade">
     <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'flex-start',flexWrap:'wrap',marginBottom:18}}>
-      <div><h2 style={{fontSize:22,fontWeight:800}}>歷史訂單清理</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:3}}>只列正式預購、已完整出貨且超過指定時間的訂單；現貨與虛擬訂單自動排除。</p></div>
+      <div><h2 style={{fontSize:22,fontWeight:800}}>歷史訂單清理</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:3}}>預設查詢已完整出貨超過 60 天的正式預購訂單；現貨與虛擬訂單自動排除。</p></div>
       <button className="btn btn-ghost" onClick={load} disabled={loading}><RefreshCw size={14}/>{loading?'讀取中...':'重新整理'}</button>
     </div>
 
@@ -70,13 +80,18 @@ export default function OrderCleanup(){
 
     <div className="card" style={{marginBottom:16}}><div className="card-body" style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
       <Clock3 size={17}/><strong>篩選已出貨超過</strong>
-      <button className={`btn btn-sm ${days===14?'btn-primary':'btn-ghost'}`} onClick={()=>setDays(14)}>14 天（兩週）</button>
-      <button className={`btn btn-sm ${days===30?'btn-primary':'btn-ghost'}`} onClick={()=>setDays(30)}>30 天（一個月）</button>
-      <span style={{fontSize:12,color:'var(--text-muted)'}}>依實際出貨時間 shipped_at 判斷</span>
+      <button className={`btn btn-sm ${days===14?'btn-primary':'btn-ghost'}`} onClick={()=>chooseDays(14)}>14 天</button>
+      <button className={`btn btn-sm ${days===30?'btn-primary':'btn-ghost'}`} onClick={()=>chooseDays(30)}>30 天</button>
+      <button className={`btn btn-sm ${days===60?'btn-primary':'btn-ghost'}`} onClick={()=>chooseDays(60)}>60 天（預設）</button>
+      <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+        <input type="number" min={MIN_DAYS} max={MAX_DAYS} step="1" value={customDays} onChange={e=>setCustomDays(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')applyCustomDays()}} placeholder="其他天數" style={{width:105,padding:'7px 9px'}}/>
+        <button className="btn btn-sm btn-ghost" onClick={applyCustomDays} disabled={!customDays}>套用</button>
+      </div>
+      <span style={{fontSize:12,color:'var(--text-muted)'}}>目前：{days} 天以上｜依 shipped_at 判斷</span>
     </div></div>
 
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginBottom:16}}>
-      <div style={{background:'var(--indigo-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:800,color:'var(--indigo)'}}>符合清理條件</div><strong style={{fontSize:22,color:'var(--indigo)'}}>{totalCount} 筆</strong>{totalCount>MAX_DELETE&&<div style={{fontSize:11,color:'var(--text-muted)'}}>本次先顯示最舊 {MAX_DELETE} 筆</div>}</div>
+      <div style={{background:'var(--indigo-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:800,color:'var(--indigo)'}}>符合 {days} 天以上</div><strong style={{fontSize:22,color:'var(--indigo)'}}>{totalCount} 筆</strong>{totalCount>MAX_DELETE&&<div style={{fontSize:11,color:'var(--text-muted)'}}>本次先顯示最舊 {MAX_DELETE} 筆</div>}</div>
       <div style={{background:'var(--emerald-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:800,color:'var(--emerald)'}}>目前顯示報表營收</div><strong style={{fontSize:22,color:'var(--emerald)'}}>{money(totalRevenue)}</strong></div>
       <div style={{background:'var(--amber-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:800,color:'#b45309'}}>已勾選</div><strong style={{fontSize:22,color:'#b45309'}}>{selected.length} 筆</strong></div>
     </div>
@@ -86,12 +101,12 @@ export default function OrderCleanup(){
       <button className="btn btn-sm" style={{background:'var(--rose)',color:'#fff',borderColor:'var(--rose)'}} disabled={!selected.length||deleting} onClick={openImpact}><Trash2 size={14}/>檢查影響並刪除 {selected.length||''}</button>
     </div><div className="table-container"><table><thead><tr><th></th><th>客戶</th><th>報表月份</th><th>出貨日</th><th>營收</th><th>成本</th><th>退款</th><th>供應商狀態</th><th>來源</th></tr></thead><tbody>
       {loading&&<tr><td colSpan={9} style={{textAlign:'center',padding:34}}>Neon SQL 查詢中...</td></tr>}
-      {!loading&&!rows.length&&<tr><td colSpan={9} style={{textAlign:'center',padding:34,color:'var(--text-muted)'}}>目前沒有符合條件的歷史訂單</td></tr>}
+      {!loading&&!rows.length&&<tr><td colSpan={9} style={{textAlign:'center',padding:34,color:'var(--text-muted)'}}>目前沒有符合 {days} 天以上條件的歷史訂單</td></tr>}
       {!loading&&rows.map(row=><tr key={row.id} style={{opacity:row.archived?.68:1}}><td><input type="checkbox" checked={selected.includes(row.id)} onChange={()=>toggle(row.id)}/></td><td><strong>{row.customer_name||'未命名客戶'}</strong>{row.archived&&<span className="badge badge-gray" style={{marginLeft:5}}>已封存</span>}<div style={{fontSize:11,color:'var(--text-muted)'}}>{row.item_count} 品項／{row.qty} 件</div></td><td>{row.report_month||'—'}</td><td>{dateText(row.shipped_at)}</td><td style={{fontWeight:800}}>{money(row.revenue)}</td><td>{money(row.cost)}</td><td>{Number(row.refund||0)>0?<span style={{color:'var(--rose)',fontWeight:800}}>{money(row.refund)}</span>:'—'}</td><td>{Number(row.supplier_outstanding||0)>0.01?<span className="badge badge-rose">尚欠 {money(row.supplier_outstanding)}</span>:<span className="badge badge-emerald">已結清</span>}</td><td>{row.source==='helper'?<span className="badge badge-violet">小幫手</span>:<span className="badge badge-gray">後台</span>}</td></tr>)}
     </tbody></table></div></div>
 
     {confirmOpen&&<Modal title={`永久刪除前影響確認｜${selectedRows.length} 筆`} width={820} onClose={()=>!deleting&&setConfirmOpen(false)}>
-      <div style={{background:'#fff1f2',border:'1px solid #fecdd3',borderRadius:10,padding:14,color:'#9f1239',lineHeight:1.65,marginBottom:14}}><strong>刪除後無法復原。</strong><br/>只刪除訂單及其必要關聯明細；客戶、商品、供應商付款主紀錄與小幫手登記歷史不會刪除。小幫手訂單連結及供應商付款分配連結會解除。</div>
+      <div style={{background:'#fff1f2',border:'1px solid #fecdd3',borderRadius:10,padding:14,color:'#9f1239',lineHeight:1.65,marginBottom:14}}><strong>刪除後無法復原。</strong><br/>目前篩選為已出貨超過 {days} 天。只刪除訂單及其必要關聯明細；客戶、商品、供應商付款主紀錄與小幫手登記歷史不會刪除。小幫手訂單連結及供應商付款分配連結會解除。</div>
       <div className="table-container" style={{marginBottom:14}}><table><thead><tr><th>影響月份</th><th>訂單</th><th>營收減少</th><th>成本減少</th><th>毛利影響</th><th>退款減少</th></tr></thead><tbody>{impact.months.map(row=><tr key={row.month}><td><strong>{row.month}</strong></td><td>{row.count}</td><td>{money(row.revenue)}</td><td>{money(row.cost)}</td><td>{money(row.profit)}</td><td>{money(row.refund)}</td></tr>)}</tbody></table></div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10,marginBottom:14}}><div style={{background:'var(--emerald-light)',borderRadius:8,padding:10}}><small>營收影響</small><div style={{fontWeight:900}}>{money(impact.revenue)}</div></div><div style={{background:'var(--amber-light)',borderRadius:8,padding:10}}><small>成本影響</small><div style={{fontWeight:900}}>{money(impact.cost)}</div></div><div style={{background:'var(--rose-light)',borderRadius:8,padding:10}}><small>供應商尚欠</small><div style={{fontWeight:900}}>{money(impact.supplierOutstanding)}</div></div><div style={{background:'var(--indigo-light)',borderRadius:8,padding:10}}><small>小幫手來源</small><div style={{fontWeight:900}}>{impact.helperCount} 筆</div></div></div>
       {impact.supplierOutstanding>0.01&&<div style={{background:'#fffbeb',border:'1px solid #fde68a',padding:11,borderRadius:8,color:'#92400e',marginBottom:14}}>⚠️ 選取訂單仍有供應商未付款 {money(impact.supplierOutstanding)}；刪除後相關應付成本也會從訂單型報表消失。</div>}
