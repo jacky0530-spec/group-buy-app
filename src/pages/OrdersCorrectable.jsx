@@ -16,7 +16,12 @@ function CorrectionPanel({ onChanged }) {
 
   const load=useCallback(async()=>{
     setLoading(true)
-    try{setOrders(await OrdersAPI.list())}
+    try{
+      const rows=typeof OrdersAPI.listCorrectionCandidates==='function'
+        ? await OrdersAPI.listCorrectionCandidates({pageSize:500})
+        : await OrdersAPI.list()
+      setOrders(rows)
+    }
     catch(err){toast('更正資料載入失敗：'+err.message,'error')}
     finally{setLoading(false)}
   },[toast])
