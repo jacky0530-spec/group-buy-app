@@ -8,6 +8,7 @@ import Home from './pages/Home'
 import Products from './pages/Products'
 import Customers from './pages/Customers'
 import Orders from './pages/OrdersCorrectable'
+import OrderCleanup from './pages/OrderCleanup'
 import ExcelOrderImport from './pages/ExcelOrderImport'
 import Reports from './pages/ReportsSql'
 import PendingProductReport from './pages/PendingProductReportFiltered'
@@ -35,6 +36,9 @@ export default function App() {
                   <Route path="products" element={<Products />} />
                   <Route path="customers" element={<Customers />} />
                   <Route path="orders" element={<Orders />} />
+                  <Route element={<RoleGuard roles={['owner']} />}>
+                    <Route path="order-cleanup" element={<OrderCleanup />} />
+                  </Route>
                   <Route path="order-import" element={<ExcelOrderImport />} />
                   <Route path="reports" element={<Reports />} />
                   <Route path="pending-report" element={<PendingProductReport />} />
