@@ -3,6 +3,7 @@ import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
 
 const text=v=>String(v??'').trim()
 const num=v=>Number.isFinite(Number(v))?Number(v):0
+const int=(v,d=0)=>Number.isFinite(Number(v))?Math.trunc(Number(v)):d
 const iso=v=>{if(!v)return null;if(typeof v==='string')return v;if(v?.seconds)return new Date(Number(v.seconds)*1000).toISOString();return null}
 const j=v=>JSON.stringify(v??{})
 const nowISO=()=>new Date().toISOString()
@@ -123,6 +124,9 @@ async function syncEntry(sql,auth,account,row){
   return legacyId
 }
 
+function mapCatalogRows(rows){
+  return rows.map(row=>({...row,price:Number(row.price||0),shipped_out:row.shipped_out===true,price_options:(row.price_options||[]).map(option=>({label:option?.label||'',price:Number(option?.price||0)}))}))
+}
 async function listCatalog(sql){
   const rows=await sql`
     SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.active,p.updated_at,
@@ -136,11 +140,49 @@ async function listCatalog(sql){
     FROM products p
     WHERE p.active<>false
     ORDER BY p.name ASC`
-  return rows.map(row=>({...row,price:Number(row.price||0),shipped_out:row.shipped_out===true,price_options:(row.price_options||[]).map(option=>({label:option?.label||'',price:Number(option?.price||0)}))}))
+  return mapCatalogRows(rows)
+}
+async function searchCatalog(sql,q,limit=30){
+  const query=text(q).toLowerCase()
+  const take=Math.min(50,Math.max(1,int(limit,30)))
+  const rows=await sql`
+    SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.active,p.updated_at,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE oi.product_id=p.id AND o.archived<>true AND o.status='shipped'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM order_items oi JOIN orders o ON o.id=oi.order_id
+        WHERE oi.product_id=p.id AND o.archived<>true AND o.status='pending'
+      ) THEN true ELSE false END AS shipped_out
+    FROM products p
+    WHERE p.active<>false
+      AND (${query}='' OR POSITION(${query} IN LOWER(COALESCE(p.name,'')))>0)
+    ORDER BY p.name ASC
+    LIMIT ${take}`
+  return mapCatalogRows(rows)
 }
 async function listCustomers(sql){return sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note FROM customers WHERE active<>false ORDER BY name ASC`}
-async function listMyEntries(sql,auth){
-  const rows=await sql`SELECT h.legacy_id AS id,h.payload,h.created_by_uid,h.created_by_name,c.legacy_id AS customer_id,h.customer_name,h.customer_phone_last2,h.total_amount,h.is_virtual,h.note,h.status,o.legacy_id AS converted_order_id,h.direct_order,h.converted_at,h.created_at,h.updated_at FROM helper_entries h LEFT JOIN customers c ON c.id=h.customer_id LEFT JOIN orders o ON o.id=h.converted_order_id WHERE h.created_by_uid=${auth.uid} ORDER BY h.created_at DESC`
+async function searchCustomers(sql,q,limit=20){
+  const query=text(q).toLowerCase()
+  if(!query)return[]
+  const take=Math.min(50,Math.max(1,int(limit,20)))
+  return sql`
+    SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note
+    FROM customers
+    WHERE active<>false AND (
+      POSITION(${query} IN LOWER(COALESCE(name,'')))>0 OR
+      POSITION(${query} IN LOWER(COALESCE(phone,'')))>0 OR
+      POSITION(${query} IN LOWER(COALESCE(phone_last2,'')))>0 OR
+      POSITION(${query} IN LOWER(COALESCE(line_nick,'')))>0 OR
+      POSITION(${query} IN LOWER(COALESCE(fb_name,'')))>0 OR
+      POSITION(${query} IN LOWER(COALESCE(note,'')))>0
+    )
+    ORDER BY name ASC
+    LIMIT ${take}`
+}
+async function listMyEntries(sql,auth,limit=20){
+  const take=Math.min(100,Math.max(1,int(limit,20)))
+  const rows=await sql`SELECT h.legacy_id AS id,h.payload,h.created_by_uid,h.created_by_name,c.legacy_id AS customer_id,h.customer_name,h.customer_phone_last2,h.total_amount,h.is_virtual,h.note,h.status,o.legacy_id AS converted_order_id,h.direct_order,h.converted_at,h.created_at,h.updated_at FROM helper_entries h LEFT JOIN customers c ON c.id=h.customer_id LEFT JOIN orders o ON o.id=h.converted_order_id WHERE h.created_by_uid=${auth.uid} ORDER BY h.created_at DESC LIMIT ${take}`
   return rows.map(row=>({...(row.payload||{}),id:row.id,created_by_uid:row.created_by_uid,created_by_name:row.created_by_name,customer_id:row.customer_id,customer_name:row.customer_name,customer_phone_last2:row.customer_phone_last2,total_amount:Number(row.total_amount||0),is_virtual:row.is_virtual===true,note:row.note||'',status:row.status,converted_order_id:row.converted_order_id,direct_order:row.direct_order,converted_at:row.converted_at,created_at:row.created_at,updated_at:row.updated_at}))
 }
 async function listMyPendingOrders(sql,auth){
@@ -161,8 +203,10 @@ export default async function handler(req,res){
     const account=await requireAccount(sql,auth)
     const action=text(req.body?.action)
     if(action==='catalog')return res.status(200).json({ok:true,rows:await listCatalog(sql)})
+    if(action==='search_catalog')return res.status(200).json({ok:true,rows:await searchCatalog(sql,req.body?.q,req.body?.limit)})
     if(action==='customers')return res.status(200).json({ok:true,rows:await listCustomers(sql)})
-    if(action==='my_entries')return res.status(200).json({ok:true,rows:await listMyEntries(sql,auth)})
+    if(action==='search_customers')return res.status(200).json({ok:true,rows:await searchCustomers(sql,req.body?.q,req.body?.limit)})
+    if(action==='my_entries')return res.status(200).json({ok:true,rows:await listMyEntries(sql,auth,req.body?.limit)})
     if(action==='my_pending_orders')return res.status(200).json({ok:true,rows:await listMyPendingOrders(sql,auth)})
     if(action==='create_direct')return res.status(200).json({ok:true,result:await upsertHelperPreorder(sql,auth,req.body||{})})
     if(action==='create_direct_many'){
