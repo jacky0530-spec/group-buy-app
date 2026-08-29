@@ -40,6 +40,25 @@ if(!globalThis[INSTALLED]){
     }
   }
 
+  OrdersAPI.searchPage=async function({search='',productId='',dateFrom='',dateTo='',status='',payment='',includeArchived=false,pageSize=100,cursor=null}={}){
+    const neonCursor=cursor?.offset!=null?cursor:null
+    if(cursor&&!neonCursor) throw new Error('目前 cursor 非 Neon 格式')
+    const result=await neonOrderQuery('query',{search,productId,dateFrom,dateTo,status,payment,includeArchived,pageSize,cursor:neonCursor})
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 訂單搜尋回傳格式錯誤')
+    return {
+      rows:withOriginalQtyLabels(result.rows),
+      totalCount:Number(result.totalCount||0),
+      nextCursor:result.nextCursor||null,
+      hasMore:result.hasMore===true,
+    }
+  }
+
+  OrdersAPI.listCorrectionCandidates=async function({pageSize=250}={}){
+    const result=await neonOrderQuery('correction_candidates',{pageSize})
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 更正候選訂單回傳格式錯誤')
+    return withOriginalQtyLabels(result.rows)
+  }
+
   OrdersAPI.listByDateRange=async function(startISO,endISO){
     const result=await neonOrderQuery('date_range',{startISO,endISO})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 日期區間訂單回傳格式錯誤')
