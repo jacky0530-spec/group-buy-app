@@ -3,6 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu } from './AuthGuard'
 
+// 第10版：待／已出貨商品選項依實際訂單狀態與正數量過濾。
 const APP_VERSION = '第10版｜2026/08/29'
 
 const NAV = [
