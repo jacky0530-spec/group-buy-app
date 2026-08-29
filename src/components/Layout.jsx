@@ -3,7 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第11版：負責人專用歷史訂單清理，含 14/30 天篩選與財務影響提示。
+// 第11版：負責人專用歷史訂單清理，14/30 天篩選、全選與財務影響提示。
 const APP_VERSION = '第11版｜2026/08/29'
 
 const NAV = [
