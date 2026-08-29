@@ -4,7 +4,7 @@ import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
 const text=v=>String(v??'').trim()
 const num=v=>Number.isFinite(Number(v))?Number(v):0
 const cleanupDays=v=>{
-  if(v===undefined||v===null||v==='') return 14
+  if(v===undefined||v===null||v==='') return 60
   const days=Math.trunc(Number(v))
   if(!Number.isFinite(days)||days<14||days>3650) throw new Error('歷史清理天數需介於 14～3650 天')
   return days
