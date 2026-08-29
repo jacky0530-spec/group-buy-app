@@ -3,7 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第16版：即將到貨實收數量輸入框取得焦點時自動全選，直接輸入即可取代原數字。
+// 第16版：即將到貨實收數量輸入框取得焦點時自動全選，直接輸入即可取代原數字。Production trigger.
 const APP_VERSION = '第16版｜2026/08/29'
 
 const NAV = [
