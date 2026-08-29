@@ -87,18 +87,35 @@ async function expenseMonth(sql,body){
   const month=text(body?.month)
   if(!/^\d{4}-\d{2}$/.test(month)) throw new Error('月份格式錯誤')
   const [statsRows,rows]=await Promise.all([
-    sql`SELECT
-      COALESCE(SUM(amount) FILTER (WHERE type='shipping'),0) AS shipping,
-      COALESCE(SUM(amount) FILTER (WHERE type='other'),0) AS other,
-      COALESCE(SUM(amount) FILTER (WHERE type='discount'),0) AS discount,
-      COALESCE(SUM(CASE WHEN type='discount' THEN -amount ELSE amount END),0) AS net,
-      COUNT(*)::int AS count
-    FROM expenses WHERE active<>false AND month=${month}`,
-    sql`SELECT legacy_id AS id,month,supplier,type,amount,note,active,archived_at,created_at,updated_at
-    FROM expenses WHERE active<>false AND month=${month} ORDER BY created_at DESC`
+    sql`SELECT COALESCE(SUM(amount) FILTER (WHERE type='shipping'),0) AS shipping,COALESCE(SUM(amount) FILTER (WHERE type='other'),0) AS other,COALESCE(SUM(amount) FILTER (WHERE type='discount'),0) AS discount,COALESCE(SUM(CASE WHEN type='discount' THEN -amount ELSE amount END),0) AS net,COUNT(*)::int AS count FROM expenses WHERE active<>false AND month=${month}`,
+    sql`SELECT legacy_id AS id,month,supplier,type,amount,note,active,archived_at,created_at,updated_at FROM expenses WHERE active<>false AND month=${month} ORDER BY created_at DESC`
   ])
   const s=statsRows[0]||{}
   return {rows:rows.map(r=>({...r,amount:Number(r.amount||0)})),stats:{shipping:Number(s.shipping||0),other:Number(s.other||0),discount:Number(s.discount||0),net:Number(s.net||0),count:Number(s.count||0)}}
+}
+
+function stockSpecLabel(row){
+  return [row.spec_package&&`組合：${row.spec_package}`,row.spec_flavor&&`口味：${row.spec_flavor}`,row.spec_color&&`顏色：${row.spec_color}`,row.spec_size&&`尺寸：${row.spec_size}`].filter(Boolean).join('／')||'一般規格'
+}
+
+async function stockSearch(sql,body,account){
+  const query=text(body?.search).toLowerCase()
+  const limit=Math.min(200,Math.max(1,Math.trunc(num(body?.limit)||80)))
+  const includeZero=body?.includeZero===true&&['owner','staff'].includes(account.role)
+  const rows=await sql`
+    SELECT s.id::text AS neon_id,p.legacy_id AS product_id,p.name AS product_name,s.supplier,s.spec_package,s.spec_flavor,s.spec_color,s.spec_size,s.available_qty,s.adjustment_note,s.created_at,s.updated_at
+    FROM stock_inventory s
+    JOIN products p ON p.id=s.product_id
+    WHERE p.active<>false
+      AND (${includeZero} OR s.available_qty>0)
+      AND (${query}='' OR POSITION(${query} IN LOWER(COALESCE(p.name,'')))>0 OR POSITION(${query} IN LOWER(COALESCE(s.supplier,'')))>0 OR POSITION(${query} IN LOWER(COALESCE(s.spec_package,'')))>0 OR POSITION(${query} IN LOWER(COALESCE(s.spec_flavor,'')))>0 OR POSITION(${query} IN LOWER(COALESCE(s.spec_color,'')))>0 OR POSITION(${query} IN LOWER(COALESCE(s.spec_size,'')))>0)
+    ORDER BY p.name ASC,s.spec_package ASC,s.spec_flavor ASC,s.spec_color ASC,s.spec_size ASC
+    LIMIT ${limit}`
+  return rows.map(row=>{
+    const spec={package:row.spec_package||'',flavor:row.spec_flavor||'',color:row.spec_color||'',size:row.spec_size||''}
+    const key=[spec.package,spec.flavor,spec.color,spec.size].join('|')||'default'
+    return {neon_id:row.neon_id,id:`${row.product_id}__${encodeURIComponent(key)}`,product_id:row.product_id,product_name:row.product_name||'',supplier:row.supplier||'',spec,spec_label:stockSpecLabel(row),available_qty:Number(row.available_qty||0),adjustment_note:row.adjustment_note||'',created_at:row.created_at,updated_at:row.updated_at}
+  })
 }
 
 async function listOrders(sql){
@@ -107,7 +124,8 @@ async function listOrders(sql){
   const byOrder=new Map()
   for(const item of items){
     const row={id:item.product_id||'',product_id:item.product_id||'',name:item.product_name,product_name:item.product_name,category:item.category,supplier:item.supplier,price:Number(item.sale_price||0),sale_price:Number(item.sale_price||0),cost_price:Number(item.cost_price||0),qty:Number(item.qty||0),original_qty:Number(item.original_qty??item.qty??0),subtotal:Number(item.subtotal||0),cost_subtotal:Number(item.cost_subtotal||0),note:item.note||'',spec:{package:item.spec_package||'',flavor:item.spec_flavor||'',color:item.spec_color||'',size:item.spec_size||''},fulfillment_type:item.fulfillment_type,arrived_qty:Number(item.arrived_qty||0),arrived_at:item.arrived_at,supplier_payment_term:item.supplier_payment_term,supplier_paid_amount:Number(item.supplier_paid_amount||0),supplier_payment_status:item.supplier_payment_status,supplier_payment_refs:item.supplier_payment_refs||[],created_at:item.created_at,updated_at:item.updated_at}
-    if(!byOrder.has(item.order_id))byOrder.set(item.order_id,[]);byOrder.get(item.order_id).push(row)
+    if(!byOrder.has(item.order_id))byOrder.set(item.order_id,[])
+    byOrder.get(item.order_id).push(row)
   }
   return orders.map(({neon_id,...order})=>({...order,total_amount:Number(order.total_amount||0),refund_amount:Number(order.refund_amount||0),items:byOrder.get(neon_id)||[]}))
 }
@@ -118,6 +136,7 @@ export default async function handler(req,res){
     if(!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing')
     const auth=await verifyFirebaseIdToken(req),sql=neon(process.env.DATABASE_URL),account=await requireNeonAccount(sql,auth),action=text(req.body?.action)
     if(action==='ping') return json(res,200,{ok:true,role:account.role})
+    if(action==='stock_search') return json(res,200,{ok:true,rows:await stockSearch(sql,req.body||{},account)})
     if(action==='list_customers'){requireStaff(account);const includeArchived=req.body?.includeArchived===true;const rows=includeArchived?await sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note,active,joined_at,archived_at,updated_at FROM customers ORDER BY joined_at DESC`:await sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note,active,joined_at,archived_at,updated_at FROM customers WHERE active<>false ORDER BY joined_at DESC`;return json(res,200,{ok:true,rows})}
     if(action==='list_products'){requireStaff(account);const includeArchived=req.body?.includeArchived===true;const rows=includeArchived?await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products ORDER BY created_at DESC`:await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products WHERE active<>false ORDER BY created_at DESC`;return json(res,200,{ok:true,rows})}
     if(action==='list_orders'){requireStaff(account);return json(res,200,{ok:true,rows:await listOrders(sql)})}
