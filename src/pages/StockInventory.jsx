@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ArchiveRestore, History, PackageCheck, Pencil, Plus, RefreshCw, Search, Trash2, Warehouse } from 'lucide-react'
-import { ProductsAPI } from '../lib/db'
 import { InventoryAPI, stockSpecLabel } from '../lib/inventory'
-import { neonInventoryRuntime } from '../lib/neonRuntime'
+import { neonHelperAdminRuntime, neonInventoryRuntime } from '../lib/neonRuntime'
 import { useToast } from '../components/UI'
 import QuantityInput from '../components/QuantityInput'
 
-const blankSpec = () => ({ package:'', flavor:'', color:'', size:'' })
-const movementLabel = type => ({ receive:'入庫', sale:'現貨出單', adjustment:'手動調整', restore:'取消還庫', reconsume:'恢復訂單重扣', reconcile:'校正' }[type] || type || '異動')
+const PAGE_SIZE=100
+const blankSpec=()=>({package:'',flavor:'',color:'',size:''})
+const movementLabel=type=>({extra_receive:'入庫',stock_sale:'現貨出單',manual_adjust:'手動調整',return:'取消還庫',correction:'校正'}[type]||type||'異動')
 
-function SpecFields({ product, spec, onChange }) {
-  if (!product) return null
+function SpecFields({product,spec,onChange}){
+  if(!product)return null
   const style={height:42,minWidth:130}
   return <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
     {(product.price_options||[]).length>0&&<select value={spec.package||''} onChange={e=>onChange('package',e.target.value)} style={style}><option value="">組合／包裝 *</option>{product.price_options.map(o=><option key={o.label} value={o.label}>{o.label}</option>)}</select>}
@@ -21,17 +21,17 @@ function SpecFields({ product, spec, onChange }) {
 }
 
 function validateSpec(product,spec){
-  if(!product) return '請先選擇商品'
-  if((product.price_options||[]).length&&!spec.package) return '請選擇組合／包裝'
-  if(['color_size','color_only','color_free'].includes(product.spec_mode)&&!spec.color) return '請選擇顏色'
-  if(['color_size','size_only'].includes(product.spec_mode)&&!spec.size) return '請選擇尺寸'
-  if((product.spec_flavors||[]).length&&!spec.flavor) return '請選擇口味／品種'
+  if(!product)return '請先選擇商品'
+  if((product.price_options||[]).length&&!spec.package)return '請選擇組合／包裝'
+  if(['color_size','color_only','color_free'].includes(product.spec_mode)&&!spec.color)return '請選擇顏色'
+  if(['color_size','size_only'].includes(product.spec_mode)&&!spec.size)return '請選擇尺寸'
+  if((product.spec_flavors||[]).length&&!spec.flavor)return '請選擇口味／品種'
   return ''
 }
 
 function selectedCost(product,spec){
   const option=(product?.price_options||[]).find(o=>String(o.label||'').trim()===String(spec?.package||'').trim())
-  if(option&&option.cost!==''&&option.cost!=null&&Number.isFinite(Number(option.cost))) return Number(option.cost)
+  if(option&&option.cost!==''&&option.cost!=null&&Number.isFinite(Number(option.cost)))return Number(option.cost)
   return Number(product?.cost||0)
 }
 
@@ -40,9 +40,14 @@ export default function StockInventory(){
   const [stock,setStock]=useState([])
   const [extras,setExtras]=useState([])
   const [movements,setMovements]=useState([])
-  const [products,setProducts]=useState([])
   const [search,setSearch]=useState('')
+  const [totalQty,setTotalQty]=useState(0)
+  const [totalCount,setTotalCount]=useState(0)
+  const [hasMore,setHasMore]=useState(false)
+  const [loading,setLoading]=useState(true)
+  const [loadingMore,setLoadingMore]=useState(false)
   const [productSearch,setProductSearch]=useState('')
+  const [productMatches,setProductMatches]=useState([])
   const [product,setProduct]=useState(null)
   const [spec,setSpec]=useState(blankSpec())
   const [qty,setQty]=useState(1)
@@ -52,29 +57,50 @@ export default function StockInventory(){
   const [editExtra,setEditExtra]=useState(null)
   const [extraBusyId,setExtraBusyId]=useState('')
 
-  const load=useCallback(async()=>{
+  const runStockQuery=useCallback(async(q='',offset=0,append=false)=>{
+    append?setLoadingMore(true):setLoading(true)
     try{
-      const [s,e,p,m]=await Promise.all([
-        InventoryAPI.listStock(),
-        InventoryAPI.listExtras(),
-        ProductsAPI.list(),
-        InventoryAPI.listMovements?.(200).catch(()=>[]) || [],
-      ])
-      setStock(s);setExtras(e);setProducts(p);setMovements(Array.isArray(m)?m:[])
+      const result=await neonHelperAdminRuntime({action:'stock_query',search:String(q||'').trim(),pageSize:PAGE_SIZE,offset})
+      const rows=Array.isArray(result?.rows)?result.rows:[]
+      setStock(prev=>append?[...prev,...rows]:rows)
+      setTotalQty(Number(result?.totalQty||0))
+      setTotalCount(Number(result?.totalCount||0))
+      setHasMore(result?.hasMore===true)
     }catch(err){toast('現貨資料載入失敗：'+err.message,'error')}
+    finally{append?setLoadingMore(false):setLoading(false)}
   },[toast])
-  useEffect(()=>{load()},[load])
 
-  const filtered=useMemo(()=>{
-    const q=search.trim().toLowerCase()
-    if(!q)return stock
-    return stock.filter(r=>[r.product_name,r.supplier,r.spec_label].some(v=>String(v||'').toLowerCase().includes(q)))
-  },[stock,search])
-  const productMatches=useMemo(()=>{
-    const q=productSearch.trim().toLowerCase()
-    return products.filter(p=>!q||String(p.name||'').toLowerCase().includes(q)).slice(0,20)
-  },[products,productSearch])
-  const total=filtered.reduce((s,r)=>s+Number(r.available_qty||0),0)
+  const loadSupport=useCallback(async()=>{
+    try{
+      const result=await neonHelperAdminRuntime({action:'stock_support',movementLimit:100})
+      setExtras(Array.isArray(result?.extras)?result.extras:[])
+      setMovements(Array.isArray(result?.movements)?result.movements:[])
+    }catch(err){toast('庫存輔助資料載入失敗：'+err.message,'error')}
+  },[toast])
+
+  const refresh=useCallback(async()=>{
+    await Promise.all([runStockQuery(search,0,false),loadSupport()])
+  },[runStockQuery,search,loadSupport])
+
+  useEffect(()=>{
+    const timer=window.setTimeout(()=>runStockQuery(search,0,false),search.trim()?250:0)
+    return()=>window.clearTimeout(timer)
+  },[search,runStockQuery])
+  useEffect(()=>{loadSupport()},[loadSupport])
+
+  useEffect(()=>{
+    const q=productSearch.trim()
+    if(!q||product){setProductMatches([]);return undefined}
+    let active=true
+    const timer=window.setTimeout(async()=>{
+      try{
+        const result=await neonHelperAdminRuntime({action:'product_query',includeArchived:false,search:q,category:'all',pageSize:20,offset:0})
+        if(active)setProductMatches(Array.isArray(result?.rows)?result.rows:[])
+      }catch(err){if(active)toast('商品搜尋失敗：'+err.message,'error')}
+    },250)
+    return()=>{active=false;window.clearTimeout(timer)}
+  },[productSearch,product,toast])
+
   const specError=product?validateSpec(product,spec):''
   const unitCost=product?selectedCost(product,spec):0
 
@@ -88,25 +114,37 @@ export default function StockInventory(){
     try{
       await InventoryAPI.createExtraPurchase({product,spec,qty:amount,note})
       toast(`已新增額外叫貨 ${amount} 件 ✓`)
-      setProduct(null);setProductSearch('');setSpec(blankSpec());setQty(1);setNote('');await load()
+      setProduct(null);setProductSearch('');setProductMatches([]);setSpec(blankSpec());setQty(1);setNote('')
+      await loadSupport()
     }catch(err){toast('新增額外叫貨失敗：'+err.message,'error')}
     finally{setSaving(false)}
   }
+
   async function receive(row){
-    try{const r=await InventoryAPI.receiveExtraPurchase(row.id);toast(`已入庫 ${r.received} 件，現貨 ${r.available} 件 ✓`);await load()}
-    catch(err){toast('入庫失敗：'+err.message,'error')}
+    try{
+      const response=await neonInventoryRuntime('receive_extra',{extra_id:row.id,note:row.note||'額外叫貨入庫'})
+      const result=response?.result||{}
+      toast(`已入庫 ${Number(result.received||0)} 件，現貨 ${Number(result.available_qty||0)} 件 ✓`)
+      await refresh()
+    }catch(err){toast('入庫失敗：'+err.message,'error')}
   }
+
   async function adjust(row,value){
     const n=Number(value)
     if(!Number.isInteger(n)||n<0||n===Number(row.available_qty||0))return
-    try{await InventoryAPI.adjustAvailable(row.id,n,'後台手動調整');toast('現貨數量已更新 ✓');await load()}
-    catch(err){toast('調整失敗：'+err.message,'error')}
+    try{
+      await neonInventoryRuntime('set_stock',{product_id:row.product_id,spec:row.spec||{},available_qty:n,note:'後台手動調整'})
+      toast('現貨數量已更新 ✓')
+      await Promise.all([runStockQuery(search,0,false),loadSupport()])
+    }catch(err){toast('調整失敗：'+err.message,'error')}
   }
+
   function beginEditExtra(row){
     setEditingExtraId(row.id)
     setEditExtra({ordered_qty:Number(row.ordered_qty||0),unit_cost:Number(row.unit_cost||0),note:String(row.note||'')})
   }
   function cancelEditExtra(){setEditingExtraId('');setEditExtra(null)}
+
   async function saveExtra(row){
     if(!editExtra)return
     const received=Math.max(0,Number(row.received_qty||0))
@@ -120,37 +158,61 @@ export default function StockInventory(){
       if(received===0){next.ordered_qty=ordered;next.unit_cost=cost}
       await neonInventoryRuntime('sync_extra',{row:next})
       toast('額外叫貨已修改 ✓')
-      cancelEditExtra();await load()
+      cancelEditExtra();await loadSupport()
     }catch(err){toast('修改額外叫貨失敗：'+err.message,'error')}
     finally{setExtraBusyId('')}
   }
+
   async function deleteExtra(row){
     const received=Math.max(0,Number(row.received_qty||0))
-    if(received>0)return toast('已有入庫紀錄，為避免庫存與付款失真，不能刪除此筆叫貨','error')
-    if(!window.confirm(`確定刪除「${row.product_name}」這筆額外叫貨？\n刪除後會從待入庫清單移除，但保留取消狀態供稽核。`))return
+    if(received>0)return toast('已有入庫紀錄，不能刪除此筆叫貨','error')
+    if(!window.confirm(`確定刪除「${row.product_name}」這筆額外叫貨？`))return
     setExtraBusyId(row.id)
     try{
       await neonInventoryRuntime('sync_extra',{row:{...row,status:'cancelled',updated_at:new Date().toISOString()}})
       toast('額外叫貨已刪除 ✓')
       if(editingExtraId===row.id)cancelEditExtra()
-      await load()
+      await loadSupport()
     }catch(err){toast('刪除額外叫貨失敗：'+err.message,'error')}
     finally{setExtraBusyId('')}
   }
 
   return <div className="animate-fade">
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:18}}><div><h2 style={{fontSize:22,fontWeight:900}}>現貨庫存</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>額外叫貨入庫後成為可售現貨；現貨開單會直接扣庫存。所有庫存異動以 Neon 流水帳記錄。</p></div><button className="btn btn-ghost" onClick={load}><RefreshCw size={14}/>重新整理</button></div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:18}}>
+      <div><h2 style={{fontSize:22,fontWeight:900}}>現貨庫存</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>庫存搜尋、總數、待入庫與流水由 Neon SQL 直接查詢；扣庫與入庫交易維持原本原子流程。</p></div>
+      <button className="btn btn-ghost" onClick={refresh}><RefreshCw size={14}/>重新整理</button>
+    </div>
 
-    <div className="card" style={{marginBottom:16}}><div className="card-header"><strong><Plus size={15}/> 新增額外叫貨</strong></div><div className="card-body"><div className="search-input-wrap" style={{width:'100%',maxWidth:760,marginBottom:8}}><Search size={17}/><input value={productSearch} onChange={e=>{setProductSearch(e.target.value);if(product&&e.target.value!==product.name){setProduct(null);setSpec(blankSpec())}}} placeholder="搜尋商品..." style={{paddingLeft:36,height:46,fontSize:15}}/></div>{productSearch&&!product&&<div style={{border:'1px solid var(--border)',borderRadius:10,maxHeight:220,overflowY:'auto',marginBottom:10,maxWidth:760}}>{productMatches.map(p=><button type="button" key={p.id} onClick={()=>{setProduct(p);setProductSearch(p.name);setSpec(blankSpec())}} style={{display:'flex',justifyContent:'space-between',width:'100%',padding:'11px 12px',border:0,borderBottom:'1px solid var(--border)',background:'#fff',cursor:'pointer'}}><strong>{p.name}</strong><span style={{color:'#2563eb'}}>{p.supplier||'未設定廠商'}</span></button>)}</div>}{product&&<div><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><SpecFields product={product} spec={spec} onChange={(k,v)=>setSpec(s=>({...s,[k]:v}))}/><span>額外數量</span><QuantityInput value={qty} min={1} onChange={setQty} style={{width:110,height:44,fontSize:18,fontWeight:900,textAlign:'center'}}/><input value={note} onChange={e=>setNote(e.target.value)} placeholder="備註" style={{minWidth:180,flex:1}}/><button className="btn btn-primary" disabled={saving||Boolean(specError)} onClick={createExtra}>{saving?'建立中...':'建立額外叫貨'}</button></div><div style={{marginTop:9,fontSize:12,color:specError?'#dc2626':'var(--text-secondary)'}}>{specError?`⚠ ${specError}`:`目前規格：${stockSpecLabel(spec)}｜單位成本：NT$${unitCost.toLocaleString()}`}</div></div>}</div></div>
+    <div className="card" style={{marginBottom:16}}>
+      <div className="card-header"><strong><Plus size={15}/> 新增額外叫貨</strong></div>
+      <div className="card-body">
+        <div className="search-input-wrap" style={{width:'100%',maxWidth:760,marginBottom:8}}><Search size={17}/><input value={productSearch} onChange={e=>{setProductSearch(e.target.value);if(product&&e.target.value!==product.name){setProduct(null);setSpec(blankSpec())}}} placeholder="輸入商品名稱／供應商後由 SQL 搜尋..." style={{paddingLeft:36,height:46,fontSize:15}}/></div>
+        {productSearch&&!product&&<div style={{border:'1px solid var(--border)',borderRadius:10,maxHeight:220,overflowY:'auto',marginBottom:10,maxWidth:760}}>{productMatches.length?productMatches.map(p=><button type="button" key={p.id} onClick={()=>{setProduct(p);setProductSearch(p.name);setProductMatches([]);setSpec(blankSpec())}} style={{display:'flex',justifyContent:'space-between',width:'100%',padding:'11px 12px',border:0,borderBottom:'1px solid var(--border)',background:'#fff',cursor:'pointer'}}><strong>{p.name}</strong><span style={{color:'#2563eb'}}>{p.supplier||'未設定廠商'}</span></button>):<div style={{padding:12,color:'var(--text-muted)'}}>找不到符合商品</div>}</div>}
+        {product&&<div><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><SpecFields product={product} spec={spec} onChange={(k,v)=>setSpec(s=>({...s,[k]:v}))}/><span>額外數量</span><QuantityInput value={qty} min={1} onChange={setQty} style={{width:110,height:44,fontSize:18,fontWeight:900,textAlign:'center'}}/><input value={note} onChange={e=>setNote(e.target.value)} placeholder="備註" style={{minWidth:180,flex:1}}/><button className="btn btn-primary" disabled={saving||Boolean(specError)} onClick={createExtra}>{saving?'建立中...':'建立額外叫貨'}</button></div><div style={{marginTop:9,fontSize:12,color:specError?'#dc2626':'var(--text-secondary)'}}>{specError?`⚠ ${specError}`:`目前規格：${stockSpecLabel(spec)}｜單位成本：NT$${unitCost.toLocaleString()}`}</div></div>}
+      </div>
+    </div>
 
-    <div className="card" style={{marginBottom:16}}><div className="card-header"><strong><PackageCheck size={15}/> 待入庫的額外叫貨</strong></div><div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>叫貨</th><th>已入庫</th><th>單位成本</th><th>備註</th><th>操作</th></tr></thead><tbody>{extras.filter(x=>x.status!=='received'&&x.status!=='cancelled').length===0&&<tr><td colSpan={8} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>目前沒有待入庫的額外叫貨</td></tr>}{extras.filter(x=>x.status!=='received'&&x.status!=='cancelled').map(r=>{
-      const editing=editingExtraId===r.id
-      const received=Math.max(0,Number(r.received_qty||0))
-      return <tr key={r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td>{editing&&received===0?<input type="number" min="1" value={editExtra?.ordered_qty??r.ordered_qty} onChange={e=>setEditExtra(v=>({...v,ordered_qty:e.target.value}))} style={{width:80,height:36,textAlign:'center'}}/>:r.ordered_qty}</td><td>{received}</td><td>{editing&&received===0?<input type="number" min="0" step="0.01" value={editExtra?.unit_cost??r.unit_cost} onChange={e=>setEditExtra(v=>({...v,unit_cost:e.target.value}))} style={{width:90,height:36,textAlign:'center'}}/>:`NT$${Number(r.unit_cost||0).toLocaleString()}`}</td><td>{editing?<input value={editExtra?.note??''} onChange={e=>setEditExtra(v=>({...v,note:e.target.value}))} placeholder="備註" style={{minWidth:140,height:36}}/>:(r.note||'—')}</td><td><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{editing?<><button className="btn btn-sm btn-primary" disabled={extraBusyId===r.id} onClick={()=>saveExtra(r)}>{extraBusyId===r.id?'儲存中...':'儲存'}</button><button className="btn btn-sm btn-ghost" onClick={cancelEditExtra}>取消</button></>:<><button className="btn btn-sm btn-ghost" onClick={()=>beginEditExtra(r)}><Pencil size={13}/>修改</button><button className="btn btn-sm btn-danger" disabled={received>0||extraBusyId===r.id} title={received>0?'已有入庫紀錄，不能刪除':'刪除這筆待入庫叫貨'} onClick={()=>deleteExtra(r)}><Trash2 size={13}/>刪除</button><button className="btn btn-sm btn-primary" onClick={()=>receive(r)}><ArchiveRestore size={13}/>全部到貨並轉現貨</button></>}</div>{received>0&&<div style={{fontSize:11,color:'#b45309',marginTop:5}}>已有入庫，只能修改備註</div>}</td></tr>
-    })}</tbody></table></div></div>
+    <div className="card" style={{marginBottom:16}}>
+      <div className="card-header" style={{display:'flex',justifyContent:'space-between'}}><strong><PackageCheck size={15}/> 待入庫的額外叫貨</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>{extras.length} 筆</span></div>
+      <div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>叫貨</th><th>已入庫</th><th>單位成本</th><th>備註</th><th>操作</th></tr></thead><tbody>
+        {extras.length===0&&<tr><td colSpan={8} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>目前沒有待入庫的額外叫貨</td></tr>}
+        {extras.map(r=>{const editing=editingExtraId===r.id;const received=Math.max(0,Number(r.received_qty||0));return <tr key={r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td>{editing&&received===0?<input type="number" min="1" value={editExtra?.ordered_qty??r.ordered_qty} onChange={e=>setEditExtra(v=>({...v,ordered_qty:e.target.value}))} style={{width:80,height:36,textAlign:'center'}}/>:r.ordered_qty}</td><td>{received}</td><td>{editing&&received===0?<input type="number" min="0" step="0.01" value={editExtra?.unit_cost??r.unit_cost} onChange={e=>setEditExtra(v=>({...v,unit_cost:e.target.value}))} style={{width:90,height:36,textAlign:'center'}}/>:`NT$${Number(r.unit_cost||0).toLocaleString()}`}</td><td>{editing?<input value={editExtra?.note??''} onChange={e=>setEditExtra(v=>({...v,note:e.target.value}))} placeholder="備註" style={{minWidth:140,height:36}}/>:(r.note||'—')}</td><td><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{editing?<><button className="btn btn-sm btn-primary" disabled={extraBusyId===r.id} onClick={()=>saveExtra(r)}>儲存</button><button className="btn btn-sm btn-ghost" onClick={cancelEditExtra}>取消</button></>:<><button className="btn btn-sm btn-ghost" onClick={()=>beginEditExtra(r)}><Pencil size={13}/>修改</button><button className="btn btn-sm btn-danger" disabled={received>0||extraBusyId===r.id} onClick={()=>deleteExtra(r)}><Trash2 size={13}/>刪除</button><button className="btn btn-sm btn-primary" onClick={()=>receive(r)}><ArchiveRestore size={13}/>全部到貨並轉現貨</button></>}</div></td></tr>})}
+      </tbody></table></div>
+    </div>
 
-    <div className="card" style={{marginBottom:16}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><Warehouse size={15}/> 可售現貨</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>目前共 {total} 件</span></div><div className="card-body"><div className="search-input-wrap" style={{width:'100%',maxWidth:760,marginBottom:12}}><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋商品／規格／供應商" style={{paddingLeft:36,height:46,fontSize:15}}/></div><div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>可售現貨</th><th>手動調整</th></tr></thead><tbody>{filtered.length===0&&<tr><td colSpan={5} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>目前沒有符合的現貨</td></tr>}{filtered.map(r=><tr key={r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td><strong style={{fontSize:18,color:Number(r.available_qty||0)>0?'#059669':'#94a3b8'}}>{r.available_qty||0}</strong></td><td><input type="number" min="0" defaultValue={r.available_qty||0} onBlur={e=>adjust(r,e.target.value)} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}} style={{width:100,height:40,textAlign:'center',fontWeight:900}}/></td></tr>)}</tbody></table></div></div></div>
+    <div className="card" style={{marginBottom:16}}>
+      <div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><Warehouse size={15}/> 現貨庫存</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>符合 {totalCount} 個規格｜合計 {totalQty} 件</span></div>
+      <div className="card-body">
+        <div className="search-input-wrap" style={{width:'100%',maxWidth:760,marginBottom:12}}><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋商品／規格／供應商（SQL 全庫搜尋）" style={{paddingLeft:36,height:46,fontSize:15}}/></div>
+        <div className="table-container"><table><thead><tr><th>商品</th><th>供應廠商</th><th>規格</th><th>可售現貨</th><th>手動調整</th></tr></thead><tbody>
+          {!loading&&stock.length===0&&<tr><td colSpan={5} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>目前沒有符合的現貨</td></tr>}
+          {stock.map(r=><tr key={r.neon_id||r.id}><td><strong>{r.product_name}</strong></td><td style={{color:'#2563eb',fontWeight:900}}>{r.supplier||'未設定'}</td><td>{r.spec_label||stockSpecLabel(r.spec)}</td><td><strong style={{fontSize:18,color:Number(r.available_qty||0)>0?'#059669':'#94a3b8'}}>{r.available_qty||0}</strong></td><td><input type="number" min="0" defaultValue={r.available_qty||0} onBlur={e=>adjust(r,e.target.value)} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}} style={{width:100,height:40,textAlign:'center',fontWeight:900}}/></td></tr>)}
+        </tbody></table></div>
+        {loading&&<div style={{padding:14,textAlign:'center',color:'var(--text-muted)'}}>SQL 查詢中...</div>}
+        {hasMore&&<div style={{textAlign:'center',paddingTop:12}}><button className="btn btn-ghost" disabled={loadingMore} onClick={()=>runStockQuery(search,stock.length,true)}>{loadingMore?'載入中...':`載入更多（目前 ${stock.length}/${totalCount}）`}</button></div>}
+      </div>
+    </div>
 
-    <div className="card"><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><History size={15}/> 庫存異動流水</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>最近 {movements.length} 筆</span></div><div className="table-container"><table><thead><tr><th>時間</th><th>商品</th><th>類型</th><th>增減</th><th>異動後</th><th>關聯</th><th>備註</th></tr></thead><tbody>{movements.length===0&&<tr><td colSpan={7} style={{textAlign:'center',padding:26,color:'var(--text-muted)'}}>尚無 Neon 庫存流水；下一次入庫、出單或手動調整後會開始記錄。</td></tr>}{movements.map(r=><tr key={r.id}><td style={{whiteSpace:'nowrap',fontSize:12}}>{r.created_at?new Date(r.created_at).toLocaleString('zh-TW'):'—'}</td><td><strong>{r.product_name||r.product_id}</strong></td><td><span className="badge badge-gray">{movementLabel(r.transaction_type)}</span></td><td><strong style={{color:Number(r.qty_change)>=0?'#059669':'#dc2626'}}>{Number(r.qty_change)>=0?'+':''}{r.qty_change}</strong></td><td><strong>{r.balance_after}</strong></td><td style={{fontSize:11,color:'var(--text-secondary)'}}>{r.order_id?`訂單 ${r.order_id}`:r.extra_id?`叫貨 ${r.extra_id}`:'—'}</td><td style={{fontSize:12}}>{r.note||'—'}</td></tr>)}</tbody></table></div></div>
+    <div className="card"><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><History size={15}/> 庫存異動流水</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>最近 {movements.length} 筆</span></div><div className="table-container"><table><thead><tr><th>時間</th><th>商品</th><th>類型</th><th>增減</th><th>異動後</th><th>關聯</th><th>備註</th></tr></thead><tbody>{movements.length===0&&<tr><td colSpan={7} style={{textAlign:'center',padding:26,color:'var(--text-muted)'}}>尚無 Neon 庫存流水</td></tr>}{movements.map(r=><tr key={r.id}><td style={{whiteSpace:'nowrap',fontSize:12}}>{r.created_at?new Date(r.created_at).toLocaleString('zh-TW'):'—'}</td><td><strong>{r.product_name||r.product_id}</strong></td><td><span className="badge badge-gray">{movementLabel(r.transaction_type)}</span></td><td><strong style={{color:Number(r.qty_change)>=0?'#059669':'#dc2626'}}>{Number(r.qty_change)>=0?'+':''}{r.qty_change}</strong></td><td><strong>{r.balance_after}</strong></td><td style={{fontSize:11,color:'var(--text-secondary)'}}>{r.order_id?`訂單 ${r.order_id}`:r.extra_id?`叫貨 ${r.extra_id}`:'—'}</td><td style={{fontSize:12}}>{r.note||'—'}</td></tr>)}</tbody></table></div></div>
   </div>
 }
