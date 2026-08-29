@@ -101,7 +101,7 @@ async function buildAllocations(sql,lines,totalAmount,supplier){
     const amount=Math.min(outstanding,remaining)
     allocations.push({
       kind:row.kind,order_id:row.order_id||'',item_index:Number(row.item_index||0),extra_id:row.extra_id||'',
-      order_uuid:row.order_uuid||'',item_uuid:row.item_uuid||'',extra_uuid:row.extra_uuid||'',
+      order_uuid:row.order_uuid||null,item_uuid:row.item_uuid||null,extra_uuid:row.extra_uuid||null,
       customer_name:row.customer_name||'',product_name:row.product_name||'',supplier:row.supplier||supplier,amount,
     })
     remaining-=amount
@@ -136,8 +136,8 @@ async function createPayment(sql,body){
         CASE WHEN a.kind='order' THEN oi.cost_price*oi.qty ELSE e.unit_cost*e.ordered_qty END AS cost_total,
         CASE WHEN a.kind='order' THEN COALESCE(oi.supplier_paid_amount,0) ELSE COALESCE(e.supplier_paid_amount,0) END AS old_paid
       FROM a
-      LEFT JOIN order_items oi ON a.kind='order' AND oi.id=a.item_uuid::uuid AND oi.order_id=a.order_uuid::uuid
-      LEFT JOIN stock_purchase_extras e ON a.kind='stock' AND e.id=a.extra_uuid::uuid
+      LEFT JOIN order_items oi ON a.kind='order' AND oi.id=NULLIF(a.item_uuid,'')::uuid AND oi.order_id=NULLIF(a.order_uuid,'')::uuid
+      LEFT JOIN stock_purchase_extras e ON a.kind='stock' AND e.id=NULLIF(a.extra_uuid,'')::uuid
       WHERE (a.kind='order' AND oi.id IS NOT NULL) OR (a.kind='stock' AND e.id IS NOT NULL)
     ), validation AS (
       SELECT COUNT(*) AS matched_count,COALESCE(SUM(amount),0) AS allocated,
@@ -152,9 +152,9 @@ async function createPayment(sql,body){
     ), inserted_allocations AS (
       INSERT INTO supplier_payment_allocations (payment_id,order_id,order_item_id,extra_purchase_id,customer_name,product_name,supplier,amount,created_at)
       SELECT p.id,
-        CASE WHEN c.kind='order' THEN c.order_uuid::uuid ELSE NULL END,
-        CASE WHEN c.kind='order' THEN c.item_uuid::uuid ELSE NULL END,
-        CASE WHEN c.kind='stock' THEN c.extra_uuid::uuid ELSE NULL END,
+        CASE WHEN c.kind='order' THEN NULLIF(c.order_uuid,'')::uuid ELSE NULL END,
+        CASE WHEN c.kind='order' THEN NULLIF(c.item_uuid,'')::uuid ELSE NULL END,
+        CASE WHEN c.kind='stock' THEN NULLIF(c.extra_uuid,'')::uuid ELSE NULL END,
         c.customer_name,c.product_name,c.supplier,c.amount,now()
       FROM current_allocations c CROSS JOIN payment p
       RETURNING id
@@ -169,7 +169,7 @@ async function createPayment(sql,body){
         supplier_payment_refs=CASE WHEN COALESCE(oi.supplier_payment_refs,'[]'::jsonb) @> to_jsonb(ARRAY[${legacyId}]) THEN COALESCE(oi.supplier_payment_refs,'[]'::jsonb) ELSE COALESCE(oi.supplier_payment_refs,'[]'::jsonb)||to_jsonb(ARRAY[${legacyId}]) END,
         updated_at=now()
       FROM order_agg g CROSS JOIN payment p
-      WHERE oi.id=g.item_uuid::uuid
+      WHERE oi.id=NULLIF(g.item_uuid,'')::uuid
       RETURNING oi.id
     ), updated_extras AS (
       UPDATE stock_purchase_extras e SET
@@ -178,7 +178,7 @@ async function createPayment(sql,body){
         supplier_payment_refs=CASE WHEN COALESCE(e.supplier_payment_refs,'[]'::jsonb) @> to_jsonb(ARRAY[${legacyId}]) THEN COALESCE(e.supplier_payment_refs,'[]'::jsonb) ELSE COALESCE(e.supplier_payment_refs,'[]'::jsonb)||to_jsonb(ARRAY[${legacyId}]) END,
         updated_at=now()
       FROM stock_agg g CROSS JOIN payment p
-      WHERE e.id=g.extra_uuid::uuid
+      WHERE e.id=NULLIF(g.extra_uuid,'')::uuid
       RETURNING e.id
     )
     SELECT p.id::text AS payment_uuid,(SELECT COUNT(*) FROM inserted_allocations)::int AS allocation_count FROM payment p
@@ -193,7 +193,7 @@ async function createPayment(sql,body){
       SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
     ) THEN COALESCE(o.payable_paid_at,now()) ELSE NULL END,
     updated_at=now()
-    WHERE o.id IN (SELECT DISTINCT order_uuid::uuid FROM jsonb_to_recordset(${JSON.stringify(allocations)}::jsonb) AS x(kind text,order_uuid text) WHERE kind='order' AND order_uuid<>'')
+    WHERE o.id IN (SELECT DISTINCT NULLIF(order_uuid,'')::uuid FROM jsonb_to_recordset(${JSON.stringify(allocations)}::jsonb) AS x(kind text,order_uuid text) WHERE kind='order' AND COALESCE(order_uuid,'')<>'')
   `
 
   return {id:legacyId,amount,allocation_count:Number(result[0].allocation_count||0),allocations}
