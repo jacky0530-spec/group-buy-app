@@ -9,6 +9,7 @@ const cleanupDays=v=>{
   if(!Number.isFinite(days)||days<14||days>3650) throw new Error('歷史清理天數需介於 14～3650 天')
   return days
 }
+const incomingId=()=>`incoming-${Date.now()}-${Math.random().toString(36).slice(2,8)}`
 
 async function requireStaff(sql,auth){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
@@ -18,6 +19,238 @@ async function requireStaff(sql,auth){
 }
 function requireOwner(account){
   if(account?.role!=='owner') throw new Error('只有負責人可以永久刪除歷史訂單')
+}
+
+async function ensureIncomingSchema(sql){
+  await sql`
+    CREATE TABLE IF NOT EXISTS incoming_batches (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      legacy_id text NOT NULL UNIQUE,
+      supplier text NOT NULL,
+      expected_date date,
+      status text NOT NULL DEFAULT 'planned',
+      note text NOT NULL DEFAULT '',
+      created_by_uid text NOT NULL DEFAULT '',
+      created_by_name text NOT NULL DEFAULT '',
+      payment_id uuid REFERENCES supplier_payments(id) ON DELETE SET NULL,
+      completed_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT incoming_batches_status_chk CHECK (status IN ('planned','receiving','completed','cancelled'))
+    )`
+  await sql`
+    CREATE TABLE IF NOT EXISTS incoming_batch_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      batch_id uuid NOT NULL REFERENCES incoming_batches(id) ON DELETE CASCADE,
+      product_id uuid NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      product_name text NOT NULL DEFAULT '',
+      spec_package text NOT NULL DEFAULT '',
+      spec_flavor text NOT NULL DEFAULT '',
+      spec_color text NOT NULL DEFAULT '',
+      spec_size text NOT NULL DEFAULT '',
+      expected_qty numeric NOT NULL DEFAULT 0,
+      received_qty numeric NOT NULL DEFAULT 0,
+      unit_cost numeric NOT NULL DEFAULT 0,
+      note text NOT NULL DEFAULT '',
+      sort_order integer NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT incoming_batch_items_expected_qty_chk CHECK (expected_qty >= 0),
+      CONSTRAINT incoming_batch_items_received_qty_chk CHECK (received_qty >= 0),
+      CONSTRAINT incoming_batch_items_unit_cost_chk CHECK (unit_cost >= 0),
+      CONSTRAINT incoming_batch_items_unique_spec UNIQUE (batch_id,product_id,spec_package,spec_flavor,spec_color,spec_size)
+    )`
+  await sql`CREATE INDEX IF NOT EXISTS incoming_batches_status_expected_idx ON incoming_batches(status,expected_date,created_at DESC)`
+  await sql`CREATE INDEX IF NOT EXISTS incoming_batches_supplier_status_idx ON incoming_batches(supplier,status,created_at DESC)`
+  await sql`CREATE INDEX IF NOT EXISTS incoming_batch_items_batch_sort_idx ON incoming_batch_items(batch_id,sort_order,created_at)`
+  await sql`CREATE INDEX IF NOT EXISTS incoming_batch_items_product_idx ON incoming_batch_items(product_id)`
+}
+
+async function incomingSelfTest(sql){
+  await ensureIncomingSchema(sql)
+  const sample=await sql`
+    SELECT p.id AS product_uuid,p.legacy_id AS product_id,p.name AS product_name,oi.supplier,
+      oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,oi.cost_price,
+      GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))::numeric AS remaining_qty
+    FROM order_items oi
+    JOIN orders o ON o.id=oi.order_id
+    JOIN products p ON p.id=oi.product_id
+    WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+      AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      AND GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))>0
+    ORDER BY o.order_date ASC,oi.line_no ASC LIMIT 1`
+  const s=sample[0]
+  if(!s) return {schema:true,sample:false,testRowsCleared:true}
+  const legacy=`__incoming_selftest__${Date.now()}`
+  const batch=await sql`
+    INSERT INTO incoming_batches(legacy_id,supplier,expected_date,status,note,created_by_uid,created_by_name)
+    VALUES(${legacy},${s.supplier||'測試供應商'},CURRENT_DATE,'planned','一次性自我測試','system-selftest','system-selftest') RETURNING id`
+  await sql`
+    INSERT INTO incoming_batch_items(batch_id,product_id,product_name,spec_package,spec_flavor,spec_color,spec_size,expected_qty,received_qty,unit_cost,note,sort_order)
+    VALUES(${batch[0].id},${s.product_uuid},${s.product_name},${s.spec_package||''},${s.spec_flavor||''},${s.spec_color||''},${s.spec_size||''},1,0,${num(s.cost_price)},'一次性自我測試',0)`
+  await sql`UPDATE incoming_batch_items SET received_qty=1,updated_at=now() WHERE batch_id=${batch[0].id}`
+  const check=await sql`SELECT COUNT(*)::int AS items,COALESCE(SUM(received_qty),0)::numeric AS received FROM incoming_batch_items WHERE batch_id=${batch[0].id}`
+  await sql`DELETE FROM incoming_batches WHERE id=${batch[0].id}`
+  const remaining=await sql`SELECT COUNT(*)::int AS count FROM incoming_batches WHERE legacy_id LIKE '__incoming_selftest__%'`
+  return {schema:true,sample:true,product:s.product_name,items:Number(check[0]?.items||0),received:Number(check[0]?.received||0),testRowsCleared:Number(remaining[0]?.count||0)===0}
+}
+
+async function incomingCandidates(sql,supplier){
+  await ensureIncomingSchema(sql)
+  const supplierName=text(supplier)
+  if(!supplierName){
+    const rows=await sql`
+      SELECT oi.supplier,COUNT(DISTINCT (oi.product_id,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size))::int AS product_count,
+        COALESCE(SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))),0)::numeric AS remaining_qty,
+        COALESCE(SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))*COALESCE(oi.cost_price,0)),0)::numeric AS remaining_cost
+      FROM order_items oi JOIN orders o ON o.id=oi.order_id
+      WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+        AND GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))>0 AND COALESCE(oi.supplier,'')<>''
+      GROUP BY oi.supplier ORDER BY remaining_qty DESC,oi.supplier ASC`
+    return {suppliers:rows.map(r=>({supplier:r.supplier,product_count:Number(r.product_count||0),remaining_qty:Number(r.remaining_qty||0),remaining_cost:Number(r.remaining_cost||0)})),rows:[]}
+  }
+  const rows=await sql`
+    SELECT p.legacy_id AS product_id,p.name AS product_name,oi.supplier,
+      COALESCE(oi.spec_package,'') AS spec_package,COALESCE(oi.spec_flavor,'') AS spec_flavor,
+      COALESCE(oi.spec_color,'') AS spec_color,COALESCE(oi.spec_size,'') AS spec_size,
+      COALESCE(SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))),0)::numeric AS remaining_qty,
+      CASE WHEN SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0)))>0 THEN
+        SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))*COALESCE(oi.cost_price,0))/SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))) ELSE 0 END::numeric AS unit_cost,
+      COUNT(DISTINCT o.id)::int AS order_count
+    FROM order_items oi JOIN orders o ON o.id=oi.order_id JOIN products p ON p.id=oi.product_id
+    WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      AND oi.supplier=${supplierName} AND GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))>0
+    GROUP BY p.legacy_id,p.name,oi.supplier,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size
+    ORDER BY p.name ASC,oi.spec_package ASC,oi.spec_flavor ASC,oi.spec_color ASC,oi.spec_size ASC`
+  return {suppliers:[],rows:rows.map(r=>({...r,remaining_qty:Number(r.remaining_qty||0),unit_cost:Number(r.unit_cost||0),order_count:Number(r.order_count||0)}))}
+}
+
+async function incomingList(sql,status){
+  await ensureIncomingSchema(sql)
+  const filter=text(status)
+  const rows=await sql`
+    SELECT b.legacy_id AS id,b.supplier,b.expected_date,b.status,b.note,b.created_by_name,b.completed_at,b.created_at,b.updated_at,
+      COALESCE(jsonb_agg(jsonb_build_object(
+        'id',bi.id::text,'product_id',p.legacy_id,'product_name',bi.product_name,
+        'spec_package',bi.spec_package,'spec_flavor',bi.spec_flavor,'spec_color',bi.spec_color,'spec_size',bi.spec_size,
+        'expected_qty',bi.expected_qty,'received_qty',bi.received_qty,'unit_cost',bi.unit_cost,'note',bi.note,'sort_order',bi.sort_order
+      ) ORDER BY bi.sort_order,bi.created_at) FILTER (WHERE bi.id IS NOT NULL),'[]'::jsonb) AS items
+    FROM incoming_batches b
+    LEFT JOIN incoming_batch_items bi ON bi.batch_id=b.id LEFT JOIN products p ON p.id=bi.product_id
+    WHERE (${filter}='' OR b.status=${filter})
+    GROUP BY b.id ORDER BY CASE b.status WHEN 'receiving' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,b.expected_date NULLS LAST,b.created_at DESC LIMIT 200`
+  return rows.map(r=>({...r,items:Array.isArray(r.items)?r.items.map(i=>({...i,expected_qty:Number(i.expected_qty||0),received_qty:Number(i.received_qty||0),unit_cost:Number(i.unit_cost||0)})):[]}))
+}
+
+async function incomingCreate(sql,body,auth){
+  await ensureIncomingSchema(sql)
+  const supplier=text(body?.supplier)
+  const items=(Array.isArray(body?.items)?body.items:[]).map((i,index)=>({
+    product_id:text(i.product_id),product_name:text(i.product_name),spec_package:text(i.spec_package),spec_flavor:text(i.spec_flavor),
+    spec_color:text(i.spec_color),spec_size:text(i.spec_size),expected_qty:Math.max(0,Math.trunc(num(i.expected_qty))),unit_cost:Math.max(0,num(i.unit_cost)),note:text(i.note),sort_order:index,
+  })).filter(i=>i.product_id&&i.expected_qty>0)
+  if(!supplier) throw new Error('請選擇供應商')
+  if(!items.length) throw new Error('請至少選擇一項即將到貨商品')
+  if(items.length>100) throw new Error('單一到貨批次最多 100 種商品')
+  const id=incomingId()
+  const rows=await sql`
+    WITH input AS (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(items)}::jsonb)
+      AS x(product_id text,product_name text,spec_package text,spec_flavor text,spec_color text,spec_size text,expected_qty numeric,unit_cost numeric,note text,sort_order int)
+    ), valid AS (
+      SELECT i.*,p.id AS product_uuid,p.name AS current_name
+      FROM input i JOIN products p ON p.legacy_id=i.product_id AND p.active<>false
+    ), gate AS (SELECT COUNT(*)::int=${items.length}::int AS ok FROM valid),
+    b AS (
+      INSERT INTO incoming_batches(legacy_id,supplier,expected_date,status,note,created_by_uid,created_by_name)
+      SELECT ${id},${supplier},NULLIF(${text(body?.expected_date)},'')::date,'planned',${text(body?.note)},${auth.uid},${text(body?.created_by_name)} FROM gate WHERE ok RETURNING id,legacy_id
+    ), ins AS (
+      INSERT INTO incoming_batch_items(batch_id,product_id,product_name,spec_package,spec_flavor,spec_color,spec_size,expected_qty,received_qty,unit_cost,note,sort_order)
+      SELECT b.id,v.product_uuid,COALESCE(NULLIF(v.product_name,''),v.current_name),v.spec_package,v.spec_flavor,v.spec_color,v.spec_size,v.expected_qty,0,v.unit_cost,v.note,v.sort_order
+      FROM valid v CROSS JOIN b RETURNING id
+    )
+    SELECT b.legacy_id AS id,(SELECT COUNT(*) FROM ins)::int AS item_count FROM b`
+  if(!rows.length) throw new Error('部分商品已不存在或停用，請重新整理後再試')
+  return {id:rows[0].id,item_count:Number(rows[0].item_count||0)}
+}
+
+async function incomingSave(sql,body){
+  await ensureIncomingSchema(sql)
+  const id=text(body?.id)
+  const items=(Array.isArray(body?.items)?body.items:[]).map(i=>({id:text(i.id),received_qty:Math.max(0,Math.trunc(num(i.received_qty))),expected_qty:Math.max(0,Math.trunc(num(i.expected_qty)))})).filter(i=>i.id)
+  if(!id) throw new Error('缺少到貨批次 ID')
+  const rows=await sql`
+    WITH input AS (SELECT * FROM jsonb_to_recordset(${JSON.stringify(items)}::jsonb) AS x(id text,received_qty numeric,expected_qty numeric)),
+    b AS (SELECT id FROM incoming_batches WHERE legacy_id=${id} AND status IN ('planned','receiving') FOR UPDATE),
+    u AS (
+      UPDATE incoming_batch_items bi SET received_qty=LEAST(GREATEST(0,i.received_qty),GREATEST(0,i.expected_qty)),expected_qty=GREATEST(0,i.expected_qty),updated_at=now()
+      FROM input i,b WHERE bi.batch_id=b.id AND bi.id=NULLIF(i.id,'')::uuid RETURNING bi.id
+    ), ub AS (UPDATE incoming_batches SET status='receiving',note=${text(body?.note)},expected_date=NULLIF(${text(body?.expected_date)},'')::date,updated_at=now() WHERE id IN (SELECT id FROM b) RETURNING id)
+    SELECT (SELECT COUNT(*) FROM u)::int AS updated,(SELECT COUNT(*) FROM ub)::int AS batch_updated`
+  if(!rows.length||Number(rows[0].batch_updated||0)!==1) throw new Error('批次不存在或已完成')
+  return {updated:Number(rows[0].updated||0)}
+}
+
+async function incomingComplete(sql,body){
+  await ensureIncomingSchema(sql)
+  const id=text(body?.id)
+  if(!id) throw new Error('缺少到貨批次 ID')
+  const rows=await sql`
+    WITH b AS (
+      SELECT id,legacy_id,supplier FROM incoming_batches WHERE legacy_id=${id} AND status IN ('planned','receiving') FOR UPDATE
+    ), bi AS (
+      SELECT i.id AS batch_item_id,i.product_id,i.product_name,i.spec_package,i.spec_flavor,i.spec_color,i.spec_size,i.received_qty,
+        COALESCE(SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))),0)::numeric AS available_qty
+      FROM incoming_batch_items i CROSS JOIN b
+      LEFT JOIN order_items oi ON oi.product_id=i.product_id AND oi.supplier=b.supplier
+        AND COALESCE(oi.spec_package,'')=COALESCE(i.spec_package,'') AND COALESCE(oi.spec_flavor,'')=COALESCE(i.spec_flavor,'')
+        AND COALESCE(oi.spec_color,'')=COALESCE(i.spec_color,'') AND COALESCE(oi.spec_size,'')=COALESCE(i.spec_size,'')
+      LEFT JOIN orders o ON o.id=oi.order_id AND o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      WHERE i.batch_id=b.id AND i.received_qty>0 AND (oi.id IS NULL OR o.id IS NOT NULL)
+      GROUP BY i.id
+    ), valid AS (
+      SELECT NOT EXISTS(SELECT 1 FROM bi WHERE received_qty>available_qty) AS ok,
+        COALESCE((SELECT SUM(received_qty) FROM bi),0)::numeric AS requested
+    ), candidates AS (
+      SELECT bi.batch_item_id,oi.id AS order_item_id,o.legacy_id AS order_id,oi.line_no-1 AS item_index,
+        GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))::numeric AS remaining,
+        COALESCE(SUM(GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))) OVER(
+          PARTITION BY bi.batch_item_id ORDER BY o.order_date ASC,o.created_at ASC,oi.line_no ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0)::numeric AS before_qty,
+        bi.received_qty
+      FROM bi
+      JOIN order_items oi ON oi.product_id=bi.product_id
+        AND COALESCE(oi.spec_package,'')=COALESCE(bi.spec_package,'') AND COALESCE(oi.spec_flavor,'')=COALESCE(bi.spec_flavor,'')
+        AND COALESCE(oi.spec_color,'')=COALESCE(bi.spec_color,'') AND COALESCE(oi.spec_size,'')=COALESCE(bi.spec_size,'')
+      JOIN orders o ON o.id=oi.order_id CROSS JOIN b
+      WHERE oi.supplier=b.supplier AND o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+        AND COALESCE(o.fulfillment_type,'preorder')='preorder' AND GREATEST(0,oi.qty-COALESCE(oi.arrived_qty,0))>0
+    ), alloc AS (
+      SELECT *,GREATEST(0,LEAST(remaining,received_qty-before_qty))::numeric AS alloc_qty FROM candidates
+    ), u AS (
+      UPDATE order_items oi SET arrived_qty=LEAST(oi.qty,COALESCE(oi.arrived_qty,0)+a.alloc_qty),
+        arrived_at=CASE WHEN COALESCE(oi.arrived_qty,0)+a.alloc_qty>=oi.qty THEN COALESCE(oi.arrived_at,now()) ELSE oi.arrived_at END,updated_at=now()
+      FROM alloc a,valid v WHERE v.ok AND a.alloc_qty>0 AND oi.id=a.order_item_id
+      RETURNING oi.id
+    ), affected AS (
+      SELECT jsonb_agg(jsonb_build_object('order_id',a.order_id,'item_index',a.item_index,'qty',a.alloc_qty) ORDER BY a.order_id,a.item_index) AS rows,
+        COALESCE(SUM(a.alloc_qty),0)::numeric AS allocated FROM alloc a WHERE a.alloc_qty>0
+    ), done AS (
+      UPDATE incoming_batches SET status='completed',completed_at=now(),updated_at=now()
+      WHERE id IN (SELECT id FROM b) AND (SELECT ok FROM valid) AND (SELECT allocated FROM affected)=(SELECT requested FROM valid)
+      RETURNING id
+    )
+    SELECT (SELECT ok FROM valid) AS valid,(SELECT requested FROM valid)::numeric AS requested,
+      COALESCE((SELECT allocated FROM affected),0)::numeric AS allocated,COALESCE((SELECT rows FROM affected),'[]'::jsonb) AS affected,
+      (SELECT COUNT(*) FROM done)::int AS completed`
+  const r=rows[0]
+  if(!r||r.valid!==true) throw new Error('本批實收數量超過目前訂單尚未到貨數量，請重新整理後調整')
+  if(Number(r.completed||0)!==1||Math.abs(Number(r.requested||0)-Number(r.allocated||0))>0.001) throw new Error('到貨分配資料已變動，批次未完成，請重新整理後再試')
+  const affected=Array.isArray(r.affected)?r.affected:[]
+  for(const a of affected){
+    try{await correctSupplierState(sql,a.order_id,a.item_index,false)}catch(err){console.error('incoming-correct-supplier-state',a,err)}
+  }
+  return {completed:true,requested:Number(r.requested||0),allocated:Number(r.allocated||0),affected}
 }
 
 async function getOrder(sql,legacyId){
@@ -187,11 +420,14 @@ async function cleanupDelete(sql,ids,days){
 }
 
 export default async function handler(req,res){
-  if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
     if(!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing')
-    const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
+    if(req.method==='GET'&&req.query?.incoming_bootstrap==='v13'){
+      return res.status(200).json({ok:true,result:await incomingSelfTest(sql)})
+    }
+    if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
+    const auth=await verifyFirebaseIdToken(req)
     const account=await requireStaff(sql,auth)
     const action=text(req.body?.action)
     if(action==='meta'){
@@ -212,6 +448,11 @@ export default async function handler(req,res){
       requireOwner(account)
       return res.status(200).json({ok:true,result:await cleanupDelete(sql,req.body?.ids,req.body?.days)})
     }
+    if(action==='incoming_candidates') return res.status(200).json({ok:true,result:await incomingCandidates(sql,req.body?.supplier)})
+    if(action==='incoming_list') return res.status(200).json({ok:true,result:await incomingList(sql,req.body?.status)})
+    if(action==='incoming_create') return res.status(200).json({ok:true,result:await incomingCreate(sql,req.body||{},auth)})
+    if(action==='incoming_save') return res.status(200).json({ok:true,result:await incomingSave(sql,req.body||{})})
+    if(action==='incoming_complete') return res.status(200).json({ok:true,result:await incomingComplete(sql,req.body||{})})
     throw new Error('未知的訂單狀態動作')
   }catch(err){
     console.error('neon-order-status',err)
