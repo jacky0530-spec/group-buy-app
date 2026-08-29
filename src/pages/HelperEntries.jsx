@@ -3,42 +3,54 @@ import { RefreshCw, Database, Search, CalendarDays } from 'lucide-react'
 import { useToast } from '../components/UI'
 import { HelperAPI } from '../lib/helper'
 import { ProductsAPI } from '../lib/db'
+import { neonHelperAdminRuntime } from '../lib/neonRuntime'
 
 const money = v => `NT$${Math.round(Number(v || 0)).toLocaleString()}`
 const currentMonth = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
 }
-const entryMonth = entry => String(entry.created_at || '').slice(0,7)
 const statusLabel = status => status === 'converted' ? '已建立訂單' : status === 'cancelled' ? '已取消' : '舊待確認'
+const PAGE_SIZE=100
 
 export default function HelperEntries() {
   const toast = useToast()
   const [entries,setEntries] = useState([])
-  const [products,setProducts] = useState([])
+  const [stats,setStats] = useState([])
+  const [totalCount,setTotalCount] = useState(0)
+  const [hasMore,setHasMore] = useState(false)
   const [loading,setLoading] = useState(true)
+  const [loadingMore,setLoadingMore] = useState(false)
   const [working,setWorking] = useState('')
   const [month,setMonth] = useState(currentMonth())
   const [search,setSearch] = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const queryDashboard = useCallback(async ({append=false}={}) => {
+    const offset=append?entries.length:0
+    append?setLoadingMore(true):setLoading(true)
     try {
-      const [e,p] = await Promise.all([HelperAPI.allEntries(),ProductsAPI.list({includeArchived:true})])
-      setEntries(e)
-      setProducts(p)
+      const result=await neonHelperAdminRuntime({action:'dashboard',month,search:search.trim(),pageSize:PAGE_SIZE,offset})
+      const rows=Array.isArray(result?.rows)?result.rows:[]
+      setEntries(prev=>append?[...prev,...rows]:rows)
+      setStats(Array.isArray(result?.stats)?result.stats:[])
+      setTotalCount(Number(result?.totalCount||0))
+      setHasMore(result?.hasMore===true)
     } catch (err) {
       toast('載入失敗：'+err.message,'error')
     } finally {
-      setLoading(false)
+      append?setLoadingMore(false):setLoading(false)
     }
-  },[toast])
+  },[month,search,entries.length,toast])
 
-  useEffect(() => { load() },[load])
+  useEffect(() => {
+    const timer=window.setTimeout(()=>queryDashboard({append:false}),search.trim()?280:0)
+    return ()=>window.clearTimeout(timer)
+  },[month,search])
 
   async function sync() {
     setWorking('sync')
     try {
+      const products=await ProductsAPI.list({includeArchived:true})
       const n = await HelperAPI.syncCatalog(products)
       toast(`已同步 ${n} 筆小幫手商品目錄 ✓`)
     } catch (err) {
@@ -48,70 +60,28 @@ export default function HelperEntries() {
     }
   }
 
-  const monthEntries = useMemo(
-    () => entries.filter(e => !month || entryMonth(e) === month),
-    [entries,month],
-  )
-
-  const stats = useMemo(() => {
-    const map = new Map()
-    monthEntries.forEach(e => {
-      const key = e.created_by_uid || `name:${e.created_by_name || 'unknown'}`
-      if (!map.has(key)) map.set(key,{
-        key,
-        uid:e.created_by_uid || '',
-        name:e.created_by_name || '小幫手',
-        total:0,
-        converted:0,
-        pending:0,
-        cancelled:0,
-        virtual:0,
-        formal:0,
-      })
-      const row = map.get(key)
-      row.total += 1
-      if (e.status === 'converted') row.converted += 1
-      else if (e.status === 'cancelled') row.cancelled += 1
-      else row.pending += 1
-      if (e.is_virtual) row.virtual += 1
-      else row.formal += 1
-    })
-    return [...map.values()].sort((a,b) => b.total-a.total || a.name.localeCompare(b.name,'zh-Hant'))
-  },[monthEntries])
-
   const totals = useMemo(() => stats.reduce((a,r) => ({
-    total:a.total+r.total,
-    converted:a.converted+r.converted,
-    pending:a.pending+r.pending,
-    cancelled:a.cancelled+r.cancelled,
-    virtual:a.virtual+r.virtual,
+    total:a.total+Number(r.total||0),
+    converted:a.converted+Number(r.converted||0),
+    pending:a.pending+Number(r.pending||0),
+    cancelled:a.cancelled+Number(r.cancelled||0),
+    virtual:a.virtual+Number(r.virtual||0),
   }),{total:0,converted:0,pending:0,cancelled:0,virtual:0}),[stats])
-
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return monthEntries
-    return monthEntries.filter(e =>
-      String(e.created_by_name || '').toLowerCase().includes(q) ||
-      String(e.customer_name || '').toLowerCase().includes(q) ||
-      String(e.customer_phone_last2 || '').includes(q) ||
-      (e.items || []).some(x => String(x.product_name || '').toLowerCase().includes(q))
-    )
-  },[monthEntries,search])
 
   return <div className="animate-fade">
     <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:18}}>
       <div>
         <h2 style={{fontSize:22,fontWeight:800}}>小幫手登記</h2>
-        <p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>小幫手送出後直接建立訂單；此頁僅供查詢、稽核與薪資統計，不再需要人工轉單。</p>
+        <p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>月份統計與紀錄搜尋已改由 Neon SQL 執行；每次只載入目前月份與最多 {PAGE_SIZE} 筆紀錄。</p>
       </div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <button className="btn btn-ghost" onClick={sync} disabled={working==='sync'}><Database size={14}/>{working==='sync'?'同步中...':'重新同步商品目錄'}</button>
-        <button className="btn btn-ghost" onClick={load} disabled={loading}><RefreshCw size={14}/>重新整理</button>
+        <button className="btn btn-ghost" onClick={()=>queryDashboard({append:false})} disabled={loading}><RefreshCw size={14}/>重新整理</button>
       </div>
     </div>
 
     <div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',padding:12,borderRadius:10,marginBottom:14,fontSize:13,color:'#065f46'}}>
-      新版流程會同時寫入正式訂單與小幫手登記紀錄。舊資料若仍顯示「舊待確認」，只保留作歷史紀錄，不再從此頁轉單。
+      新版流程會同時寫入正式訂單與小幫手登記紀錄。此頁現在直接從資料庫依月份統計，不再先下載全部歷史資料到瀏覽器。
     </div>
 
     <div className="card" style={{marginBottom:14}}>
@@ -135,29 +105,31 @@ export default function HelperEntries() {
       <div className="table-container"><table>
         <thead><tr><th>小幫手</th><th>登記筆數</th><th>已建立訂單</th><th>正式</th><th>虛擬</th><th>舊待確認</th><th>已取消</th><th>成功率</th></tr></thead>
         <tbody>
-          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td>{r.formal}</td><td>{r.virtual}</td><td>{r.pending}</td><td>{r.cancelled}</td><td>{r.total?`${Math.round(r.converted/r.total*100)}%`:'—'}</td></tr>)}
+          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td>{r.formal}</td><td>{r.virtual}</td><td>{r.pending}</td><td>{r.cancelled}</td><td>{r.total?`${Math.round(Number(r.converted||0)/Number(r.total||1)*100)}%`:'—'}</td></tr>)}
           {!loading&&!stats.length&&<tr><td colSpan={8} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>此月份沒有小幫手登記資料</td></tr>}
         </tbody>
       </table></div>
     </div>
 
     <div className="card">
-      <div className="card-header"><strong>登記紀錄 {visible.length} 筆</strong></div>
+      <div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap'}}><strong>登記紀錄 {totalCount} 筆</strong><span style={{fontSize:11,color:'var(--text-muted)'}}>目前載入 {entries.length} 筆</span></div>
       <div className="table-container"><table>
         <thead><tr><th>時間</th><th>登記人</th><th>客戶</th><th>商品明細</th><th>類型</th><th>金額</th><th>狀態</th></tr></thead>
         <tbody>
-          {visible.map(e => <tr key={e.id} style={{background:e.is_virtual?'#fff1f2':undefined}}>
+          {loading&&<tr><td colSpan={7} style={{textAlign:'center',padding:30}}>讀取中...</td></tr>}
+          {!loading&&entries.map(e => <tr key={e.id} style={{background:e.is_virtual?'#fff1f2':undefined}}>
             <td style={{whiteSpace:'nowrap'}}>{e.created_at ? new Date(e.created_at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
             <td>{e.created_by_name||'小幫手'}</td>
             <td><strong>{e.customer_name}</strong>{e.customer_phone_last2&&<div style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {e.customer_phone_last2}</div>}</td>
-            <td>{(e.items||[]).map((x,i)=><div key={i}>{x.product_name} ×<strong>{x.qty}</strong>{x.spec?.package?`／${x.spec.package}`:''}{x.spec?.flavor?`／${x.spec.flavor}`:''}{x.spec?.color?`／${x.spec.color}`:''}{x.spec?.size?`／${x.spec.size}`:''}</div>)}{e.note&&<div style={{fontSize:11,color:'var(--text-muted)'}}>備註：{e.note}</div>}</td>
+            <td>{(e.items||[]).map((x,i)=><div key={i}>{x.product_name||x.name} ×<strong>{x.qty}</strong>{x.spec?.package?`／${x.spec.package}`:''}{x.spec?.flavor?`／${x.spec.flavor}`:''}{x.spec?.color?`／${x.spec.color}`:''}{x.spec?.size?`／${x.spec.size}`:''}</div>)}{e.note&&<div style={{fontSize:11,color:'var(--text-muted)'}}>備註：{e.note}</div>}</td>
             <td><span className={`badge ${e.is_virtual?'badge-rose':'badge-emerald'}`}>{e.is_virtual?'⚠ 虛擬':'正式'}</span></td>
             <td>{money(e.total_amount)}</td>
             <td><span className={`badge ${e.status==='converted'?'badge-emerald':e.status==='cancelled'?'badge-gray':'badge-amber'}`}>{statusLabel(e.status)}</span>{e.converted_order_id&&<div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>訂單 {e.converted_order_id.slice(0,8)}…</div>}</td>
           </tr>)}
-          {!loading&&!visible.length&&<tr><td colSpan={7} style={{textAlign:'center',padding:30,color:'var(--text-muted)'}}>目前沒有符合條件的紀錄</td></tr>}
+          {!loading&&!entries.length&&<tr><td colSpan={7} style={{textAlign:'center',padding:30,color:'var(--text-muted)'}}>目前沒有符合條件的紀錄</td></tr>}
         </tbody>
       </table></div>
+      {hasMore&&<div style={{padding:12,textAlign:'center',borderTop:'1px solid var(--border)'}}><button className="btn btn-ghost" disabled={loadingMore} onClick={()=>queryDashboard({append:true})}>{loadingMore?'載入中...':`載入更多（尚有 ${Math.max(0,totalCount-entries.length)} 筆）`}</button></div>}
     </div>
   </div>
 }
