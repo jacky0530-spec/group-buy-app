@@ -1,6 +1,6 @@
 import { CustomersAPI, ProductsAPI } from './db'
 import { derivePhoneLast2, getCustomerPhoneLast2, normalizePhoneLast2 } from './customerSearch'
-import { neonRuntime } from './neonRuntime'
+import { neonHelperAdminRuntime, neonRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-catalog-writes-installed')
 const nowISO=()=>new Date().toISOString()
@@ -107,7 +107,7 @@ if(!globalThis[INSTALLED]){
   ProductsAPI.archive=async function(id){return (await neonRuntime('write_product',{op:'archive',id}))?.result}
   ProductsAPI.restore=async function(id){return (await neonRuntime('write_product',{op:'restore',id}))?.result}
   ProductsAPI.isDuplicate=async function(name,excludeId=null){
-    const rows=await ProductsAPI.list({includeArchived:false})
-    return rows.some(row=>row.id!==excludeId&&row.active!==false&&String(row.name||'')===String(name||''))
+    const result=await neonHelperAdminRuntime({action:'product_duplicate',name:String(name||'').trim(),excludeId:excludeId||''})
+    return result?.duplicate===true
   }
 }
