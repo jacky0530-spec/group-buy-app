@@ -3,8 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第14版：即將到貨批次允許既有訂單中的已封存商品建立批次；只有商品真的不存在才阻擋。Production trigger.
-const APP_VERSION = '第14版｜2026/08/29'
+// 第15版：即將到貨理貨的實收數量輸入框放大，提升桌機與平板操作性。
+const APP_VERSION = '第15版｜2026/08/29'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
