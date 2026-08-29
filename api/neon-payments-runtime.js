@@ -238,6 +238,130 @@ async function listStockPayables(sql){
   return rows.map(r=>({...r,ordered_qty:Number(r.ordered_qty||0),received_qty:Number(r.received_qty||0),unit_cost:Number(r.unit_cost||0),supplier_paid_amount:Number(r.supplier_paid_amount||0)}))
 }
 
+async function paymentDashboard(sql){
+  const [supplierRows,summaryRows,paymentRows]=await Promise.all([
+    sql`
+      WITH due AS (
+        SELECT
+          COALESCE(NULLIF(oi.supplier,''),'未指定供應商') AS supplier,
+          GREATEST(0,COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-COALESCE(oi.supplier_paid_amount,0))::numeric AS outstanding,
+          CASE WHEN COALESCE(oi.supplier_payment_term,'manual')='arrival'
+            AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
+            THEN false ELSE true END AS eligible
+        FROM order_items oi
+        JOIN orders o ON o.id=oi.order_id
+        WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false AND COALESCE(o.is_virtual,false)=false
+          AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+        UNION ALL
+        SELECT
+          COALESCE(NULLIF(e.supplier,''),'未指定供應商') AS supplier,
+          GREATEST(0,COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-COALESCE(e.supplier_paid_amount,0))::numeric AS outstanding,
+          true AS eligible
+        FROM stock_purchase_extras e
+        JOIN products p ON p.id=e.product_id
+        WHERE e.status<>'cancelled' AND COALESCE(p.supplier_payment_term,'manual')='manual'
+          AND COALESCE(e.supplier_paid_amount,0)<COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-0.01
+      )
+      SELECT supplier,
+        COALESCE(SUM(outstanding) FILTER (WHERE eligible),0)::numeric AS ready,
+        COALESCE(SUM(outstanding) FILTER (WHERE NOT eligible),0)::numeric AS waiting,
+        COUNT(*)::int AS count
+      FROM due
+      GROUP BY supplier
+      ORDER BY ready DESC,supplier ASC
+    `,
+    sql`
+      SELECT
+        COALESCE((SELECT SUM(amount) FROM supplier_payments WHERE voided<>true),0)::numeric AS all_paid,
+        COALESCE((
+          SELECT SUM(COALESCE(oi.supplier_paid_amount,0))
+          FROM order_items oi JOIN orders o ON o.id=oi.order_id
+          WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+            AND COALESCE(oi.supplier_paid_amount,0)>0
+            AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
+        ),0)::numeric AS paid_not_arrived
+    `,
+    sql`
+      SELECT p.legacy_id AS id,p.payment_date,p.supplier,p.amount,p.note,p.created_at,COUNT(a.id)::int AS allocation_count
+      FROM supplier_payments p
+      LEFT JOIN supplier_payment_allocations a ON a.payment_id=p.id
+      WHERE p.voided<>true
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+      LIMIT 30
+    `,
+  ])
+  const suppliers=supplierRows.map(r=>({supplier:r.supplier,ready:Number(r.ready||0),waiting:Number(r.waiting||0),count:Number(r.count||0)}))
+  const summary=summaryRows[0]||{}
+  return {
+    suppliers,
+    summary:{
+      ready:suppliers.reduce((s,r)=>s+r.ready,0),
+      waiting:suppliers.reduce((s,r)=>s+r.waiting,0),
+      allPaid:Number(summary.all_paid||0),
+      paidNotArrived:Number(summary.paid_not_arrived||0),
+    },
+    payments:paymentRows.map(r=>({...r,amount:Number(r.amount||0),allocation_count:Number(r.allocation_count||0)})),
+  }
+}
+
+async function listSupplierPayables(sql,supplierName){
+  const supplier=text(supplierName)||'未指定供應商'
+  const rows=await sql`
+    WITH due AS (
+      SELECT
+        ('order:'||o.legacy_id||':'||(oi.line_no-1))::text AS key,
+        o.legacy_id AS order_id,(oi.line_no-1)::int AS item_index,''::text AS extra_id,
+        o.customer_name,o.order_date,
+        COALESCE(NULLIF(oi.supplier,''),'未指定供應商') AS supplier,
+        oi.product_name,
+        CONCAT_WS('／',NULLIF('組合：'||COALESCE(oi.spec_package,''),'組合：'),NULLIF('口味：'||COALESCE(oi.spec_flavor,''),'口味：'),NULLIF('顏色：'||COALESCE(oi.spec_color,''),'顏色：'),NULLIF('尺寸：'||COALESCE(oi.spec_size,''),'尺寸：')) AS spec,
+        COALESCE(oi.qty,0)::int AS qty,
+        (COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0))::numeric AS cost,
+        COALESCE(oi.supplier_paid_amount,0)::numeric AS paid,
+        GREATEST(0,COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-COALESCE(oi.supplier_paid_amount,0))::numeric AS outstanding,
+        COALESCE(oi.supplier_payment_term,'manual') AS term,
+        (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0) AS arrived,
+        CASE WHEN COALESCE(oi.supplier_payment_term,'manual')='arrival'
+          AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
+          THEN false ELSE true END AS eligible,
+        false AS is_stock_purchase
+      FROM order_items oi
+      JOIN orders o ON o.id=oi.order_id
+      WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false AND COALESCE(o.is_virtual,false)=false
+        AND COALESCE(NULLIF(oi.supplier,''),'未指定供應商')=${supplier}
+        AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+      UNION ALL
+      SELECT
+        ('stock:'||e.legacy_id)::text AS key,
+        ''::text AS order_id,0::int AS item_index,e.legacy_id AS extra_id,
+        '現貨進貨'::text AS customer_name,e.created_at AS order_date,
+        COALESCE(NULLIF(e.supplier,''),'未指定供應商') AS supplier,
+        e.product_name,COALESCE(NULLIF(e.spec_label,''),'一般規格') AS spec,
+        COALESCE(e.ordered_qty,0)::int AS qty,
+        (COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0))::numeric AS cost,
+        COALESCE(e.supplier_paid_amount,0)::numeric AS paid,
+        GREATEST(0,COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-COALESCE(e.supplier_paid_amount,0))::numeric AS outstanding,
+        'manual'::text AS term,
+        (COALESCE(e.received_qty,0)>=COALESCE(e.ordered_qty,0) AND COALESCE(e.ordered_qty,0)>0) AS arrived,
+        true AS eligible,
+        true AS is_stock_purchase
+      FROM stock_purchase_extras e
+      JOIN products p ON p.id=e.product_id
+      WHERE e.status<>'cancelled' AND COALESCE(p.supplier_payment_term,'manual')='manual'
+        AND COALESCE(NULLIF(e.supplier,''),'未指定供應商')=${supplier}
+        AND COALESCE(e.supplier_paid_amount,0)<COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-0.01
+    )
+    SELECT * FROM due ORDER BY eligible DESC,order_date ASC,key ASC
+  `
+  return rows.map(r=>({
+    key:r.key,order_id:r.order_id||'',item_index:Number(r.item_index||0),extra_id:r.extra_id||'',customer_name:r.customer_name||'',order_date:r.order_date,
+    supplier:r.supplier||'未指定供應商',product_name:r.product_name||'未命名商品',spec:r.spec||'一般規格',qty:Number(r.qty||0),
+    cost:Number(r.cost||0),paid:Number(r.paid||0),outstanding:Number(r.outstanding||0),term:r.term||'manual',arrived:r.arrived===true,
+    isEligible:r.eligible===true,isStockPurchase:r.is_stock_purchase===true,
+  }))
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -250,6 +374,8 @@ export default async function handler(req,res){
     if(action==='create') return res.status(200).json({ok:true,result:await createPayment(sql,req.body||{})})
     if(action==='list') return res.status(200).json({ok:true,rows:await listPayments(sql)})
     if(action==='list_stock_payables') return res.status(200).json({ok:true,rows:await listStockPayables(sql)})
+    if(action==='dashboard') return res.status(200).json({ok:true,...await paymentDashboard(sql)})
+    if(action==='supplier_payables') return res.status(200).json({ok:true,rows:await listSupplierPayables(sql,req.body?.supplier)})
     throw new Error('未知的付款同步動作')
   }catch(err){
     console.error('neon-payments-runtime',err)
