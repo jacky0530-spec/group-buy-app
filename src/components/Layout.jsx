@@ -3,8 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第11版正式部署觸發：負責人專用歷史訂單清理，14/30 天篩選、全選與財務影響提示。
-const APP_VERSION = '第11版｜2026/08/29'
+// 第12版：歷史訂單清理新增 60 天快捷選擇與 14～3650 天自訂天數。
+const APP_VERSION = '第12版｜2026/08/29'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
