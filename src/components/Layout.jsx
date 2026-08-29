@@ -1,16 +1,17 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse } from 'lucide-react'
+import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { UserMenu } from './AuthGuard'
+import { UserMenu, useAuth } from './AuthGuard'
 
-// 第10版：待／已出貨商品選項依實際訂單狀態與正數量過濾（正式）。
-const APP_VERSION = '第10版｜2026/08/29'
+// 第11版：新增負責人專用歷史訂單清理與財務影響提示。
+const APP_VERSION = '第11版｜2026/08/29'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
   { to: '/products', icon: ShoppingBag, label: '商品管理' },
   { to: '/customers', icon: Users, label: '客戶管理' },
   { to: '/orders', icon: ShoppingCart, label: '訂單管理' },
+  { to: '/order-cleanup', icon: Trash2, label: '歷史訂單清理', ownerOnly:true },
   { to: '/order-import', icon: FileSpreadsheet, label: 'Excel匯入訂單' },
   { to: '/reports', icon: BarChart2, label: '銷售報表' },
   { to: '/pending-report', icon: ClipboardList, label: '未出貨報表' },
@@ -24,6 +25,8 @@ const NAV = [
 export default function Layout() {
   const [sideOpen, setSideOpen] = useState(false)
   const location = useLocation()
+  const { role } = useAuth()
+  const visibleNav = NAV.filter(item => !item.ownerOnly || role === 'owner')
 
   useEffect(() => { setSideOpen(false) }, [location.pathname])
   useEffect(() => {
@@ -36,7 +39,7 @@ export default function Layout() {
   return <div className="app-layout">
     <aside className={`app-sidebar no-print ${sideOpen ? 'is-open' : ''}`} aria-label="主選單">
       <div className="sidebar-brand"><div className="sidebar-brand-row"><div className="sidebar-logo"><ShoppingBag size={18} color="white" /></div><div><div className="sidebar-title">團購百貨</div><div className="sidebar-subtitle">Order System · {APP_VERSION}</div></div></div></div>
-      <nav className="sidebar-nav">{NAV.map(({to,icon:Icon,label,end})=><NavLink key={to} to={to} end={end} className={({isActive})=>`sidebar-nav-link ${isActive?'active':''}`}>{({isActive})=><><Icon size={17}/><span>{label}</span>{isActive&&<span className="sidebar-active-dot"/>}</>}</NavLink>)}</nav>
+      <nav className="sidebar-nav">{visibleNav.map(({to,icon:Icon,label,end})=><NavLink key={to} to={to} end={end} className={({isActive})=>`sidebar-nav-link ${isActive?'active':''}`}>{({isActive})=><><Icon size={17}/><span>{label}</span>{isActive&&<span className="sidebar-active-dot"/>}</>}</NavLink>)}</nav>
       <div className="sidebar-footer"><UserMenu/><div className="sidebar-copyright">© 2025 團購百貨管理系統 · {APP_VERSION}</div></div>
     </aside>
     {sideOpen&&<button type="button" className="sidebar-backdrop no-print" aria-label="關閉選單" onClick={()=>setSideOpen(false)}/>} 
