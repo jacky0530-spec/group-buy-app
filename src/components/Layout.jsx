@@ -3,7 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第17版：未出貨報表的商品候選目錄會依「全部待出貨／已到貨可取貨／尚未到貨」同步過濾。
+// 第17版：未出貨報表的商品候選目錄會依「全部待出貨／已到貨可取貨／尚未到貨」同步過濾。Preview redeploy trigger.
 const APP_VERSION = '第17版｜2026/08/29'
 
 const NAV = [
