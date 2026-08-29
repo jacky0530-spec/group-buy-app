@@ -1,10 +1,10 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Trash2 } from 'lucide-react'
+import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Trash2, Truck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第12版正式部署：歷史訂單清理預設 60 天；本次僅觸發即將到貨後端 bootstrap。
-const APP_VERSION = '第12版｜2026/08/29'
+// 第13版：即將到貨批次工作區正式版；預先拉貨、理貨、批次完成到貨、同頁 Neon 付款與列印到貨表單。Production trigger.
+const APP_VERSION = '第13版｜2026/08/29'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
@@ -15,6 +15,7 @@ const NAV = [
   { to: '/order-import', icon: FileSpreadsheet, label: 'Excel匯入訂單' },
   { to: '/reports', icon: BarChart2, label: '銷售報表' },
   { to: '/pending-report', icon: ClipboardList, label: '未出貨報表' },
+  { to: '/incoming', icon: Truck, label: '即將到貨' },
   { to: '/stock', icon: Warehouse, label: '現貨庫存' },
   { to: '/expenses', icon: ReceiptText, label: '其他費用' },
   { to: '/supplier-payments', icon: CreditCard, label: '供應商付款' },
