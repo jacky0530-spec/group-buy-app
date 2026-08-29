@@ -1,6 +1,16 @@
 import { auth } from './firebase'
 
-async function postAuthed(path,body={}){
+const READ_INFLIGHT=Symbol.for('group-buy.neon-read-inflight')
+const readInflight=globalThis[READ_INFLIGHT]||(globalThis[READ_INFLIGHT]=new Map())
+
+function dedupeReadKey(path,body={}){
+  const action=String(body?.action||'')
+  if(path==='/api/neon-order-query'&&['all','date_range','page'].includes(action)) return `${path}|${JSON.stringify(body)}`
+  if(path==='/api/neon-runtime'&&['list_customers','list_products','list_orders'].includes(action)) return `${path}|${JSON.stringify(body)}`
+  return ''
+}
+
+async function performAuthedPost(path,body={}){
   const user=auth.currentUser
   if(!user) throw new Error('尚未登入，無法同步 Neon')
   const token=await user.getIdToken()
@@ -12,6 +22,15 @@ async function postAuthed(path,body={}){
   const data=await response.json().catch(()=>({}))
   if(!response.ok||!data.ok) throw new Error(data.error||`Neon API 錯誤 ${response.status}`)
   return data
+}
+
+async function postAuthed(path,body={}){
+  const key=dedupeReadKey(path,body)
+  if(!key) return performAuthedPost(path,body)
+  if(readInflight.has(key)) return readInflight.get(key)
+  const promise=performAuthedPost(path,body).finally(()=>readInflight.delete(key))
+  readInflight.set(key,promise)
+  return promise
 }
 
 export async function neonRuntime(action,payload={}){
