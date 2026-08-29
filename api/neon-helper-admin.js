@@ -136,6 +136,101 @@ async function productDuplicate(sql,body){
   return rows.length>0
 }
 
+function stockSpecLabel(row){
+  return [
+    row.spec_package&&`組合：${row.spec_package}`,
+    row.spec_flavor&&`口味：${row.spec_flavor}`,
+    row.spec_color&&`顏色：${row.spec_color}`,
+    row.spec_size&&`尺寸：${row.spec_size}`,
+  ].filter(Boolean).join('／')||'一般規格'
+}
+
+function mapStock(row){
+  const spec={package:row.spec_package||'',flavor:row.spec_flavor||'',color:row.spec_color||'',size:row.spec_size||''}
+  const key=[spec.package,spec.flavor,spec.color,spec.size].join('|')||'default'
+  return {
+    neon_id:row.neon_id,
+    id:`${row.product_id}__${encodeURIComponent(key)}`,
+    product_id:row.product_id,
+    product_name:row.product_name||'',
+    supplier:row.supplier||'',
+    spec,
+    spec_label:stockSpecLabel(row),
+    available_qty:Number(row.available_qty||0),
+    adjustment_note:row.adjustment_note||'',
+    created_at:row.created_at,
+    updated_at:row.updated_at,
+  }
+}
+
+async function stockQuery(sql,body){
+  const query=text(body?.search).toLowerCase()
+  const pageSize=Math.min(250,Math.max(20,int(body?.pageSize,100)))
+  const offset=Math.max(0,int(body?.offset,0))
+  const rows=await sql`
+    SELECT s.id::text AS neon_id,p.legacy_id AS product_id,p.name AS product_name,s.supplier,
+      s.spec_package,s.spec_flavor,s.spec_color,s.spec_size,s.available_qty,s.adjustment_note,s.created_at,s.updated_at,
+      COUNT(*) OVER()::int AS total_count,
+      COALESCE(SUM(s.available_qty) OVER(),0) AS total_qty
+    FROM stock_inventory s
+    JOIN products p ON p.id=s.product_id
+    WHERE p.active<>false
+      AND (${query}='' OR
+        POSITION(${query} IN LOWER(COALESCE(p.name,'')))>0 OR
+        POSITION(${query} IN LOWER(COALESCE(s.supplier,'')))>0 OR
+        POSITION(${query} IN LOWER(COALESCE(s.spec_package,'')))>0 OR
+        POSITION(${query} IN LOWER(COALESCE(s.spec_flavor,'')))>0 OR
+        POSITION(${query} IN LOWER(COALESCE(s.spec_color,'')))>0 OR
+        POSITION(${query} IN LOWER(COALESCE(s.spec_size,'')))>0)
+    ORDER BY p.name ASC,s.spec_package ASC,s.spec_flavor ASC,s.spec_color ASC,s.spec_size ASC
+    OFFSET ${offset} LIMIT ${pageSize}
+  `
+  const totalCount=rows.length?Number(rows[0].total_count||0):0
+  const totalQty=rows.length?Number(rows[0].total_qty||0):0
+  return {
+    rows:rows.map(({total_count,total_qty,...row})=>mapStock(row)),
+    totalCount,
+    totalQty,
+    hasMore:offset+rows.length<totalCount,
+  }
+}
+
+async function stockSupport(sql,body){
+  const movementLimit=Math.min(200,Math.max(20,int(body?.movementLimit,100)))
+  const [extras,movements]=await Promise.all([
+    sql`
+      SELECT e.legacy_id AS id,p.legacy_id AS product_id,e.product_name,e.supplier,
+        e.spec_package,e.spec_flavor,e.spec_color,e.spec_size,e.spec_label,
+        e.ordered_qty,e.received_qty,e.unit_cost,e.note,e.status,e.received_at,e.created_at,e.updated_at
+      FROM stock_purchase_extras e
+      JOIN products p ON p.id=e.product_id
+      WHERE e.status='ordered' AND e.ordered_qty>e.received_qty
+      ORDER BY e.created_at DESC
+      LIMIT 200
+    `,
+    sql`
+      SELECT it.id,p.legacy_id AS product_id,p.name AS product_name,it.qty_change,it.balance_after,it.transaction_type,
+        o.legacy_id AS order_id,e.legacy_id AS extra_id,it.note,it.created_by_uid,it.created_at
+      FROM inventory_transactions it
+      JOIN stock_inventory s ON s.id=it.inventory_id
+      JOIN products p ON p.id=s.product_id
+      LEFT JOIN orders o ON o.id=it.order_id
+      LEFT JOIN stock_purchase_extras e ON e.id=it.extra_purchase_id
+      ORDER BY it.created_at DESC
+      LIMIT ${movementLimit}
+    `,
+  ])
+  return {
+    extras:extras.map(r=>({
+      id:r.id,product_id:r.product_id,product_name:r.product_name||'',supplier:r.supplier||'',
+      spec:{package:r.spec_package||'',flavor:r.spec_flavor||'',color:r.spec_color||'',size:r.spec_size||''},
+      spec_label:r.spec_label||'',ordered_qty:Number(r.ordered_qty||0),received_qty:Number(r.received_qty||0),
+      unit_cost:Number(r.unit_cost||0),note:r.note||'',status:r.status,received_at:r.received_at,created_at:r.created_at,updated_at:r.updated_at,
+    })),
+    movements:movements.map(r=>({...r,qty_change:Number(r.qty_change||0),balance_after:Number(r.balance_after||0)})),
+  }
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -147,6 +242,8 @@ export default async function handler(req,res){
     if(action==='dashboard') return res.status(200).json({ok:true,...await helperDashboard(sql,req.body||{})})
     if(action==='product_query') return res.status(200).json({ok:true,...await productQuery(sql,req.body||{})})
     if(action==='product_duplicate') return res.status(200).json({ok:true,duplicate:await productDuplicate(sql,req.body||{})})
+    if(action==='stock_query') return res.status(200).json({ok:true,...await stockQuery(sql,req.body||{})})
+    if(action==='stock_support') return res.status(200).json({ok:true,...await stockSupport(sql,req.body||{})})
     if(action==='all') return res.status(200).json({ok:true,rows:await listAll(sql)})
     throw new Error('未知的小幫手管理查詢')
   }catch(err){
