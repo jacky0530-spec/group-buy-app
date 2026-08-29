@@ -54,6 +54,22 @@ export default async function handler(req,res){
     await requireStaff(sql,auth)
     const action=text(req.body?.action)||'all'
     let orders=[]
+    if(action==='customer_directory'){
+      const includeArchived=req.body?.includeArchived===true
+      const rows=await sql`
+        SELECT
+          c.legacy_id AS id,c.name,c.phone,c.phone_last2,c.line_nick,c.fb_name,c.note,c.active,
+          c.joined_at,c.archived_at,c.updated_at,
+          COUNT(o.id) FILTER (
+            WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false
+          )::int AS order_count
+        FROM customers c
+        LEFT JOIN orders o ON o.customer_id=c.id
+        WHERE (${includeArchived}::boolean OR c.active<>false)
+        GROUP BY c.id
+        ORDER BY c.joined_at DESC`
+      return res.status(200).json({ok:true,rows:rows.map(r=>({...r,order_count:Number(r.order_count||0)}))})
+    }
     if(action==='summary'){
       const rows=await sql`
         SELECT
