@@ -3,7 +3,7 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu } from './AuthGuard'
 
-const APP_VERSION = '第7版｜2026/08/28'
+const APP_VERSION = '第8版｜2026/08/29'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
