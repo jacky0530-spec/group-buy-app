@@ -159,7 +159,7 @@ async function incomingCreate(sql,body,auth){
       AS x(product_id text,product_name text,spec_package text,spec_flavor text,spec_color text,spec_size text,expected_qty numeric,unit_cost numeric,note text,sort_order int)
     ), valid AS (
       SELECT i.*,p.id AS product_uuid,p.name AS current_name
-      FROM input i JOIN products p ON p.legacy_id=i.product_id AND p.active<>false
+      FROM input i JOIN products p ON p.legacy_id=i.product_id
     ), gate AS (SELECT COUNT(*)::int=${items.length}::int AS ok FROM valid),
     b AS (
       INSERT INTO incoming_batches(legacy_id,supplier,expected_date,status,note,created_by_uid,created_by_name)
@@ -170,7 +170,7 @@ async function incomingCreate(sql,body,auth){
       FROM valid v CROSS JOIN b RETURNING id
     )
     SELECT b.legacy_id AS id,(SELECT COUNT(*) FROM ins)::int AS item_count FROM b`
-  if(!rows.length) throw new Error('部分商品已不存在或停用，請重新整理後再試')
+  if(!rows.length) throw new Error('部分商品已不存在，請重新整理後再試')
   return {id:rows[0].id,item_count:Number(rows[0].item_count||0)}
 }
 
