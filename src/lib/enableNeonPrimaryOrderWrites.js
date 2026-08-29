@@ -1,5 +1,5 @@
 import { OrdersAPI } from './db'
-import { neonOrderEditRuntime, neonOrdersRuntime, neonOrderQuery, neonStockOrderState } from './neonRuntime'
+import { neonOrderEditRuntime, neonOrdersRuntime, neonStockOrderState } from './neonRuntime'
 import { neonOrderStatusRuntime } from './neonOrderStatusRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-order-writes-installed')
@@ -71,13 +71,7 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.clearRefunds=async id=> (await neonOrdersRuntime('clear_refunds',{id}))?.result
   OrdersAPI.correctSupplierState=async (id,{item_index=null,reset_arrival=false}={})=> (await neonOrderStatusRuntime('correct_supplier_state',{id,item_index,reset_arrival}))?.result
   OrdersAPI.updateArrival=async function(id,items){
-    const result=(await neonOrdersRuntime('update_arrival',{id,items}))?.result
-    const rows=(await neonOrderQuery('all'))?.rows||[]
-    const fresh=rows.find(row=>row.id===id)
-    if(fresh?.items&&Array.isArray(items)){
-      items.splice(0,items.length,...fresh.items)
-    }
-    return {...(result||{}),order:fresh||null}
+    return (await neonOrdersRuntime('update_arrival',{id,items}))?.result
   }
 
   OrdersAPI.updateItemQty=async function(id,item_index,qty){
@@ -97,16 +91,7 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.updateVirtual=async function(ids=[],isVirtual=false){
     const target=[...new Set((ids||[]).filter(Boolean))]
     if(!target.length)return{updated:0}
-    const rows=(await neonOrderQuery('all'))?.rows||[]
-    const map=new Map(rows.map(row=>[row.id,row]))
-    let updated=0
-    for(const id of target){
-      const row=map.get(id)
-      if(!row)continue
-      await neonOrdersRuntime('sync',{row:{...row,is_virtual:Boolean(isVirtual),updated_at:nowISO()}})
-      updated++
-    }
-    return {updated}
+    return (await neonOrdersRuntime('update_virtual',{ids:target,is_virtual:Boolean(isVirtual)}))?.result||{updated:0}
   }
 
   OrdersAPI.bulkHardDelete=async function(ids=[]){
