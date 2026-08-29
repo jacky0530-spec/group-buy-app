@@ -54,6 +54,23 @@ export default async function handler(req,res){
     await requireStaff(sql,auth)
     const action=text(req.body?.action)||'all'
     let orders=[]
+    if(action==='summary'){
+      const rows=await sql`
+        SELECT
+          COUNT(*) FILTER (WHERE COALESCE(archived,false)=false)::int AS total_count,
+          COUNT(*) FILTER (WHERE COALESCE(archived,false)=false AND status='pending' AND COALESCE(is_virtual,false)=false)::int AS pending_count,
+          COUNT(*) FILTER (WHERE COALESCE(archived,false)=false AND status='shipped' AND COALESCE(is_virtual,false)=false)::int AS shipped_count,
+          COUNT(*) FILTER (WHERE COALESCE(archived,false)=false AND status<>'cancelled' AND COALESCE(is_virtual,false)=true)::int AS virtual_count,
+          COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (
+            WHERE COALESCE(archived,false)=false AND status<>'cancelled' AND COALESCE(is_virtual,false)=false AND payment_status='unpaid'
+          ),0) AS outstanding
+        FROM orders`
+      const row=rows[0]||{}
+      return res.status(200).json({ok:true,summary:{
+        totalCount:Number(row.total_count||0),pendingCount:Number(row.pending_count||0),shippedCount:Number(row.shipped_count||0),
+        virtualCount:Number(row.virtual_count||0),outstanding:Number(row.outstanding||0),
+      }})
+    }
     if(action==='all'){
       orders=await baseSelect(sql)
       return res.status(200).json({ok:true,rows:await hydrate(sql,orders)})
