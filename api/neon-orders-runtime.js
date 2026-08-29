@@ -224,6 +224,19 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   return {total_amount:total}
 }
 
+async function updateVirtual(sql,ids,isVirtual){
+  const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
+  if(!target.length) return {updated:0}
+  if(target.length>400) throw new Error('單次最多更新 400 筆')
+  const rows=await sql`
+    UPDATE orders
+    SET is_virtual=${isVirtual===true},updated_at=now()
+    WHERE legacy_id=ANY(${target}::text[])
+    RETURNING legacy_id AS id
+  `
+  return {updated:rows.length,ids:rows.map(r=>r.id)}
+}
+
 async function deleteOrders(sql,ids){
   let deleted=0
   for(const legacyId of [...new Set(ids.map(text).filter(Boolean))]){
@@ -262,6 +275,7 @@ export default async function handler(req,res){
     if(action==='clear_refunds') return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
     if(action==='update_arrival') return res.status(200).json({ok:true,result:await updateArrival(sql,req.body?.id,req.body?.items)})
     if(action==='update_item_qty') return res.status(200).json({ok:true,result:await updateItemQty(sql,req.body?.id,req.body?.item_index,req.body?.qty)})
+    if(action==='update_virtual') return res.status(200).json({ok:true,result:await updateVirtual(sql,req.body?.ids,req.body?.is_virtual)})
     if(action==='delete'){
       const ids=Array.isArray(req.body?.ids)?req.body.ids:[]
       if(ids.length>400) throw new Error('單次最多刪除 400 筆')
