@@ -107,53 +107,73 @@ async function cleanupCandidates(sql,days){
   return {rows:mapped,totalCount:rows.length?Number(rows[0].total_count||0):0,days:takeDays,limited:rows.length>=400}
 }
 
-function eligibleCte(sql,target,days){
-  return sql`
-    SELECT o.id,o.legacy_id
-    FROM orders o
-    WHERE o.legacy_id=ANY(${target}::text[])
-      AND o.status='shipped'
-      AND o.shipped_at IS NOT NULL
-      AND o.shipped_at <= now()-make_interval(days => ${days})
-      AND COALESCE(o.is_virtual,false)=false
-      AND COALESCE(o.fulfillment_type,'preorder')='preorder'`
-}
-
 async function cleanupDelete(sql,ids,days){
   const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
   if(!target.length) throw new Error('沒有選取要刪除的訂單')
   if(target.length>400) throw new Error('單次最多永久刪除 400 筆')
   const takeDays=cleanupDays(days)
 
+  const gateSql=()=>sql`
+    SELECT COUNT(*)::int AS count
+    FROM orders o
+    WHERE o.legacy_id=ANY(${target}::text[])
+      AND o.status='shipped'
+      AND o.shipped_at IS NOT NULL
+      AND o.shipped_at <= now()-make_interval(days => ${takeDays})
+      AND COALESCE(o.is_virtual,false)=false
+      AND COALESCE(o.fulfillment_type,'preorder')='preorder'`
+  const precheck=await gateSql()
+  if(Number(precheck[0]?.count||0)!==target.length) throw new Error('部分訂單不再符合歷史清理條件，請重新整理後再試')
+
   const tx=await sql.transaction([
     sql`SELECT id FROM orders WHERE legacy_id=ANY(${target}::text[]) FOR UPDATE`,
     sql`
-      WITH eligible AS (${eligibleCte(sql,target,takeDays)}),
-      gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
+      WITH eligible AS (
+        SELECT o.id FROM orders o
+        WHERE o.legacy_id=ANY(${target}::text[])
+          AND o.status='shipped' AND o.shipped_at IS NOT NULL
+          AND o.shipped_at <= now()-make_interval(days => ${takeDays})
+          AND COALESCE(o.is_virtual,false)=false
+          AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      ), gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
       UPDATE helper_entries h SET converted_order_id=NULL,updated_at=now()
-      FROM eligible e,gate g
-      WHERE g.ok AND h.converted_order_id=e.id
+      FROM eligible e,gate g WHERE g.ok AND h.converted_order_id=e.id
       RETURNING h.id`,
     sql`
-      WITH eligible AS (${eligibleCte(sql,target,takeDays)}),
-      gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
+      WITH eligible AS (
+        SELECT o.id FROM orders o
+        WHERE o.legacy_id=ANY(${target}::text[])
+          AND o.status='shipped' AND o.shipped_at IS NOT NULL
+          AND o.shipped_at <= now()-make_interval(days => ${takeDays})
+          AND COALESCE(o.is_virtual,false)=false
+          AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      ), gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
       DELETE FROM supplier_payment_allocations a
-      USING eligible e,gate g
-      WHERE g.ok AND a.order_id=e.id
+      USING eligible e,gate g WHERE g.ok AND a.order_id=e.id
       RETURNING a.id`,
     sql`
-      WITH eligible AS (${eligibleCte(sql,target,takeDays)}),
-      gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
+      WITH eligible AS (
+        SELECT o.id FROM orders o
+        WHERE o.legacy_id=ANY(${target}::text[])
+          AND o.status='shipped' AND o.shipped_at IS NOT NULL
+          AND o.shipped_at <= now()-make_interval(days => ${takeDays})
+          AND COALESCE(o.is_virtual,false)=false
+          AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      ), gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
       DELETE FROM order_items i
-      USING eligible e,gate g
-      WHERE g.ok AND i.order_id=e.id
+      USING eligible e,gate g WHERE g.ok AND i.order_id=e.id
       RETURNING i.id`,
     sql`
-      WITH eligible AS (${eligibleCte(sql,target,takeDays)}),
-      gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
+      WITH eligible AS (
+        SELECT o.id FROM orders o
+        WHERE o.legacy_id=ANY(${target}::text[])
+          AND o.status='shipped' AND o.shipped_at IS NOT NULL
+          AND o.shipped_at <= now()-make_interval(days => ${takeDays})
+          AND COALESCE(o.is_virtual,false)=false
+          AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      ), gate AS (SELECT COUNT(*)::int=${target.length}::int AS ok FROM eligible)
       DELETE FROM orders o
-      USING eligible e,gate g
-      WHERE g.ok AND o.id=e.id
+      USING eligible e,gate g WHERE g.ok AND o.id=e.id
       RETURNING o.legacy_id AS id`,
   ])
   const deleted=tx[4]||[]
