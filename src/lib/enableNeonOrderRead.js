@@ -59,6 +59,18 @@ if(!globalThis[INSTALLED]){
     return withOriginalQtyLabels(result.rows)
   }
 
+  OrdersAPI.reportData=async function({mode='month',month='',start='',end=''}={}){
+    const result=await neonOrderQuery('report_data',{mode,month,start,end})
+    if(!result?.report) throw new Error('Neon 報表統計回傳格式錯誤')
+    return result.report
+  }
+
+  OrdersAPI.reportProductBuyers=async function({mode='month',month='',start='',end='',productId='',productName=''}={}){
+    const result=await neonOrderQuery('report_product_buyers',{mode,month,start,end,productId,productName})
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 商品買家報表回傳格式錯誤')
+    return result.rows
+  }
+
   OrdersAPI.listByDateRange=async function(startISO,endISO){
     const result=await neonOrderQuery('date_range',{startISO,endISO})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 日期區間訂單回傳格式錯誤')
