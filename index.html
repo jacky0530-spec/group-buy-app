@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>團購百貨管理系統</title>
+    <style>
+      /* 第15版：即將到貨理貨的實收數量輸入框放大，僅作用於 /incoming。 */
+      body:has(a[href="/incoming"].active) input.no-print[type="number"][min="0"][max] {
+        width: 96px !important;
+        min-width: 96px;
+        height: 40px;
+        padding: 6px 10px;
+        font-size: 16px;
+        font-weight: 700;
+        line-height: 1.2;
+        text-align: center;
+        border-radius: 8px;
+      }
+      @media (max-width: 1023px) {
+        body:has(a[href="/incoming"].active) input.no-print[type="number"][min="0"][max] {
+          width: 104px !important;
+          min-width: 104px;
+          height: 44px;
+          font-size: 17px;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
