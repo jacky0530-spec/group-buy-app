@@ -15,9 +15,8 @@ const PAY_CFG = {
 }
 const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString()}`
 const PAYMENT_TERM_LABEL = { order:'訂貨即付款', arrival:'到貨後付款', manual:'手動付款' }
-const FIRST_PAGE_SIZE = 60
-const BACKGROUND_PAGE_SIZE = 250
-const RENDER_PAGE_SIZE = 100
+const QUERY_PAGE_SIZE = 100
+const MORE_PAGE_SIZE = 250
 
 function supplierPaymentSummary(order) {
   const rows = (order?.items || []).map(item => {
@@ -92,7 +91,7 @@ function snapshotForCartItem(item) {
 export default function OrdersFast() {
   const toast = useToast()
   const [orders,setOrders] = useState([]); const [products,setProducts] = useState([]); const [customers,setCustomers] = useState([]); const [loading,setLoading] = useState(true)
-  const [historyLoading,setHistoryLoading] = useState(false); const [orderSummary,setOrderSummary] = useState(null); const [renderLimit,setRenderLimit] = useState(RENDER_PAGE_SIZE)
+  const [historyLoading,setHistoryLoading] = useState(false); const [orderSummary,setOrderSummary] = useState(null); const [queryTotal,setQueryTotal] = useState(0); const [nextCursor,setNextCursor] = useState(null); const [hasMore,setHasMore] = useState(false)
   const [search,setSearch] = useState(''); const [filterStatus,setFilterStatus] = useState('all'); const [filterPayment,setFilterPayment] = useState('all'); const [filterProduct,setFilterProduct] = useState('all'); const [filterProductSearch,setFilterProductSearch] = useState(''); const [filterProductOpen,setFilterProductOpen] = useState(false); const [filterDateFrom,setFilterDateFrom] = useState(''); const [filterDateTo,setFilterDateTo] = useState(''); const [showArchived,setShowArchived] = useState(false); const [selected,setSelected] = useState([])
   const [showForm,setShowForm] = useState(false); const [editId,setEditId] = useState(null); const [formCustomer,setFormCustomer] = useState(null); const [custSearch,setCustSearch] = useState(''); const [custOpen,setCustOpen] = useState(false)
   const [cartItems,setCartItems] = useState([]); const [prodSearch,setProdSearch] = useState(''); const [prodOpen,setProdOpen] = useState(false); const [orderNote,setOrderNote] = useState(''); const [formVirtual,setFormVirtual] = useState(false); const [saving,setSaving] = useState(false)
@@ -100,65 +99,81 @@ export default function OrdersFast() {
   const custRef = useRef(null); const prodRef = useRef(null); const filterProdRef = useRef(null); const loadSeqRef = useRef(0)
 
   useEffect(() => { const handler=e => { if (custRef.current && !custRef.current.contains(e.target)) setCustOpen(false); if (prodRef.current && !prodRef.current.contains(e.target)) setProdOpen(false); if (filterProdRef.current && !filterProdRef.current.contains(e.target)) setFilterProductOpen(false) }; document.addEventListener('mousedown',handler); return () => document.removeEventListener('mousedown',handler) },[])
+
+  useEffect(() => {
+    let active=true
+    void ProductsAPI.list().then(rows => { if(active)setProducts(rows) }).catch(err => { if(active)toast('商品資料載入失敗：'+err.message,'error') })
+    void CustomersAPI.list().then(rows => { if(active)setCustomers(rows) }).catch(err => { if(active)toast('客戶資料載入失敗：'+err.message,'error') })
+    return () => { active=false }
+  },[toast])
+
+  const queryParams = useCallback((cursor=null,pageSize=QUERY_PAGE_SIZE)=>({
+    search:search.trim(),
+    productId:filterProduct==='all'?'':filterProduct,
+    dateFrom:filterDateFrom,
+    dateTo:filterDateTo,
+    status:filterStatus==='all'?'':filterStatus,
+    payment:filterPayment==='all'?'':filterPayment,
+    includeArchived:showArchived,
+    pageSize,
+    cursor,
+  }),[search,filterProduct,filterDateFrom,filterDateTo,filterStatus,filterPayment,showArchived])
+
   const load = useCallback(async () => {
     const seq = ++loadSeqRef.current
-    setLoading(true); setHistoryLoading(true); setRenderLimit(RENDER_PAGE_SIZE)
-
-    void ProductsAPI.list().then(rows => { if (seq === loadSeqRef.current) setProducts(rows) }).catch(err => { if (seq === loadSeqRef.current) toast('商品資料載入失敗：'+err.message,'error') })
-    void CustomersAPI.list().then(rows => { if (seq === loadSeqRef.current) setCustomers(rows) }).catch(err => { if (seq === loadSeqRef.current) toast('客戶資料載入失敗：'+err.message,'error') })
+    setLoading(true); setHistoryLoading(false); setSelected([])
     if (typeof OrdersAPI.summary === 'function') {
       void OrdersAPI.summary().then(summary => { if (seq === loadSeqRef.current) setOrderSummary(summary) }).catch(err => { console.warn('order summary load failed',err) })
     }
-
     try {
-      const first = await OrdersAPI.listPage({ pageSize:FIRST_PAGE_SIZE })
+      const page = typeof OrdersAPI.searchPage === 'function'
+        ? await OrdersAPI.searchPage(queryParams(null,QUERY_PAGE_SIZE))
+        : await OrdersAPI.listPage({pageSize:QUERY_PAGE_SIZE})
       if (seq !== loadSeqRef.current) return
-      setOrders(first.rows || [])
-      setLoading(false)
-
-      if (!first.hasMore || !first.nextCursor) {
-        setHistoryLoading(false)
-        return
-      }
-
-      void (async () => {
-        let cursor = first.nextCursor
-        let hasMore = first.hasMore
-        try {
-          while (hasMore && cursor && seq === loadSeqRef.current) {
-            const page = await OrdersAPI.listPage({ pageSize:BACKGROUND_PAGE_SIZE,cursor })
-            if (seq !== loadSeqRef.current) return
-            setOrders(prev => mergeOrderPages(prev,page.rows))
-            cursor = page.nextCursor
-            hasMore = page.hasMore
-            await new Promise(resolve => setTimeout(resolve,0))
-          }
-        } catch (err) {
-          if (seq === loadSeqRef.current) toast('歷史訂單背景載入失敗：'+err.message,'warning')
-        } finally {
-          if (seq === loadSeqRef.current) setHistoryLoading(false)
-        }
-      })()
+      setOrders(page.rows || [])
+      setQueryTotal(Number(page.totalCount ?? page.rows?.length ?? 0))
+      setNextCursor(page.nextCursor || null)
+      setHasMore(page.hasMore === true)
     } catch (err) {
-      if (seq === loadSeqRef.current) {
-        setLoading(false); setHistoryLoading(false)
-        toast('載入失敗：'+err.message,'error')
-      }
+      if (seq === loadSeqRef.current) toast('載入失敗：'+err.message,'error')
+    } finally {
+      if (seq === loadSeqRef.current) setLoading(false)
     }
-  },[toast])
-  useEffect(() => { load(); return () => { loadSeqRef.current += 1 } },[load])
-  useEffect(() => { setSelected([]); setRenderLimit(RENDER_PAGE_SIZE) },[search,filterStatus,filterPayment,filterProduct,filterDateFrom,filterDateTo,showArchived])
+  },[toast,queryParams])
 
-  const prodMap = Object.fromEntries(products.map(p => [p.id,p])); const customerMap = Object.fromEntries(customers.map(c => [c.id,c])); const visibleOrders = orders.filter(o => showArchived ? true : !o.archived)
+  useEffect(() => {
+    const delay=search.trim()?250:0
+    const timer=setTimeout(()=>{ void load() },delay)
+    return () => { clearTimeout(timer); loadSeqRef.current += 1 }
+  },[load,search])
+
+  async function loadMoreOrders(){
+    if(!hasMore||!nextCursor||historyLoading)return
+    setHistoryLoading(true)
+    try{
+      const page=typeof OrdersAPI.searchPage==='function'
+        ? await OrdersAPI.searchPage(queryParams(nextCursor,MORE_PAGE_SIZE))
+        : await OrdersAPI.listPage({pageSize:MORE_PAGE_SIZE,cursor:nextCursor})
+      setOrders(prev=>mergeOrderPages(prev,page.rows))
+      setQueryTotal(Number(page.totalCount ?? queryTotal))
+      setNextCursor(page.nextCursor||null)
+      setHasMore(page.hasMore===true)
+    }catch(err){toast('載入更多訂單失敗：'+err.message,'warning')}
+    finally{setHistoryLoading(false)}
+  }
+
+  useEffect(() => { setSelected([]) },[search,filterStatus,filterPayment,filterProduct,filterDateFrom,filterDateTo,showArchived])
+
+  const prodMap = Object.fromEntries(products.map(p => [p.id,p])); const customerMap = Object.fromEntries(customers.map(c => [c.id,c])); const visibleOrders = orders
   const orderPhoneLast2 = o => String(o.customer_phone_last2 || getCustomerPhoneLast2(customerMap[o.customer_id]) || '').trim()
-  const filtered = visibleOrders.filter(o => { const q = search.toLowerCase().trim(); const ms = (o.customer_name || '').toLowerCase().includes(q) || orderPhoneLast2(o).toLowerCase().includes(q) || String(o.customer_phone || customerMap[o.customer_id]?.phone || '').includes(search.trim()) || (o.items || []).some(i => (i.product_name || i.name || '').toLowerCase().includes(q)); const productMatch = filterProduct === 'all' || (o.items || []).some(i => (i.product_id || i.id) === filterProduct); const orderDate = o.order_date ? new Date(o.order_date) : null; const orderDay = orderDate && !Number.isNaN(orderDate.getTime()) ? `${orderDate.getFullYear()}-${String(orderDate.getMonth()+1).padStart(2,'0')}-${String(orderDate.getDate()).padStart(2,'0')}` : ''; const dateMatch = (!filterDateFrom || orderDay >= filterDateFrom) && (!filterDateTo || orderDay <= filterDateTo); return ms && productMatch && dateMatch && (filterStatus === 'all' || o.status === filterStatus) && (filterPayment === 'all' || o.payment_status === filterPayment) })
-  const displayed = filtered.slice(0,renderLimit)
+  const filtered = visibleOrders
+  const displayed = filtered
   const filtCusts = filterCustomers(customers,custSearch)
   const filtProds = products.filter(p => p.name.toLowerCase().includes(prodSearch.toLowerCase()))
   const sortedFilterProducts = [...products].sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''),'zh-Hant'))
   const matchedFilterProducts = sortedFilterProducts.filter(p => String(p.name || '').toLowerCase().includes(filterProductSearch.trim().toLowerCase())).slice(0,30)
   const selectedFilterProductName = products.find(p => p.id === filterProduct)?.name || ''
-  const hasOrderFilters = filterProduct !== 'all' || filterDateFrom || filterDateTo
+  const hasOrderFilters = Boolean(search.trim()) || filterProduct !== 'all' || filterDateFrom || filterDateTo || filterStatus !== 'all' || filterPayment !== 'all'
 
   function openAdd() { setEditId(null); setFormCustomer(null); setCartItems([]); setOrderNote(''); setFormVirtual(false); setCustSearch(''); setProdSearch(''); setShowForm(true) }
   function productFromSnapshot(item) { const id = item.product_id || item.id; return prodMap[id] || { id,name:item.product_name || item.name,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? 0,category:item.category || 'other',supplier:item.supplier || '',supplier_payment_term:item.supplier_payment_term||'manual',spec_mode:'none',spec_flavors:item.spec?.flavor ? [item.spec.flavor] : [],spec_colors:item.spec?.color ? [item.spec.color] : [],spec_sizes:item.spec?.size ? [item.spec.size] : [],price_options:item.spec?.package ? [{label:item.spec.package,price:item.sale_price ?? item.price ?? 0,cost:item.cost_price ?? ''}] : [] } }
@@ -244,7 +259,7 @@ export default function OrdersFast() {
   async function archiveOrder(o) { try { await OrdersAPI.archive(o.id); setConfirmArchive(null); toast('訂單已封存，不會刪除歷史資料','warning'); await load() } catch (err) { toast('封存失敗：'+err.message,'error') } }
   function toggleSelect(id) { setSelected(p => p.includes(id) ? p.filter(x => x !== id) : [...p,id]) }
   function toggleAll() {
-    if (historyLoading) { toast('歷史訂單仍在背景載入，完成後再使用全選','warning'); return }
+    if (hasMore) { toast(`目前只載入 ${orders.length}/${queryTotal} 筆，請先載入全部結果再使用全選`,'warning'); return }
     const ids = filtered.filter(o => o.status !== 'cancelled' && !o.archived).map(o => o.id)
     setSelected(p => p.length === ids.length && ids.length ? [] : ids)
   }
@@ -266,11 +281,11 @@ export default function OrdersFast() {
       <div style={{ background:'var(--rose-light)',borderRadius:10,padding:14 }}><div style={{ fontSize:12,color:'var(--rose)',fontWeight:700 }}>未收款</div><strong style={{ fontSize:22,color:'var(--rose)' }}>NT${outstanding.toLocaleString()}</strong></div>
     </div>
 
-    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:12,marginBottom:14}}><div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}><div className="search-input-wrap" style={{ flex:'1 1 260px',minWidth:220 }}><Search size={14}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋客戶、手機末兩碼或商品..." style={{ padding:'8px 8px 8px 32px',width:'100%' }}/></div><div ref={filterProdRef} style={{position:'relative',flex:'0 1 260px',minWidth:220}}><div className="search-input-wrap"><Search size={14}/><input value={filterProductOpen ? filterProductSearch : selectedFilterProductName} onFocus={()=>{setFilterProductOpen(true);setFilterProductSearch('')}} onChange={e=>{setFilterProductSearch(e.target.value);setFilterProductOpen(true)}} placeholder="📦 輸入商品名稱篩選..." style={{padding:'8px 34px 8px 32px',width:'100%'}} />{filterProduct !== 'all' && <button type="button" onClick={()=>{setFilterProduct('all');setFilterProductSearch('');setFilterProductOpen(false)}} title="清除商品篩選" style={{position:'absolute',right:8,top:'50%',transform:'translateY(-50%)',border:'none',background:'transparent',cursor:'pointer',color:'var(--text-muted)',padding:2}}><X size={14}/></button>}</div>{filterProductOpen&&<div style={{position:'absolute',zIndex:30,top:'calc(100% + 4px)',left:0,right:0,maxHeight:300,overflowY:'auto',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,boxShadow:'0 10px 30px rgba(15,23,42,.14)'}}><button type="button" onClick={()=>{setFilterProduct('all');setFilterProductSearch('');setFilterProductOpen(false)}} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:'none',borderBottom:'1px solid var(--border)',background:filterProduct==='all'?'var(--indigo-light)':'transparent',cursor:'pointer',fontFamily:'inherit',fontWeight:800}}>📦 全部商品</button>{matchedFilterProducts.map(p=><button type="button" key={p.id} onClick={()=>{setFilterProduct(p.id);setFilterProductSearch('');setFilterProductOpen(false)}} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:'none',borderBottom:'1px solid var(--border)',background:filterProduct===p.id?'var(--indigo-light)':'transparent',cursor:'pointer',fontFamily:'inherit'}}>{p.name}</button>)}{matchedFilterProducts.length===0&&<div style={{padding:'12px',color:'var(--text-muted)',fontSize:12}}>找不到符合的商品</div>}</div>}</div><label style={{display:'flex',alignItems:'center',gap:5,fontSize:12,color:'var(--text-secondary)'}}>起日<input type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)} /></label><label style={{display:'flex',alignItems:'center',gap:5,fontSize:12,color:'var(--text-secondary)'}}>迄日<input type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)} /></label><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}><option value="all">全部出貨狀態</option><option value="pending">待出貨</option><option value="shipped">已出貨</option><option value="cancelled">已取消</option></select><select value={filterPayment} onChange={e => setFilterPayment(e.target.value)}><option value="all">全部收款狀態</option><option value="unpaid">未收款</option><option value="paid">已收款</option><option value="partial_refund">部分退款</option><option value="refunded">已全額退款</option></select>{hasOrderFilters&&<button className="btn btn-sm btn-ghost" onClick={()=>{setFilterProduct('all');setFilterProductSearch('');setFilterProductOpen(false);setFilterDateFrom('');setFilterDateTo('')}}><RotateCcw size={12}/>清除商品／日期</button>}</div><div style={{fontSize:11,color:'var(--text-muted)',marginTop:8}}>{historyLoading ? <>已載入篩選結果 <strong>{filtered.length}</strong> 筆；歷史訂單正在背景載入（目前已載入 {orders.length} 筆），畫面可先操作。</> : <>目前篩選結果 <strong>{filtered.length}</strong> 筆。表頭全選只會勾選目前篩選後可操作的訂單；選取後可一鍵永久刪除。</>}</div></div>
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:12,marginBottom:14}}><div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}><div className="search-input-wrap" style={{ flex:'1 1 260px',minWidth:220 }}><Search size={14}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜尋客戶、手機末碼、電話、Line、FB、備註或商品..." style={{ padding:'8px 8px 8px 32px',width:'100%' }}/></div><div ref={filterProdRef} style={{position:'relative',flex:'0 1 260px',minWidth:220}}><div className="search-input-wrap"><Search size={14}/><input value={filterProductOpen ? filterProductSearch : selectedFilterProductName} onFocus={()=>{setFilterProductOpen(true);setFilterProductSearch('')}} onChange={e=>{setFilterProductSearch(e.target.value);setFilterProductOpen(true)}} placeholder="📦 輸入商品名稱篩選..." style={{padding:'8px 34px 8px 32px',width:'100%'}} />{filterProduct !== 'all' && <button type="button" onClick={()=>{setFilterProduct('all');setFilterProductSearch('');setFilterProductOpen(false)}} title="清除商品篩選" style={{position:'absolute',right:8,top:'50%',transform:'translateY(-50%)',border:'none',background:'transparent',cursor:'pointer',color:'var(--text-muted)',padding:2}}><X size={14}/></button>}</div>{filterProductOpen&&<div style={{position:'absolute',zIndex:30,top:'calc(100% + 4px)',left:0,right:0,maxHeight:300,overflowY:'auto',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,boxShadow:'0 10px 30px rgba(15,23,42,.14)'}}><button type="button" onClick={()=>{setFilterProduct('all');setFilterProductSearch('');setFilterProductOpen(false)}} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:'none',borderBottom:'1px solid var(--border)',background:filterProduct==='all'?'var(--indigo-light)':'transparent',cursor:'pointer',fontFamily:'inherit',fontWeight:800}}>📦 全部商品</button>{matchedFilterProducts.map(p=><button type="button" key={p.id} onClick={()=>{setFilterProduct(p.id);setFilterProductSearch('');setFilterProductOpen(false)}} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:'none',borderBottom:'1px solid var(--border)',background:filterProduct===p.id?'var(--indigo-light)':'transparent',cursor:'pointer',fontFamily:'inherit'}}>{p.name}</button>)}{matchedFilterProducts.length===0&&<div style={{padding:'12px',color:'var(--text-muted)',fontSize:12}}>找不到符合的商品</div>}</div>}</div><label style={{display:'flex',alignItems:'center',gap:5,fontSize:12,color:'var(--text-secondary)'}}>起日<input type="date" value={filterDateFrom} onChange={e=>setFilterDateFrom(e.target.value)} /></label><label style={{display:'flex',alignItems:'center',gap:5,fontSize:12,color:'var(--text-secondary)'}}>迄日<input type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)} /></label><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}><option value="all">全部出貨狀態</option><option value="pending">待出貨</option><option value="shipped">已出貨</option><option value="cancelled">已取消</option></select><select value={filterPayment} onChange={e => setFilterPayment(e.target.value)}><option value="all">全部收款狀態</option><option value="unpaid">未收款</option><option value="paid">已收款</option><option value="partial_refund">部分退款</option><option value="refunded">已全額退款</option></select>{hasOrderFilters&&<button className="btn btn-sm btn-ghost" onClick={()=>{setSearch('');setFilterProduct('all');setFilterProductSearch('');setFilterProductOpen(false);setFilterDateFrom('');setFilterDateTo('');setFilterStatus('all');setFilterPayment('all')}}><RotateCcw size={12}/>清除全部篩選</button>}</div><div style={{fontSize:11,color:'var(--text-muted)',marginTop:8}}>{loading ? <>Neon SQL 查詢中...</> : <>符合條件共 <strong>{queryTotal}</strong> 筆；目前已載入 <strong>{orders.length}</strong> 筆。搜尋與篩選由資料庫直接處理，不需先下載全部歷史訂單。</>}</div></div>
 
     <div className="card"><div className="table-container"><table><thead><tr><th><input type="checkbox" checked={selected.length > 0 && selected.length === filtered.filter(o => o.status !== 'cancelled' && !o.archived).length} onChange={toggleAll}/></th><th>客戶 / 商品 / 到貨</th><th>有效金額</th><th>出貨</th><th>收款</th><th>供應商款</th><th>日期</th><th style={{ textAlign:'right' }}>操作</th></tr></thead><tbody>
-      {loading && <tr><td colSpan={8} style={{ textAlign:'center',padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/><div style={{fontSize:11,color:'var(--text-muted)',marginTop:8}}>先載入最近 {FIRST_PAGE_SIZE} 筆訂單...</div></td></tr>}
-      {!loading && filtered.length === 0 && <tr><td colSpan={8} style={{ textAlign:'center',padding:30,color:'var(--text-muted)' }}>{historyLoading?'正在載入歷史訂單...':'尚無訂單'}</td></tr>}
+      {loading && <tr><td colSpan={8} style={{ textAlign:'center',padding:40 }}><div className="loading-spinner" style={{ margin:'0 auto' }}/><div style={{fontSize:11,color:'var(--text-muted)',marginTop:8}}>Neon SQL 正在查詢最近訂單...</div></td></tr>}
+      {!loading && filtered.length === 0 && <tr><td colSpan={8} style={{ textAlign:'center',padding:30,color:'var(--text-muted)' }}>找不到符合條件的訂單</td></tr>}
       {displayed.map(o => { const scfg = STATUS_CFG[o.status] || STATUS_CFG.pending; const pcfg = PAY_CFG[o.payment_status] || PAY_CFG.unpaid; const supplierPay = supplierPaymentSummary(o); const archived = o.archived === true; const phoneLast2 = orderPhoneLast2(o); const allArrived = (o.items || []).length > 0 && (o.items || []).every(item => arrivedQty(item) >= itemQty(item)); return <tr key={o.id} style={{ opacity:archived ? .5 : 1,background:o.is_virtual?'#fff1f2':undefined }}>
         <td>{!archived && o.status !== 'cancelled' && <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)}/>}</td>
         <td><div style={{ fontWeight:800 }}>{o.customer_name}{o.is_virtual&&<span className="badge badge-rose" style={{marginLeft:6,fontWeight:900}}>⚠ 虛擬</span>}{phoneLast2 && <span className="badge badge-indigo" style={{ marginLeft:6 }}>末碼 {phoneLast2}</span>}{archived && <span className="badge badge-gray" style={{ marginLeft:6 }}>封存</span>}</div>
@@ -286,7 +301,7 @@ export default function OrdersFast() {
         <td style={{ textAlign:'right' }}><div style={{ display:'flex',gap:5,justifyContent:'flex-end',flexWrap:'wrap' }}><button className="btn-icon btn" title="出貨單" onClick={() => setReceiptOrders([o])}><Printer size={12}/></button>{!archived && o.status !== 'cancelled' && <button className="btn-icon btn" title="編輯" onClick={() => openEdit(o)}><Pencil size={12}/></button>}{!archived && o.status !== 'cancelled' && <button className="btn-icon btn" title="取消訂單" onClick={() => { setCancelOrder(o); setCancelReason('') }} style={{ color:'var(--rose)' }}><AlertCircle size={12}/></button>}{!archived && o.status === 'cancelled' && <button className="btn-icon btn" title="恢復訂單" onClick={() => restoreCancelled(o)}><RotateCcw size={12}/></button>}{!archived && <button className="btn-icon btn" title="封存" onClick={() => setConfirmArchive(o)}><Archive size={12}/></button>}<OrderDeleteButton order={o} onDeleted={load}/></div></td>
       </tr>})}
     </tbody></table></div>
-      {!loading && filtered.length > renderLimit && <div style={{padding:12,textAlign:'center',borderTop:'1px solid var(--border)'}}><button className="btn btn-ghost" onClick={()=>setRenderLimit(v=>v+RENDER_PAGE_SIZE)}>顯示更多訂單（目前 {Math.min(renderLimit,filtered.length)}／{filtered.length}）</button></div>}
+      {!loading && hasMore && <div style={{padding:12,textAlign:'center',borderTop:'1px solid var(--border)'}}><button className="btn btn-ghost" disabled={historyLoading} onClick={loadMoreOrders}>{historyLoading?'載入中...':`載入更多訂單（已載入 ${orders.length}／${queryTotal}）`}</button></div>}
     </div>
 
     {showForm && <Modal title={editId ? '編輯訂單' : '開立新訂單'} onClose={() => setShowForm(false)} width={700}>
