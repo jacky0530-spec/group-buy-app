@@ -3,8 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第16版：即將到貨實收數量輸入框取得焦點時自動全選，直接輸入即可取代原數字。Production trigger.
-const APP_VERSION = '第16版｜2026/08/29'
+// 第17版：未出貨報表的商品候選目錄會依「全部待出貨／已到貨可取貨／尚未到貨」同步過濾。Preview redeploy trigger.
+const APP_VERSION = '第17版｜2026/08/29'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
