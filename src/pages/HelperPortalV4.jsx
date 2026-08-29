@@ -32,6 +32,7 @@ function MyPendingOrders(){
   const [orders,setOrders]=useState([])
   const [products,setProducts]=useState([])
   const [loading,setLoading]=useState(true)
+  const [catalogLoading,setCatalogLoading]=useState('')
   const [editing,setEditing]=useState('')
   const [drafts,setDrafts]=useState({})
   const [saving,setSaving]=useState('')
@@ -41,8 +42,7 @@ function MyPendingOrders(){
     if(!user) return
     setLoading(true)
     try{
-      const [o,p]=await Promise.all([HelperAPI.myPendingOrders(user.uid),HelperAPI.catalog()])
-      setOrders(o);setProducts(p)
+      setOrders(await HelperAPI.myPendingOrders(user.uid))
     }catch(err){toast('未出貨訂單載入失敗：'+err.message,'error')}
     finally{setLoading(false)}
   },[user,toast])
@@ -54,7 +54,13 @@ function MyPendingOrders(){
     return orders.filter(o=>[o.customer_name,o.customer_phone_last2,...(o.items||[]).map(i=>i.product_name||i.name)].some(v=>String(v||'').toLowerCase().includes(q)))
   },[orders,search])
 
-  function begin(order){
+  async function begin(order){
+    if(!products.length){
+      setCatalogLoading(order.id)
+      try{setProducts(await HelperAPI.catalog())}
+      catch(err){toast('商品目錄載入失敗：'+err.message,'error');return}
+      finally{setCatalogLoading('')}
+    }
     setEditing(order.id)
     setDrafts(p=>({...p,[order.id]:{
       items:(order.items||[]).map(i=>({product_id:i.product_id||i.id,product_name:i.product_name||i.name,qty:Number(i.qty||1),spec:{...(i.spec||{})},note:i.note||''})),
@@ -84,7 +90,7 @@ function MyPendingOrders(){
 
   const qty=filtered.reduce((s,o)=>s+(o.items||[]).reduce((a,i)=>a+Number(i.qty||0),0),0)
   return <div>
-    <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:12}}><div><strong style={{fontSize:18}}>我的未出貨訂單</strong><div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>只顯示你自己建立、尚未出貨的訂單。商品已到貨後會鎖定修改。</div></div><button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}><RefreshCw size={13}/>重新整理</button></div>
+    <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:12}}><div><strong style={{fontSize:18}}>我的未出貨訂單</strong><div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>SQL 只讀你自己尚未出貨的訂單；商品目錄只有按「修改」時才載入。</div></div><button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}><RefreshCw size={13}/>重新整理</button></div>
     <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10,marginBottom:12}}><div className="card" style={{padding:12}}><small>未出貨訂單</small><div style={{fontSize:24,fontWeight:900}}>{filtered.length} 筆</div></div><div className="card" style={{padding:12}}><small>商品總數量</small><div style={{fontSize:24,fontWeight:900}}>{qty} 件</div></div></div>
     <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋客戶／末兩碼／商品" style={{height:46,marginBottom:12}}/>
     {loading&&<div className="card" style={{padding:28,textAlign:'center'}}>讀取中...</div>}
@@ -94,7 +100,7 @@ function MyPendingOrders(){
       const isEditing=editing===order.id
       const draft=drafts[order.id]
       return <div className="card" key={order.id} style={{marginBottom:12,border:order.is_virtual?'1.5px solid #fb7185':undefined,background:order.is_virtual?'#fff7f8':undefined}}>
-        <div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap'}}><div><strong>{order.customer_name}</strong> <span style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {order.customer_phone_last2||'—'}</span><div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>訂購：{dateText(order.order_date||order.created_at)}</div></div><div style={{display:'flex',gap:7,alignItems:'center'}}><span className={`badge ${order.is_virtual?'badge-rose':'badge-emerald'}`}>{order.is_virtual?'虛擬':'正式'}</span>{(order.items||[]).some(i=>i.fulfillment_type==='stock')&&<span className="badge badge-violet">現貨</span>}{locked?<span className="badge badge-amber">已到貨，已鎖定</span>:!isEditing?<button className="btn btn-sm btn-ghost" onClick={()=>begin(order)}><Pencil size={12}/>修改</button>:null}</div></div>
+        <div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap'}}><div><strong>{order.customer_name}</strong> <span style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {order.customer_phone_last2||'—'}</span><div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>訂購：{dateText(order.order_date||order.created_at)}</div></div><div style={{display:'flex',gap:7,alignItems:'center'}}><span className={`badge ${order.is_virtual?'badge-rose':'badge-emerald'}`}>{order.is_virtual?'虛擬':'正式'}</span>{(order.items||[]).some(i=>i.fulfillment_type==='stock')&&<span className="badge badge-violet">現貨</span>}{locked?<span className="badge badge-amber">已到貨，已鎖定</span>:!isEditing?<button className="btn btn-sm btn-ghost" disabled={Boolean(catalogLoading)} onClick={()=>begin(order)}><Pencil size={12}/>{catalogLoading===order.id?'讀取商品...':'修改'}</button>:null}</div></div>
         <div className="card-body">
           {!isEditing?(order.items||[]).map((item,i)=><div key={i} style={{padding:'8px 0',borderBottom:i<(order.items||[]).length-1?'1px dashed var(--border)':'none'}}><strong>{item.product_name||item.name}</strong> × <strong>{item.qty}</strong><div style={{fontSize:12,color:'var(--indigo)',fontWeight:800,marginTop:3}}>{[item.spec?.package,item.spec?.flavor,item.spec?.color,item.spec?.size].filter(Boolean).join('／')||'無規格'}</div>{item.note&&<div style={{fontSize:11,color:'var(--rose)',fontWeight:800}}>備註：{item.note}</div>}</div>):draft&&<>
             {draft.items.map((item,i)=>{const product=productByItem(products,item);return <div key={i} style={{padding:'10px 0',borderBottom:'1px dashed var(--border)'}}><strong>{item.product_name}</strong><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}><SpecEditor product={product} spec={item.spec||{}} onChange={(k,v)=>patchSpec(order.id,i,k,v)} disabled={saving===order.id}/><span style={{fontSize:12,color:'var(--text-muted)'}}>數量</span><QuantityInput value={item.qty} min={1} onChange={v=>patchItem(order.id,i,{qty:v})} style={{width:120,height:46,fontSize:19,fontWeight:900,textAlign:'center'}}/><input value={item.note||''} onChange={e=>patchItem(order.id,i,{note:e.target.value})} placeholder="商品備註" style={{flex:1,minWidth:150}}/></div></div>})}
