@@ -154,6 +154,124 @@ export default async function handler(req,res){
         LIMIT ${pageSize}`
       return res.status(200).json({ok:true,rows:await hydrate(sql,orders)})
     }
+    if(action==='report_data'){
+      const mode=['all','month','range'].includes(text(req.body?.mode))?text(req.body?.mode):'month'
+      const month=text(req.body?.month)
+      const start=text(req.body?.start)
+      const end=text(req.body?.end)
+      const periodClause=(alias='o')=>null
+      void periodClause
+      const [summaryRows,trendRows,topRows,catRows,supplierRows,monthlyRows]=await Promise.all([
+        sql`
+          WITH period_orders AS (
+            SELECT o.* FROM orders o
+            WHERE (
+              ${mode}='all' OR
+              (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR
+              (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL
+                AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date)
+            )
+          ), order_stats AS (
+            SELECT
+              COUNT(*) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false)::int AS formal_count,
+              COUNT(*) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=true)::int AS virtual_count,
+              COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false),0) AS order_value,
+              COALESCE(SUM(total_amount) FILTER (WHERE status='shipped' AND COALESCE(is_virtual,false)=false),0) AS shipped_gross_revenue,
+              COALESCE(SUM(refund_amount) FILTER (WHERE status='shipped' AND COALESCE(is_virtual,false)=false),0) AS shipped_refund_amount,
+              COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status='shipped' AND COALESCE(is_virtual,false)=false),0) AS shipped_revenue,
+              COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false AND payment_status IN ('paid','partial_refund','refunded')),0) AS collected_amount,
+              COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false AND payment_status='unpaid'),0) AS outstanding_amount,
+              COALESCE(SUM(refund_amount) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false),0) AS refund_amount,
+              COALESCE(SUM(total_amount) FILTER (WHERE status='cancelled' AND COALESCE(is_virtual,false)=false),0) AS cancelled_amount
+            FROM period_orders
+          ), item_stats AS (
+            SELECT
+              COALESCE(SUM(COALESCE(oi.cost_price,p.cost,0)*oi.qty) FILTER (WHERE po.status='shipped'),0) AS shipped_cost,
+              COALESCE(SUM(GREATEST(0,COALESCE(oi.cost_price,p.cost,0)*oi.qty-COALESCE(oi.supplier_paid_amount,0))),0) AS payable_outstanding,
+              COALESCE(SUM(CASE WHEN COALESCE(oi.supplier_paid_amount,0)>0 AND COALESCE(oi.arrived_qty,0)<oi.qty THEN oi.supplier_paid_amount ELSE 0 END),0) AS paid_not_arrived,
+              COALESCE(SUM(CASE WHEN oi.qty>0 AND COALESCE(oi.arrived_qty,0)>=oi.qty THEN GREATEST(0,COALESCE(oi.cost_price,p.cost,0)*oi.qty-COALESCE(oi.supplier_paid_amount,0)) ELSE 0 END),0) AS arrived_not_paid
+            FROM period_orders po
+            JOIN order_items oi ON oi.order_id=po.id
+            LEFT JOIN products p ON p.id=oi.product_id
+            WHERE po.status<>'cancelled' AND COALESCE(po.is_virtual,false)=false
+          )
+          SELECT * FROM order_stats CROSS JOIN item_stats`,
+        sql`
+          SELECT
+            CASE WHEN ${mode}='all'
+              THEN to_char(date_trunc('month',o.order_date AT TIME ZONE 'Asia/Taipei'),'YYYY/MM')||'月'
+              ELSE to_char(o.order_date AT TIME ZONE 'Asia/Taipei','FMMM/FMDD') END AS date,
+            CASE WHEN ${mode}='all'
+              THEN to_char(date_trunc('month',o.order_date AT TIME ZONE 'Asia/Taipei'),'YYYY-MM')
+              ELSE to_char((o.order_date AT TIME ZONE 'Asia/Taipei')::date,'YYYY-MM-DD') END AS sort_key,
+            COALESCE(SUM(GREATEST(0,o.total_amount-o.refund_amount)),0) AS amount
+          FROM orders o
+          WHERE o.status='shipped' AND COALESCE(o.is_virtual,false)=false
+            AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
+          GROUP BY 1,2 ORDER BY 2`,
+        sql`
+          SELECT COALESCE(p.legacy_id,oi.product_name) AS id,COALESCE(oi.product_name,p.name,'未命名商品') AS name,SUM(oi.qty)::numeric AS qty
+          FROM orders o JOIN order_items oi ON oi.order_id=o.id LEFT JOIN products p ON p.id=oi.product_id
+          WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+            AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
+          GROUP BY 1,2 ORDER BY SUM(oi.qty) DESC LIMIT 8`,
+        sql`
+          SELECT COALESCE(NULLIF(oi.category,''),p.category,'other') AS category,COALESCE(SUM(COALESCE(oi.sale_price,0)*oi.qty),0) AS value
+          FROM orders o JOIN order_items oi ON oi.order_id=o.id LEFT JOIN products p ON p.id=oi.product_id
+          WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+            AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
+          GROUP BY 1 ORDER BY 2 DESC`,
+        sql`
+          SELECT COALESCE(NULLIF(oi.supplier,''),'未指定供應商') AS supplier,
+            COALESCE(SUM(COALESCE(oi.cost_price,p.cost,0)*oi.qty),0) AS total,
+            COALESCE(SUM(GREATEST(0,COALESCE(oi.cost_price,p.cost,0)*oi.qty-COALESCE(oi.supplier_paid_amount,0))),0) AS outstanding
+          FROM orders o JOIN order_items oi ON oi.order_id=o.id LEFT JOIN products p ON p.id=oi.product_id
+          WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+            AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
+          GROUP BY 1 ORDER BY 3 DESC`,
+        sql`
+          SELECT to_char(date_trunc('month',o.order_date AT TIME ZONE 'Asia/Taipei'),'YYYY-MM') AS month,
+            COALESCE(SUM(GREATEST(0,o.total_amount-o.refund_amount)),0) AS revenue,
+            COALESCE(SUM((SELECT COALESCE(SUM(COALESCE(oi.cost_price,p.cost,0)*oi.qty),0) FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=o.id)),0) AS cost
+          FROM orders o
+          WHERE o.status='shipped' AND COALESCE(o.is_virtual,false)=false
+            AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
+          GROUP BY 1 ORDER BY 1`
+      ])
+      const s=summaryRows[0]||{}
+      return res.status(200).json({ok:true,report:{
+        summary:{
+          formalCount:Number(s.formal_count||0),virtualCount:Number(s.virtual_count||0),orderValue:Number(s.order_value||0),
+          shippedGrossRevenue:Number(s.shipped_gross_revenue||0),shippedRefundAmount:Number(s.shipped_refund_amount||0),shippedRevenue:Number(s.shipped_revenue||0),
+          shippedCost:Number(s.shipped_cost||0),collectedAmount:Number(s.collected_amount||0),outstandingAmount:Number(s.outstanding_amount||0),
+          refundAmount:Number(s.refund_amount||0),cancelledAmount:Number(s.cancelled_amount||0),payableOutstanding:Number(s.payable_outstanding||0),
+          paidNotArrived:Number(s.paid_not_arrived||0),arrivedNotPaid:Number(s.arrived_not_paid||0),
+        },
+        trend:trendRows.map(r=>({date:r.date,amount:Number(r.amount||0)})),
+        topProducts:topRows.map(r=>({id:r.id,name:r.name,qty:Number(r.qty||0)})),
+        categories:catRows.map(r=>({category:r.category,value:Number(r.value||0)})),
+        suppliers:supplierRows.map(r=>({supplier:r.supplier,total:Number(r.total||0),outstanding:Number(r.outstanding||0)})),
+        monthly:monthlyRows.map(r=>({month:r.month,revenue:Number(r.revenue||0),cost:Number(r.cost||0)})),
+      }})
+    }
+    if(action==='report_product_buyers'){
+      const mode=['all','month','range'].includes(text(req.body?.mode))?text(req.body?.mode):'month'
+      const month=text(req.body?.month),start=text(req.body?.start),end=text(req.body?.end)
+      const productId=text(req.body?.productId),productName=text(req.body?.productName)
+      const rows=await sql`
+        SELECT COALESCE(c.legacy_id,o.customer_name||'|'||COALESCE(o.customer_phone_last2,'')) AS customer_id,
+          o.customer_name AS name,o.customer_phone_last2 AS phone_last2,
+          SUM(oi.qty)::numeric AS qty,
+          SUM(CASE WHEN o.status='pending' THEN oi.qty ELSE 0 END)::numeric AS pending,
+          SUM(COALESCE(oi.sale_price,0)*oi.qty)::numeric AS total
+        FROM orders o JOIN order_items oi ON oi.order_id=o.id
+        LEFT JOIN products p ON p.id=oi.product_id LEFT JOIN customers c ON c.id=o.customer_id
+        WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
+          AND (${productId}='' OR p.legacy_id=${productId} OR (${productName}<>'' AND oi.product_name=${productName}))
+          AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
+        GROUP BY 1,2,3 ORDER BY SUM(oi.qty) DESC`
+      return res.status(200).json({ok:true,rows:rows.map(r=>({customer_id:r.customer_id,name:r.name,phone_last2:r.phone_last2||'',qty:Number(r.qty||0),pending:Number(r.pending||0),total:Number(r.total||0)}))})
+    }
     if(action==='all'){
       orders=await baseSelect(sql)
       return res.status(200).json({ok:true,rows:await hydrate(sql,orders)})
