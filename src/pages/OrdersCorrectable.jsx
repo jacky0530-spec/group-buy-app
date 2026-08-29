@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { RotateCcw, WalletCards } from 'lucide-react'
 import { OrdersAPI } from '../lib/db'
 import { useToast } from '../components/UI'
-import Orders from './Orders'
+import Orders from './OrdersFast'
 
 const money=value=>`NT$${Math.round(Number(value||0)).toLocaleString()}`
 const qty=value=>Math.max(0,Number(value||0))
