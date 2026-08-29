@@ -231,6 +231,56 @@ async function stockSupport(sql,body){
   }
 }
 
+async function homeDashboard(sql){
+  const rows=await sql`
+    WITH active_orders AS (
+      SELECT total_amount,refund_amount,status,payment_status
+      FROM orders
+      WHERE status IS DISTINCT FROM 'cancelled'
+        AND COALESCE(archived,false)=false
+        AND COALESCE(is_virtual,false)=false
+    ),
+    metrics AS (
+      SELECT
+        COUNT(*)::int AS order_count,
+        COUNT(*) FILTER (WHERE status='pending')::int AS pending_count,
+        COALESCE(SUM(GREATEST(0,COALESCE(total_amount,0)-COALESCE(refund_amount,0))),0) AS order_value,
+        COALESCE(SUM(GREATEST(0,COALESCE(total_amount,0)-COALESCE(refund_amount,0))) FILTER (WHERE status='shipped'),0) AS shipped_revenue,
+        COALESCE(SUM(GREATEST(0,COALESCE(total_amount,0)-COALESCE(refund_amount,0))) FILTER (WHERE payment_status IN ('paid','partial_refund','refunded')),0) AS collected_amount,
+        COALESCE(SUM(GREATEST(0,COALESCE(total_amount,0)-COALESCE(refund_amount,0))) FILTER (WHERE payment_status='unpaid'),0) AS outstanding_amount
+      FROM active_orders
+    ),
+    recent AS (
+      SELECT legacy_id AS id,customer_name,total_amount,refund_amount,status,payment_status,order_date,created_at
+      FROM orders
+      WHERE COALESCE(archived,false)=false
+      ORDER BY order_date DESC NULLS LAST,created_at DESC
+      LIMIT 5
+    )
+    SELECT
+      (SELECT COUNT(*)::int FROM products WHERE active IS DISTINCT FROM false) AS product_count,
+      (SELECT COUNT(*)::int FROM customers WHERE active IS DISTINCT FROM false) AS customer_count,
+      m.order_count,m.pending_count,m.order_value,m.shipped_revenue,m.collected_amount,m.outstanding_amount,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'id',r.id,'customer_name',r.customer_name,'total_amount',r.total_amount,'refund_amount',r.refund_amount,
+        'status',r.status,'payment_status',r.payment_status,'order_date',r.order_date
+      ) ORDER BY r.order_date DESC NULLS LAST,r.created_at DESC) FROM recent r),'[]'::jsonb) AS recent_orders
+    FROM metrics m
+  `
+  const row=rows[0]||{}
+  return {
+    productCount:Number(row.product_count||0),
+    customerCount:Number(row.customer_count||0),
+    orderCount:Number(row.order_count||0),
+    pendingCount:Number(row.pending_count||0),
+    orderValue:Number(row.order_value||0),
+    shippedRevenue:Number(row.shipped_revenue||0),
+    collectedAmount:Number(row.collected_amount||0),
+    outstandingAmount:Number(row.outstanding_amount||0),
+    recentOrders:Array.isArray(row.recent_orders)?row.recent_orders.map(o=>({...o,total_amount:Number(o.total_amount||0),refund_amount:Number(o.refund_amount||0)})):[],
+  }
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -239,6 +289,7 @@ export default async function handler(req,res){
     const sql=neon(process.env.DATABASE_URL)
     await requireStaff(sql,auth)
     const action=text(req.body?.action)||'all'
+    if(action==='home_dashboard') return res.status(200).json({ok:true,...await homeDashboard(sql)})
     if(action==='dashboard') return res.status(200).json({ok:true,...await helperDashboard(sql,req.body||{})})
     if(action==='product_query') return res.status(200).json({ok:true,...await productQuery(sql,req.body||{})})
     if(action==='product_duplicate') return res.status(200).json({ok:true,duplicate:await productDuplicate(sql,req.body||{})})
