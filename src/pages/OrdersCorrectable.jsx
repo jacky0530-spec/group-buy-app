@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { RotateCcw, WalletCards } from 'lucide-react'
 import { OrdersAPI } from '../lib/db'
 import { useToast } from '../components/UI'
@@ -10,7 +10,7 @@ const qty=value=>Math.max(0,Number(value||0))
 function CorrectionPanel({ onChanged }) {
   const toast=useToast()
   const [orders,setOrders]=useState([])
-  const [loading,setLoading]=useState(true)
+  const [loading,setLoading]=useState(false)
   const [open,setOpen]=useState(false)
   const [busy,setBusy]=useState('')
 
@@ -21,12 +21,16 @@ function CorrectionPanel({ onChanged }) {
     finally{setLoading(false)}
   },[toast])
 
-  useEffect(()=>{load()},[load])
-
   const candidates=useMemo(()=>orders.filter(order=>
     order.fulfillment_type!=='stock' && order.status!=='cancelled' && order.archived!==true &&
     (order.items||[]).some(item=>qty(item.arrived_qty)>0 || qty(item.supplier_paid_amount)>0)
   ),[orders])
+
+  async function toggleOpen(){
+    if(open){setOpen(false);return}
+    setOpen(true)
+    await load()
+  }
 
   async function correctItem(order,itemIndex,resetArrival){
     const item=(order.items||[])[itemIndex]
@@ -63,7 +67,7 @@ function CorrectionPanel({ onChanged }) {
   return <div className="card" style={{marginBottom:14,border:'1px solid #fed7aa'}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',padding:'11px 14px'}}>
       <div><strong style={{display:'flex',alignItems:'center',gap:7}}><RotateCcw size={15}/>到貨／供應商付款更正</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>只提供預購訂單更正；現貨訂單仍由庫存流程處理。</div></div>
-      <button className="btn btn-sm btn-ghost" onClick={()=>setOpen(v=>!v)}>{open?'收合':'開啟更正'} {candidates.length>0&&`(${candidates.length})`}</button>
+      <button className="btn btn-sm btn-ghost" disabled={loading&&!open} onClick={toggleOpen}>{loading&&!open?'載入中...':open?'收合':'開啟更正'} {!loading&&candidates.length>0&&`(${candidates.length})`}</button>
     </div>
     {open&&<div style={{borderTop:'1px solid var(--border)',padding:'10px 14px 14px'}}>
       {loading&&<div style={{padding:12,color:'var(--text-muted)'}}>載入中...</div>}
