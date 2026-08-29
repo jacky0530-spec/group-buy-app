@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ShoppingBag, Users, ShoppingCart, BarChart2, TrendingUp, Clock, Package, WalletCards } from 'lucide-react'
 import { StatsAPI } from '../lib/db'
+import { neonHelperAdminRuntime } from '../lib/neonRuntime'
 
 const CARDS = [
   { to:'/products', icon:ShoppingBag, label:'商品管理', desc:'商品、成本、供應商、顏色/尺碼/口味', color:'#10b981', bg:'#ecfdf5' },
@@ -23,9 +24,24 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    StatsAPI.getSummary()
-      .then(s => setStats(s))
-      .finally(() => setLoading(false))
+    let cancelled=false
+    ;(async()=>{
+      try{
+        const summary=await neonHelperAdminRuntime({action:'home_dashboard'})
+        if(!cancelled) setStats(summary)
+      }catch(err){
+        console.warn('[Home] SQL dashboard failed; using legacy summary fallback',err)
+        try{
+          const fallback=await StatsAPI.getSummary()
+          if(!cancelled) setStats(fallback)
+        }catch(fallbackErr){
+          console.error('[Home] summary fallback failed',fallbackErr)
+        }
+      }finally{
+        if(!cancelled) setLoading(false)
+      }
+    })()
+    return()=>{cancelled=true}
   }, [])
 
   return (
