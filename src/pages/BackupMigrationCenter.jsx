@@ -16,7 +16,7 @@ const saveJson=(name,data)=>saveBlob(name,JSON.stringify(data,null,2),'applicati
 const saveText=(name,data)=>saveBlob(name,data,'text/plain;charset=utf-8')
 const qi=v=>`"${String(v??'').replace(/"/g,'""')}"`
 const qs=v=>`'${String(v??'').replace(/'/g,"''")}'`
-const udtMap={int2:'smallint',int4:'integer',int8:'bigint,float4:'real',float8:'double precision',bool:'boolean',varchar:'character varying',bpchar:'character',timestamptz:'timestamp with time zone',timestamp:'timestamp without time zone',timetz:'time with time zone',time:'time without time zone',numeric:'numeric',text:'text',uuid:'uuid',json:'json',jsonb:'jsonb',date:'date',bytea:'bytea'}
+const udtMap={int2:'smallint',int4:'integer',int8:'bigint',float4:'real',float8:'double precision',bool:'boolean',varchar:'character varying',bpchar:'character',timestamptz:'timestamp with time zone',timestamp:'timestamp without time zone',timetz:'time with time zone',time:'time without time zone',numeric:'numeric',text:'text',uuid:'uuid',json:'json',jsonb:'jsonb',date:'date',bytea:'bytea'}
 const colType=c=>{
   if(c.data_type==='ARRAY')return `${udtMap[String(c.udt_name||'').replace(/^_/,'')]||qi(String(c.udt_name||'').replace(/^_/,''))}[]`
   if(c.data_type==='USER-DEFINED')return qi(c.udt_name)
