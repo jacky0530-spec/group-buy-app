@@ -2,9 +2,10 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Trash2, Truck, DatabaseBackup } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
+import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第21版：備份中心新增 PostgreSQL 完整 SQL、Schema-only SQL 與 Data-only SQL 邏輯備份。
-const APP_VERSION = '第21版｜2026/08/30'
+// 第22版：即將到貨頁新增已完成批次商品的單筆／批次封存功能。
+const APP_VERSION = '第22版｜2026/08/30'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
@@ -49,7 +50,7 @@ export default function Layout() {
     {sideOpen&&<button type="button" className="sidebar-backdrop no-print" aria-label="關閉選單" onClick={()=>setSideOpen(false)}/>} 
     <div id="main-content" className="app-shell-content print-content">
       <header className="mobile-header no-print"><button type="button" className="mobile-menu-button" onClick={()=>setSideOpen(p=>!p)} aria-label={sideOpen?'關閉選單':'開啟選單'} aria-expanded={sideOpen}>{sideOpen?<X size={22}/>:<Menu size={22}/>}</button><div className="mobile-brand-logo"><ShoppingBag size={16} color="white"/></div><div className="mobile-brand-text"><strong>團購百貨</strong><span>管理系統 · {APP_VERSION}</span></div></header>
-      <main className="print-main app-main"><Outlet/></main>
+      <main className="print-main app-main"><Outlet/>{location.pathname==='/incoming'&&<IncomingArchivePanel/>}</main>
     </div>
   </div>
 }
