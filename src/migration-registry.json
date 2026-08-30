@@ -56,6 +56,17 @@
       "restore_note": "Full SQL 可用 psql 匯入新的 PostgreSQL。此為應用層 logical SQL backup，不等同 pg_dump custom-format binary .dump。Secrets 仍不匯出。",
       "data_migration": "無。只增加只讀 metadata 與瀏覽器端 SQL 檔案產生。",
       "rollback": "移除 V21 SQL 產生按鈕與新增 metadata 查詢；不需資料庫 rollback。"
+    },
+    {
+      "version": "V22",
+      "date": "2026-08-30",
+      "type": "feature",
+      "summary": "即將到貨頁新增已完成批次商品封存中心，可單筆封存或勾選多筆批次封存，同商品多規格合併後只封存一次。",
+      "database_changes": [],
+      "api_changes": ["沿用 api/neon-runtime.js write_product op=archive，不新增 Serverless Function"],
+      "data_logic": "封存只將 products.active 設為 false 並寫 archived_at，不刪除商品、歷史訂單、order_items、到貨批次、付款或報表資料。",
+      "ui_changes": ["src/components/IncomingArchivePanel.jsx","/incoming 頁面顯示已完成批次商品封存卡片"],
+      "rollback": "移除 IncomingArchivePanel 與 Layout 掛載；已封存商品可由商品管理的還原功能恢復。"
     }
   ]
 }
