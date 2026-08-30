@@ -17,6 +17,7 @@ import StockInventory from './pages/StockInventory'
 import Expenses from './pages/Expenses'
 import SupplierPayments from './pages/SupplierPayments'
 import IncomingBatches from './pages/IncomingBatches'
+import BackupMigrationCenter from './pages/BackupMigrationCenter'
 import Accounts from './pages/Accounts'
 import HelperPortal from './pages/HelperPortalV4'
 import HelperEntries from './pages/HelperEntries'
@@ -41,6 +42,7 @@ export default function App() {
                   <Route path="orders" element={<Orders />} />
                   <Route element={<RoleGuard roles={['owner']} />}>
                     <Route path="order-cleanup" element={<OrderCleanup />} />
+                    <Route path="backup-center" element={<BackupMigrationCenter />} />
                   </Route>
                   <Route path="order-import" element={<ExcelOrderImport />} />
                   <Route path="reports" element={<Reports />} />
