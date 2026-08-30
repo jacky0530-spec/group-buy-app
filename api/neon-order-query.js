@@ -161,6 +161,7 @@ export default async function handler(req,res){
       const end=text(req.body?.end)
       const periodClause=(alias='o')=>null
       void periodClause
+      // V23：現貨正式開單已原子扣庫存，因此非取消現貨訂單於開單時即認列營收／成本；預購仍於 shipped 時認列。
       const [summaryRows,trendRows,topRows,catRows,supplierRows,monthlyRows]=await Promise.all([
         sql`
           WITH period_orders AS (
@@ -176,9 +177,9 @@ export default async function handler(req,res){
               COUNT(*) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false)::int AS formal_count,
               COUNT(*) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=true)::int AS virtual_count,
               COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false),0) AS order_value,
-              COALESCE(SUM(total_amount) FILTER (WHERE status='shipped' AND COALESCE(is_virtual,false)=false),0) AS shipped_gross_revenue,
-              COALESCE(SUM(refund_amount) FILTER (WHERE status='shipped' AND COALESCE(is_virtual,false)=false),0) AS shipped_refund_amount,
-              COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status='shipped' AND COALESCE(is_virtual,false)=false),0) AS shipped_revenue,
+              COALESCE(SUM(total_amount) FILTER (WHERE (status='shipped' OR (status<>'cancelled' AND COALESCE(fulfillment_type,'preorder')='stock')) AND COALESCE(is_virtual,false)=false),0) AS shipped_gross_revenue,
+              COALESCE(SUM(refund_amount) FILTER (WHERE (status='shipped' OR (status<>'cancelled' AND COALESCE(fulfillment_type,'preorder')='stock')) AND COALESCE(is_virtual,false)=false),0) AS shipped_refund_amount,
+              COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE (status='shipped' OR (status<>'cancelled' AND COALESCE(fulfillment_type,'preorder')='stock')) AND COALESCE(is_virtual,false)=false),0) AS shipped_revenue,
               COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false AND payment_status IN ('paid','partial_refund','refunded')),0) AS collected_amount,
               COALESCE(SUM(GREATEST(0,total_amount-refund_amount)) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false AND payment_status='unpaid'),0) AS outstanding_amount,
               COALESCE(SUM(refund_amount) FILTER (WHERE status<>'cancelled' AND COALESCE(is_virtual,false)=false),0) AS refund_amount,
@@ -186,7 +187,7 @@ export default async function handler(req,res){
             FROM period_orders
           ), item_stats AS (
             SELECT
-              COALESCE(SUM(COALESCE(oi.cost_price,p.cost,0)*oi.qty) FILTER (WHERE po.status='shipped'),0) AS shipped_cost,
+              COALESCE(SUM(COALESCE(oi.cost_price,p.cost,0)*oi.qty) FILTER (WHERE po.status='shipped' OR COALESCE(po.fulfillment_type,oi.fulfillment_type,'preorder')='stock'),0) AS shipped_cost,
               COALESCE(SUM(GREATEST(0,COALESCE(oi.cost_price,p.cost,0)*oi.qty-COALESCE(oi.supplier_paid_amount,0))),0) AS payable_outstanding,
               COALESCE(SUM(CASE WHEN COALESCE(oi.supplier_paid_amount,0)>0 AND COALESCE(oi.arrived_qty,0)<oi.qty THEN oi.supplier_paid_amount ELSE 0 END),0) AS paid_not_arrived,
               COALESCE(SUM(CASE WHEN oi.qty>0 AND COALESCE(oi.arrived_qty,0)>=oi.qty THEN GREATEST(0,COALESCE(oi.cost_price,p.cost,0)*oi.qty-COALESCE(oi.supplier_paid_amount,0)) ELSE 0 END),0) AS arrived_not_paid
@@ -206,7 +207,7 @@ export default async function handler(req,res){
               ELSE to_char((o.order_date AT TIME ZONE 'Asia/Taipei')::date,'YYYY-MM-DD') END AS sort_key,
             COALESCE(SUM(GREATEST(0,o.total_amount-o.refund_amount)),0) AS amount
           FROM orders o
-          WHERE o.status='shipped' AND COALESCE(o.is_virtual,false)=false
+          WHERE (o.status='shipped' OR (o.status<>'cancelled' AND COALESCE(o.fulfillment_type,'preorder')='stock')) AND COALESCE(o.is_virtual,false)=false
             AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
           GROUP BY 1,2 ORDER BY 2`,
         sql`
@@ -234,7 +235,7 @@ export default async function handler(req,res){
             COALESCE(SUM(GREATEST(0,o.total_amount-o.refund_amount)),0) AS revenue,
             COALESCE(SUM((SELECT COALESCE(SUM(COALESCE(oi.cost_price,p.cost,0)*oi.qty),0) FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=o.id)),0) AS cost
           FROM orders o
-          WHERE o.status='shipped' AND COALESCE(o.is_virtual,false)=false
+          WHERE (o.status='shipped' OR (o.status<>'cancelled' AND COALESCE(o.fulfillment_type,'preorder')='stock')) AND COALESCE(o.is_virtual,false)=false
             AND (${mode}='all' OR (${mode}='month' AND to_char(o.order_date AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month}) OR (${mode}='range' AND NULLIF(${start},'')::date IS NOT NULL AND NULLIF(${end},'')::date IS NOT NULL AND (o.order_date AT TIME ZONE 'Asia/Taipei')::date BETWEEN NULLIF(${start},'')::date AND NULLIF(${end},'')::date))
           GROUP BY 1 ORDER BY 1`
       ])
