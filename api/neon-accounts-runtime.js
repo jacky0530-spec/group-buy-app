@@ -89,21 +89,23 @@ async function backupOverview(sql){
 }
 
 async function backupExportTable(sql,name){
+  // Backup correctness does not depend on row ordering. Do not assume every table
+  // has created_at/updated_at; several legacy tables intentionally do not.
   switch(name){
-    case 'accounts': return sql`SELECT * FROM accounts ORDER BY created_at ASC`
-    case 'customers': return sql`SELECT * FROM customers ORDER BY created_at ASC`
-    case 'products': return sql`SELECT * FROM products ORDER BY created_at ASC`
-    case 'orders': return sql`SELECT * FROM orders ORDER BY created_at ASC`
-    case 'order_items': return sql`SELECT * FROM order_items ORDER BY created_at ASC`
-    case 'helper_entries': return sql`SELECT * FROM helper_entries ORDER BY created_at ASC`
-    case 'stock_inventory': return sql`SELECT * FROM stock_inventory ORDER BY created_at ASC`
-    case 'inventory_transactions': return sql`SELECT * FROM inventory_transactions ORDER BY created_at ASC`
-    case 'stock_purchase_extras': return sql`SELECT * FROM stock_purchase_extras ORDER BY created_at ASC`
-    case 'supplier_payments': return sql`SELECT * FROM supplier_payments ORDER BY created_at ASC`
-    case 'supplier_payment_allocations': return sql`SELECT * FROM supplier_payment_allocations ORDER BY created_at ASC`
-    case 'expenses': return sql`SELECT * FROM expenses ORDER BY created_at ASC`
-    case 'incoming_batches': return sql`SELECT * FROM incoming_batches ORDER BY created_at ASC`
-    case 'incoming_batch_items': return sql`SELECT * FROM incoming_batch_items ORDER BY created_at ASC`
+    case 'accounts': return sql`SELECT * FROM accounts`
+    case 'customers': return sql`SELECT * FROM customers`
+    case 'products': return sql`SELECT * FROM products`
+    case 'orders': return sql`SELECT * FROM orders`
+    case 'order_items': return sql`SELECT * FROM order_items`
+    case 'helper_entries': return sql`SELECT * FROM helper_entries`
+    case 'stock_inventory': return sql`SELECT * FROM stock_inventory`
+    case 'inventory_transactions': return sql`SELECT * FROM inventory_transactions`
+    case 'stock_purchase_extras': return sql`SELECT * FROM stock_purchase_extras`
+    case 'supplier_payments': return sql`SELECT * FROM supplier_payments`
+    case 'supplier_payment_allocations': return sql`SELECT * FROM supplier_payment_allocations`
+    case 'expenses': return sql`SELECT * FROM expenses`
+    case 'incoming_batches': return sql`SELECT * FROM incoming_batches`
+    case 'incoming_batch_items': return sql`SELECT * FROM incoming_batch_items`
     default: throw new Error('此資料表不在備份白名單')
   }
 }
