@@ -3,8 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第19版：新增指定 owner 專用的系統備份／移轉中心與 Migration Registry 治理規則。
-const APP_VERSION = '第19版｜2026/08/30'
+// 第20版：修正完整移轉 JSON 匯出不再假設所有資料表都有 created_at。
+const APP_VERSION = '第20版｜2026/08/30'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
