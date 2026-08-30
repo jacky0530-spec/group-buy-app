@@ -1,0 +1,39 @@
+{
+  "registry_version": 1,
+  "policy": {
+    "title": "團購百貨資料庫／功能移轉登記規則",
+    "rule": "凡新增或修改正式功能、資料表、欄位、SQL、trigger、function、view、index、重要 API 或資料寫入邏輯，該版本必須同步更新本 Registry。",
+    "secret_rule": "不得把 DATABASE_URL、Firebase private key、access token、密碼或其他 secret 寫入 Registry 或 Git。",
+    "backup_owner_email": "jacky0530@gmail.com",
+    "database_engine": "PostgreSQL (Neon)",
+    "auth_engine": "Firebase Authentication"
+  },
+  "entries": [
+    {
+      "version": "V18-baseline",
+      "date": "2026-08-30",
+      "type": "baseline",
+      "summary": "建立目前正式系統可移轉基準。",
+      "database_objects": [
+        "accounts","customers","products","orders","order_items","helper_entries","stock_inventory","inventory_transactions","stock_purchase_extras","supplier_payments","supplier_payment_allocations","expenses","incoming_batches","incoming_batch_items"
+      ],
+      "critical_fields": [
+        "order_items.qty","order_items.original_qty","order_items.arrived_qty","order_items.arrived_at","order_items.cost_price","order_items.supplier_paid_amount","stock_inventory.average_cost"
+      ],
+      "important_logic": [
+        "訂單到貨數量以 order_items.arrived_qty 為主","供應商付款需保留 supplier_payment_allocations","庫存需同時保留 stock_inventory 與 inventory_transactions","即將到貨使用 incoming_batches / incoming_batch_items","Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"
+      ],
+      "rollback": "此筆為基準文件，無資料庫變更。"
+    },
+    {
+      "version": "V19",
+      "date": "2026-08-30",
+      "type": "governance",
+      "summary": "新增僅指定 owner 可見的系統備份／移轉中心、schema metadata、白名單資料匯出與 CI Registry 防漏規則。",
+      "database_changes": [],
+      "api_changes": ["api/neon-accounts-runtime.js: backup_overview / backup_export_table"],
+      "security": "後端要求 Firebase token UID 對應 Neon owner 帳號，且 token email 與 accounts.email 都必須為 jacky0530@gmail.com。",
+      "rollback": "移除 backup actions、/backup-center 路由與 Migration Registry CI 檢查；不需資料庫 rollback。"
+    }
+  ]
+}
