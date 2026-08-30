@@ -3,8 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第20版：修正完整移轉 JSON 匯出不再假設所有資料表都有 created_at。
-const APP_VERSION = '第20版｜2026/08/30'
+// 第21版：備份中心新增 PostgreSQL 完整 SQL、Schema-only SQL 與 Data-only SQL 邏輯備份。
+const APP_VERSION = '第21版｜2026/08/30'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
