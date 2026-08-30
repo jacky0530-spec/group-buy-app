@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第23版：正式現貨訂單於開單時即納入銷售與財務報表營收／成本認列，V23 Registry 已同步。
-const APP_VERSION = '第23版｜2026/08/30'
+// 第24版：銷售報表新增獨立現貨庫存資產區塊，V24 Registry 已同步。
+const APP_VERSION = '第24版｜2026/08/30'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
