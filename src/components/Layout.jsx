@@ -1,10 +1,11 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Trash2, Truck } from 'lucide-react'
+import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, ClipboardList, ReceiptText, CreditCard, ClipboardCheck, FileSpreadsheet, Warehouse, Trash2, Truck, DatabaseBackup } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第18版：訂單管理中數量大於 1 的已到貨品項可一鍵改回未到貨。
-const APP_VERSION = '第18版｜2026/08/30'
+// 第19版：新增指定 owner 專用的系統備份／移轉中心與 Migration Registry 治理規則。
+const APP_VERSION = '第19版｜2026/08/30'
+const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
@@ -21,13 +22,15 @@ const NAV = [
   { to: '/supplier-payments', icon: CreditCard, label: '供應商付款' },
   { to: '/helper-entries', icon: ClipboardCheck, label: '小幫手登記' },
   { to: '/accounts', icon: UserCog, label: '帳號管理' },
+  { to: '/backup-center', icon: DatabaseBackup, label: '系統備份／移轉', backupOwnerOnly:true },
 ]
 
 export default function Layout() {
   const [sideOpen, setSideOpen] = useState(false)
   const location = useLocation()
-  const { role } = useAuth()
-  const visibleNav = NAV.filter(item => !item.ownerOnly || role === 'owner')
+  const { role,user } = useAuth()
+  const email=String(user?.email||'').toLowerCase()
+  const visibleNav = NAV.filter(item => (!item.ownerOnly || role === 'owner') && (!item.backupOwnerOnly || (role==='owner'&&email===BACKUP_OWNER_EMAIL)))
 
   useEffect(() => { setSideOpen(false) }, [location.pathname])
   useEffect(() => {
