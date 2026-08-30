@@ -34,6 +34,16 @@
       "api_changes": ["api/neon-accounts-runtime.js: backup_overview / backup_export_table"],
       "security": "後端要求 Firebase token UID 對應 Neon owner 帳號，且 token email 與 accounts.email 都必須為 jacky0530@gmail.com。",
       "rollback": "移除 backup actions、/backup-center 路由與 Migration Registry CI 檢查；不需資料庫 rollback。"
+    },
+    {
+      "version": "V20",
+      "date": "2026-08-30",
+      "type": "bugfix",
+      "summary": "修正完整移轉 JSON 匯出假設所有資料表都有 created_at，造成 customers 等舊表匯出失敗。備份資料列不再強制依時間欄排序。",
+      "database_changes": [],
+      "api_changes": ["api/neon-accounts-runtime.js: backup_export_table 移除各表 ORDER BY created_at"],
+      "data_migration": "無。只修改只讀備份查詢，不修改正式資料。",
+      "rollback": "可還原 V19 backup_export_table；不需資料庫 rollback。"
     }
   ]
 }
