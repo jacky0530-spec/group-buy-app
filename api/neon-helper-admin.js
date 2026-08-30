@@ -197,7 +197,7 @@ async function stockQuery(sql,body){
 
 async function stockSupport(sql,body){
   const movementLimit=Math.min(200,Math.max(20,int(body?.movementLimit,100)))
-  const [extras,movements]=await Promise.all([
+  const [extras,movements,assetRows]=await Promise.all([
     sql`
       SELECT e.legacy_id AS id,p.legacy_id AS product_id,e.product_name,e.supplier,
         e.spec_package,e.spec_flavor,e.spec_color,e.spec_size,e.spec_label,
@@ -219,7 +219,59 @@ async function stockSupport(sql,body){
       ORDER BY it.created_at DESC
       LIMIT ${movementLimit}
     `,
+    sql`
+      WITH bounds AS (
+        SELECT date_trunc('month',now() AT TIME ZONE 'Asia/Taipei') AS month_start,
+          date_trunc('month',now() AT TIME ZONE 'Asia/Taipei') + interval '1 month' AS month_end
+      ), stock_orders AS (
+        SELECT o.id,o.total_amount,o.refund_amount
+        FROM orders o,bounds b
+        WHERE o.status<>'cancelled'
+          AND COALESCE(o.archived,false)=false
+          AND COALESCE(o.is_virtual,false)=false
+          AND COALESCE(o.fulfillment_type,'preorder')='stock'
+          AND (o.order_date AT TIME ZONE 'Asia/Taipei')>=b.month_start
+          AND (o.order_date AT TIME ZONE 'Asia/Taipei')<b.month_end
+      )
+      SELECT
+        to_char((SELECT month_start FROM bounds),'YYYY-MM') AS month,
+        COALESCE((
+          SELECT SUM(GREATEST(s.available_qty,0)*COALESCE(
+            NULLIF(NULLIF(to_jsonb(s)->>'average_cost','')::numeric,0),
+            (SELECT NULLIF(x->>'cost','')::numeric FROM jsonb_array_elements(COALESCE(p.price_options,'[]'::jsonb)) x WHERE x->>'label'=s.spec_package LIMIT 1),
+            p.cost,0
+          ))
+          FROM stock_inventory s
+          JOIN products p ON p.id=s.product_id
+        ),0) AS inventory_cost_value,
+        COALESCE((
+          SELECT SUM(GREATEST(it.qty_change,0)*COALESCE(
+            e.unit_cost,
+            NULLIF(NULLIF(to_jsonb(s)->>'average_cost','')::numeric,0),
+            (SELECT NULLIF(x->>'cost','')::numeric FROM jsonb_array_elements(COALESCE(p.price_options,'[]'::jsonb)) x WHERE x->>'label'=s.spec_package LIMIT 1),
+            p.cost,0
+          ))
+          FROM inventory_transactions it
+          JOIN stock_inventory s ON s.id=it.inventory_id
+          JOIN products p ON p.id=s.product_id
+          LEFT JOIN stock_purchase_extras e ON e.id=it.extra_purchase_id
+          CROSS JOIN bounds b
+          WHERE it.transaction_type='extra_receive'
+            AND (it.created_at AT TIME ZONE 'Asia/Taipei')>=b.month_start
+            AND (it.created_at AT TIME ZONE 'Asia/Taipei')<b.month_end
+        ),0) AS purchase_value,
+        COALESCE((SELECT SUM(GREATEST(0,total_amount-refund_amount)) FROM stock_orders),0) AS sales_revenue,
+        COALESCE((
+          SELECT SUM(COALESCE(oi.cost_price,0)*oi.qty)
+          FROM stock_orders so
+          JOIN order_items oi ON oi.order_id=so.id
+          WHERE COALESCE(oi.fulfillment_type,'stock')='stock'
+        ),0) AS cogs
+    `,
   ])
+  const a=assetRows[0]||{}
+  const salesRevenue=Number(a.sales_revenue||0)
+  const cogs=Number(a.cogs||0)
   return {
     extras:extras.map(r=>({
       id:r.id,product_id:r.product_id,product_name:r.product_name||'',supplier:r.supplier||'',
@@ -228,6 +280,14 @@ async function stockSupport(sql,body){
       unit_cost:Number(r.unit_cost||0),note:r.note||'',status:r.status,received_at:r.received_at,created_at:r.created_at,updated_at:r.updated_at,
     })),
     movements:movements.map(r=>({...r,qty_change:Number(r.qty_change||0),balance_after:Number(r.balance_after||0)})),
+    stockAsset:{
+      month:a.month||'',
+      inventoryCostValue:Number(a.inventory_cost_value||0),
+      purchaseValue:Number(a.purchase_value||0),
+      salesRevenue,
+      cogs,
+      grossProfit:salesRevenue-cogs,
+    },
   }
 }
 
