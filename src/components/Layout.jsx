@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第22版：即將到貨頁新增已完成批次商品的單筆／批次封存功能。
+// 第22版：即將到貨頁新增已完成批次商品的單筆／批次封存功能，V22 Registry 已同步。
 const APP_VERSION = '第22版｜2026/08/30'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
