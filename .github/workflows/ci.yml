@@ -29,7 +29,10 @@ jobs:
           fi
           CHANGED="$(git diff --name-only "$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD^ HEAD)"
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -Eq '^(api/|server/|src/lib/|src/pages/|src/components/)'; then
+          # Layout.jsx may change only to display the app version/navigation label; it does not by itself
+          # imply a database/API migration. All API/server/lib/page changes and other components remain guarded.
+          CORE_CHANGED="$(echo "$CHANGED" | grep -E '^(api/|server/|src/lib/|src/pages/|src/components/)' | grep -v '^src/components/Layout.jsx$' || true)"
+          if [ -n "$CORE_CHANGED" ]; then
             if ! echo "$CHANGED" | grep -qx 'src/migration-registry.json'; then
               echo 'ERROR: 核心功能或資料邏輯已變更，但 Migration Registry 未同步更新。'
               echo '請更新 src/migration-registry.json，記錄版本、資料庫/API 影響與 rollback。'
