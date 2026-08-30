@@ -49,7 +49,7 @@ const sqlValue=(value,c)=>{
 }
 const buildSchemaParts=o=>{
   const head=[];const tail=[]
-  head.push('-- 團購百貨 PostgreSQL Schema Backup',`-- Generated: ${new Date().toISOString()}`,'-- Secrets are intentionally excluded.','SET client_encoding = \'UTF8\';','SET standard_conforming_strings = on;','')
+  head.push('-- 團購百貨 PostgreSQL Schema Backup',`-- Generated: ${new Date().toISOString()}`,'-- Secrets are intentionally excluded.',"SET client_encoding = 'UTF8';",'SET standard_conforming_strings = on;','')
   for(const e of o.enums||[])head.push(`CREATE TYPE public.${qi(e.type_name)} AS ENUM (${(e.labels||[]).map(qs).join(', ')});`)
   if((o.enums||[]).length)head.push('')
   for(const s of o.sequences||[]){head.push(`CREATE SEQUENCE public.${qi(s.sequence_name)} START WITH ${s.start_value} INCREMENT BY ${s.increment_by} MINVALUE ${s.min_value} MAXVALUE ${s.max_value} ${s.cycle?'CYCLE':'NO CYCLE'} CACHE ${s.cache_size};`)}
