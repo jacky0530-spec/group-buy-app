@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ToastProvider } from './components/UI'
 import { AuthProvider, AuthGuard, RoleGuard, useAuth } from './components/AuthGuard'
 import CustomerSearchNotes from './components/CustomerSearchNotes'
+import OrderArrivalResetPatch from './components/OrderArrivalResetPatch'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Home from './pages/Home'
@@ -28,6 +29,7 @@ export default function App() {
       <ToastProvider>
         <BrowserRouter>
           <CustomerSearchNotes />
+          <OrderArrivalResetPatch />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<AuthGuard />}>
