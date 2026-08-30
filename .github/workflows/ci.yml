@@ -13,10 +13,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - name: Enforce Migration Registry
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED="$(git diff --name-only "$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD^ HEAD)"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -Eq '^(api/|server/|src/lib/|src/pages/|src/components/)'; then
+            if ! echo "$CHANGED" | grep -qx 'src/migration-registry.json'; then
+              echo 'ERROR: 核心功能或資料邏輯已變更，但 Migration Registry 未同步更新。'
+              echo '請更新 src/migration-registry.json，記錄版本、資料庫/API 影響與 rollback。'
+              exit 1
+            fi
+          fi
       - name: Sync dependency lockfile
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Commit lockfile sync
