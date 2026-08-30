@@ -67,6 +67,16 @@
       "data_logic": "封存只將 products.active 設為 false 並寫 archived_at，不刪除商品、歷史訂單、order_items、到貨批次、付款或報表資料。",
       "ui_changes": ["src/components/IncomingArchivePanel.jsx","/incoming 頁面顯示已完成批次商品封存卡片"],
       "rollback": "移除 IncomingArchivePanel 與 Layout 掛載；已封存商品可由商品管理的還原功能恢復。"
+    },
+    {
+      "version": "V23",
+      "date": "2026-08-30",
+      "type": "bugfix",
+      "summary": "修正正式現貨訂單已扣庫存但銷售與財務報表仍只等 shipped 才認列營收與成本的時點不一致。現貨正式開單後即納入營收、毛利與趨勢；預購仍維持已出貨才認列。",
+      "database_changes": [],
+      "api_changes": ["api/neon-order-query.js: report_data 現貨營收／成本認列條件"],
+      "data_migration": "無。只修改 Neon SQL 唯讀報表聚合，不改寫既有 orders、order_items、付款或庫存資料。既有非取消現貨正式訂單會依新規則直接反映在報表。",
+      "rollback": "將 report_data 的營收、退款、商品成本、趨勢與月損益條件還原為只計 status='shipped'；不需資料庫 rollback。"
     }
   ]
 }
