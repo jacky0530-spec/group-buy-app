@@ -77,6 +77,18 @@
       "api_changes": ["api/neon-order-query.js: report_data 現貨營收／成本認列條件"],
       "data_migration": "無。只修改 Neon SQL 唯讀報表聚合，不改寫既有 orders、order_items、付款或庫存資料。既有非取消現貨正式訂單會依新規則直接反映在報表。",
       "rollback": "將 report_data 的營收、退款、商品成本、趨勢與月損益條件還原為只計 status='shipped'；不需資料庫 rollback。"
+    },
+    {
+      "version": "V24",
+      "date": "2026-08-30",
+      "type": "feature",
+      "summary": "銷售報表新增獨立現貨庫存資產區塊，顯示現貨庫存成本價值、本月現貨進貨、本月現貨銷售、現貨銷貨成本與現貨毛利。",
+      "database_changes": [],
+      "api_changes": ["api/neon-helper-admin.js: stock_support 增加 stockAsset SQL 聚合，不新增 Serverless Function"],
+      "data_logic": "庫存成本價值以目前 available_qty 乘庫存平均成本計算，缺值時回退到規格成本／商品成本；本月現貨進貨只計 extra_receive；本月現貨銷售只計非取消、非虛擬 stock 正式訂單；現貨毛利=現貨銷售-現貨銷貨成本。",
+      "ui_changes": ["src/components/StockAssetPanel.jsx","src/App.jsx: /reports 掛載現貨庫存資產區塊"],
+      "data_migration": "無。全部為 Neon 唯讀 SQL 聚合與前端顯示，不改寫庫存、訂單或付款資料。",
+      "rollback": "移除 StockAssetPanel 與 /reports 掛載，並將 stock_support 還原為原本只回傳待入庫與庫存流水；不需資料庫 rollback。"
     }
   ]
 }
