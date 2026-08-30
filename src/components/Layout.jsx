@@ -3,8 +3,8 @@ import { ShoppingBag, Users, ShoppingCart, BarChart2, Home, Menu, X, UserCog, Cl
 import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 
-// 第17版：未出貨報表的商品候選目錄會依「全部待出貨／已到貨可取貨／尚未到貨」同步過濾。Production redeploy trigger 2026-08-30.
-const APP_VERSION = '第17版｜2026/08/29'
+// 第18版：訂單管理中數量大於 1 的已到貨品項可一鍵改回未到貨。
+const APP_VERSION = '第18版｜2026/08/30'
 
 const NAV = [
   { to: '/', icon: Home, label: '首頁', end: true },
