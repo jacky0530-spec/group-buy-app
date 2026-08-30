@@ -44,14 +44,29 @@ async function syncAccount(sql,row){
 }
 
 async function backupOverview(sql){
-  const [tables,columns,constraints,indexes,triggers,functions,views,metrics]=await Promise.all([
+  const [tables,columns,constraints,indexes,triggers,functions,views,enums,sequences,sequenceOwners,metrics]=await Promise.all([
     sql`SELECT tablename AS table_name FROM pg_tables WHERE schemaname='public' ORDER BY tablename`,
-    sql`SELECT table_name,column_name,data_type,udt_name,is_nullable,column_default,ordinal_position FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name,ordinal_position`,
+    sql`SELECT table_name,column_name,data_type,udt_name,is_nullable,column_default,ordinal_position,
+      character_maximum_length,numeric_precision,numeric_scale,datetime_precision,
+      is_identity,identity_generation,is_generated,generation_expression
+      FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name,ordinal_position`,
     sql`SELECT c.conname AS constraint_name,c.contype AS constraint_type,cl.relname AS table_name,pg_get_constraintdef(c.oid,true) AS definition FROM pg_constraint c JOIN pg_class cl ON cl.oid=c.conrelid JOIN pg_namespace n ON n.oid=cl.relnamespace WHERE n.nspname='public' ORDER BY cl.relname,c.conname`,
     sql`SELECT tablename AS table_name,indexname AS index_name,indexdef AS definition FROM pg_indexes WHERE schemaname='public' ORDER BY tablename,indexname`,
     sql`SELECT c.relname AS table_name,t.tgname AS trigger_name,pg_get_triggerdef(t.oid,true) AS definition FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal ORDER BY c.relname,t.tgname`,
     sql`SELECT p.proname AS function_name,pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' ORDER BY p.proname`,
     sql`SELECT viewname AS view_name,definition FROM pg_views WHERE schemaname='public' ORDER BY viewname`,
+    sql`SELECT t.typname AS type_name,array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+      FROM pg_type t JOIN pg_enum e ON e.enumtypid=t.oid JOIN pg_namespace n ON n.oid=t.typnamespace
+      WHERE n.nspname='public' GROUP BY t.typname ORDER BY t.typname`,
+    sql`SELECT sequencename AS sequence_name,start_value,min_value,max_value,increment_by,cycle,cache_size,last_value
+      FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename`,
+    sql`SELECT s.relname AS sequence_name,t.relname AS table_name,a.attname AS column_name
+      FROM pg_class s
+      JOIN pg_namespace ns ON ns.oid=s.relnamespace
+      JOIN pg_depend d ON d.objid=s.oid AND d.deptype IN ('a','i')
+      JOIN pg_class t ON t.oid=d.refobjid
+      JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=d.refobjsubid
+      WHERE ns.nspname='public' AND s.relkind='S' ORDER BY s.relname`,
     sql`SELECT
       (SELECT COUNT(*)::int FROM accounts) AS accounts,
       (SELECT COUNT(*)::int FROM customers) AS customers,
@@ -82,6 +97,9 @@ async function backupOverview(sql){
     triggers,
     functions,
     views,
+    enums,
+    sequences,
+    sequence_owners:sequenceOwners,
     metrics:metrics[0]||{},
     export_tables:['accounts','customers','products','orders','order_items','helper_entries','stock_inventory','inventory_transactions','stock_purchase_extras','supplier_payments','supplier_payment_allocations','expenses','incoming_batches','incoming_batch_items'],
     secret_policy:'Secrets are intentionally excluded. Keep DATABASE_URL / Firebase private keys / access tokens outside Git.'
