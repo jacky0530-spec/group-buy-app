@@ -85,7 +85,7 @@ function CorrectionPanel({ onChanged }) {
       <button className="btn btn-sm btn-ghost" disabled={loading&&!open} onClick={toggleOpen}>{loading&&!open?'載入中...':open?'收合':'開啟更正'} {!loading&&candidates.length>0&&`(${candidates.length})`}</button>
     </div>
     {open&&<div style={{borderTop:'1px solid var(--border)',padding:'10px 14px 14px'}}>
-      {!loading&&candidates.length>0&&<div className="search-input-wrap" style={{marginBottom:10}}><Search size={17}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="搜尋商品名稱..."/><span style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{visibleCandidates.length}/{candidates.length} 筆</span></div>}
+      {!loading&&candidates.length>0&&<div className="search-input-wrap" style={{marginBottom:12,height:48,padding:'0 14px',display:'flex',alignItems:'center',gap:10,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)'}}><Search size={20}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="搜尋商品名稱..." style={{flex:1,minWidth:0,height:'100%',border:0,outline:'none',background:'transparent',fontSize:16,padding:'0 4px'}}/><span style={{fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{visibleCandidates.length}/{candidates.length} 筆</span></div>}
       {loading&&<div style={{padding:12,color:'var(--text-muted)'}}>載入中...</div>}
       {!loading&&candidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>目前沒有需要更正的預購訂單。</div>}
       {!loading&&candidates.length>0&&visibleCandidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>查無符合此商品名稱的更正訂單。</div>}
