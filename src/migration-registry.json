@@ -149,6 +149,18 @@
       "data_logic": "現貨庫存金額=現貨庫存成本價值；沿用 available_qty × 庫存成本的既有 V24 計算口徑，不新增另一套公式。",
       "data_migration": "無。純前端顯示並讀取既有唯讀 stock_support 統計，不改寫庫存、訂單或付款資料。",
       "rollback": "移除 StockValueTopCard 與 /reports 掛載即可；不需資料庫 rollback。"
+    },
+    {
+      "version": "V30",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "出貨查詢報表兩組查詢按鈕只做左右對調，並將預設查詢改為已出貨查詢＋依買家查詢。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportSql.jsx: 第一排左已出貨／右待出貨，第二排左買家／右商品，預設 shipped + buyer"],
+      "data_logic": "不修改訂單篩選、出貨狀態、商品／買家 SQL 查詢條件，只調整按鈕排列與初始前端狀態。",
+      "data_migration": "無。純前端 UI 與預設狀態調整，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "將按鈕左右順序與初始 mode/shipmentView 還原為 V29；不需資料庫 rollback。"
     }
   ]
 }
