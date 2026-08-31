@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第29版：銷售與財務報表上方新增現貨庫存金額卡片，沿用現貨庫存成本價值計算，V29 Registry 已同步。
-const APP_VERSION = '第29版｜2026/08/31'
+// 第30版：出貨查詢按鈕左右對調，預設為已出貨查詢＋依買家查詢，V30 Registry 已同步。
+const APP_VERSION = '第30版｜2026/08/31'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
