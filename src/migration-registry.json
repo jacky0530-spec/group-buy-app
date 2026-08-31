@@ -137,6 +137,18 @@
       "data_logic": "不改變任何小計數量計算，只調整顯示位置並保留原本 X 件文字。",
       "data_migration": "無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "將各規格小計列恢復 justify-content: space-between；不需資料庫 rollback。"
+    },
+    {
+      "version": "V29",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "銷售與財務報表上方統計卡新增現貨庫存金額，數值與現貨庫存資產區塊的現貨庫存成本價值使用同一 stockAsset.inventoryCostValue 計算結果。",
+      "database_changes": [],
+      "api_changes": ["沿用 api/neon-helper-admin.js stock_support，不新增 Serverless Function"],
+      "ui_changes": ["src/components/StockValueTopCard.jsx","src/App.jsx: /reports 掛載上方現貨庫存金額卡片"],
+      "data_logic": "現貨庫存金額=現貨庫存成本價值；沿用 available_qty × 庫存成本的既有 V24 計算口徑，不新增另一套公式。",
+      "data_migration": "無。純前端顯示並讀取既有唯讀 stock_support 統計，不改寫庫存、訂單或付款資料。",
+      "rollback": "移除 StockValueTopCard 與 /reports 掛載即可；不需資料庫 rollback。"
     }
   ]
 }
