@@ -5,6 +5,7 @@ import CustomerSearchNotes from './components/CustomerSearchNotes'
 import OrderArrivalResetPatch from './components/OrderArrivalResetPatch'
 import StockAssetPanel from './components/StockAssetPanel'
 import StockValueTopCard from './components/StockValueTopCard'
+import FinanceCostWarning from './components/FinanceCostWarning'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Home from './pages/Home'
@@ -47,7 +48,7 @@ export default function App() {
                     <Route path="backup-center" element={<BackupMigrationCenter />} />
                   </Route>
                   <Route path="order-import" element={<ExcelOrderImport />} />
-                  <Route path="reports" element={<><Reports/><StockValueTopCard/><StockAssetPanel/></>} />
+                  <Route path="reports" element={<><FinanceCostWarning/><Reports/><StockValueTopCard/><StockAssetPanel/></>} />
                   <Route path="pending-report" element={<PendingProductReport />} />
                   <Route path="incoming" element={<IncomingBatches />} />
                   <Route path="stock" element={<StockInventory />} />
