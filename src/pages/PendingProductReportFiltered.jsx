@@ -109,7 +109,7 @@ export default function PendingProductReportFiltered() {
     return () => observer.disconnect()
   },[])
 
-  // V25：組合小計的訂貨件數靠近品名，並用醒目標示協助管理者快速辨識訂貨量。
+  // V26 hotfix：V25 訂貨 badge 每個 DOM 節點只處理一次，避免 MutationObserver 自我觸發形成無限迴圈。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
@@ -124,9 +124,10 @@ export default function PendingProductReportFiltered() {
         row.style.flexWrap = 'wrap'
         row.style.gap = '8px'
         const qty = row.querySelector('strong')
-        if (!qty) return
+        if (!qty || qty.dataset.pendingOrderBadge === '1') return
         const match = String(qty.textContent || '').match(/(\d+(?:\.\d+)?)\s*件/)
         if (!match) return
+        qty.dataset.pendingOrderBadge = '1'
         qty.textContent = `訂貨 ${match[1]} 件`
         qty.style.display = 'inline-flex'
         qty.style.alignItems = 'center'
