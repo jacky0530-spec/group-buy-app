@@ -14,21 +14,141 @@
       "date": "2026-08-30",
       "type": "baseline",
       "summary": "建立目前正式系統可移轉基準。",
-      "database_objects": ["accounts","customers","products","orders","order_items","helper_entries","stock_inventory","inventory_transactions","stock_purchase_extras","supplier_payments","supplier_payment_allocations","expenses","incoming_batches","incoming_batch_items"],
-      "critical_fields": ["order_items.qty","order_items.original_qty","order_items.arrived_qty","order_items.arrived_at","order_items.cost_price","order_items.supplier_paid_amount","stock_inventory.average_cost"],
-      "important_logic": ["訂單到貨數量以 order_items.arrived_qty 為主","供應商付款需保留 supplier_payment_allocations","庫存需同時保留 stock_inventory 與 inventory_transactions","即將到貨使用 incoming_batches / incoming_batch_items","Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"],
+      "database_objects": [
+        "accounts","customers","products","orders","order_items","helper_entries","stock_inventory","inventory_transactions","stock_purchase_extras","supplier_payments","supplier_payment_allocations","expenses","incoming_batches","incoming_batch_items"
+      ],
+      "critical_fields": [
+        "order_items.qty","order_items.original_qty","order_items.arrived_qty","order_items.arrived_at","order_items.cost_price","order_items.supplier_paid_amount","stock_inventory.average_cost"
+      ],
+      "important_logic": [
+        "訂單到貨數量以 order_items.arrived_qty 為主","供應商付款需保留 supplier_payment_allocations","庫存需同時保留 stock_inventory 與 inventory_transactions","即將到貨使用 incoming_batches / incoming_batch_items","Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"
+      ],
       "rollback": "此筆為基準文件，無資料庫變更。"
     },
-    {"version":"V19","date":"2026-08-30","type":"governance","summary":"新增僅指定 owner 可見的系統備份／移轉中心、schema metadata、白名單資料匯出與 CI Registry 防漏規則。","database_changes":[],"api_changes":["api/neon-accounts-runtime.js: backup_overview / backup_export_table"],"security":"後端要求 Firebase token UID 對應 Neon owner 帳號，且 token email 與 accounts.email 都必須為 jacky0530@gmail.com。","rollback":"移除 backup actions、/backup-center 路由與 Migration Registry CI 檢查；不需資料庫 rollback。"},
-    {"version":"V20","date":"2026-08-30","type":"bugfix","summary":"修正完整移轉 JSON 匯出假設所有資料表都有 created_at，造成 customers 等舊表匯出失敗。備份資料列不再強制依時間欄排序。","database_changes":[],"api_changes":["api/neon-accounts-runtime.js: backup_export_table 移除各表 ORDER BY created_at"],"data_migration":"無。只修改只讀備份查詢，不修改正式資料。","rollback":"可還原 V19 backup_export_table；不需資料庫 rollback。"},
-    {"version":"V21","date":"2026-08-30","type":"backup","summary":"備份中心新增 PostgreSQL 完整 SQL、Schema-only SQL、Data-only SQL 邏輯備份下載，並補充 enum、sequence、identity/generated 欄位 metadata。","database_changes":[],"api_changes":["api/neon-accounts-runtime.js: backup_overview 增加 enums/sequences/sequence owners 與進階 column metadata"],"backup_changes":["group-buy-postgresql-full-YYYY-MM-DD.sql","group-buy-postgresql-schema-YYYY-MM-DD.sql","group-buy-postgresql-data-YYYY-MM-DD.sql"],"restore_note":"Full SQL 可用 psql 匯入新的 PostgreSQL。此為應用層 logical SQL backup，不等同 pg_dump custom-format binary .dump。Secrets 仍不匯出。","data_migration":"無。只增加只讀 metadata 與瀏覽器端 SQL 檔案產生。","rollback":"移除 V21 SQL 產生按鈕與新增 metadata 查詢；不需資料庫 rollback。"},
-    {"version":"V22","date":"2026-08-30","type":"feature","summary":"即將到貨頁新增已完成批次商品封存中心，可單筆封存或勾選多筆批次封存，同商品多規格合併後只封存一次。","database_changes":[],"api_changes":["沿用 api/neon-runtime.js write_product op=archive，不新增 Serverless Function"],"data_logic":"封存只將 products.active 設為 false 並寫 archived_at，不刪除商品、歷史訂單、order_items、到貨批次、付款或報表資料。","ui_changes":["src/components/IncomingArchivePanel.jsx","/incoming 頁面顯示已完成批次商品封存卡片"],"rollback":"移除 IncomingArchivePanel 與 Layout 掛載；已封存商品可由商品管理的還原功能恢復。"},
-    {"version":"V23","date":"2026-08-30","type":"bugfix","summary":"修正正式現貨訂單已扣庫存但銷售與財務報表仍只等 shipped 才認列營收與成本的時點不一致。現貨正式開單後即納入營收、毛利與趨勢；預購仍維持已出貨才認列。","database_changes":[],"api_changes":["api/neon-order-query.js: report_data 現貨營收／成本認列條件"],"data_migration":"無。只修改 Neon SQL 唯讀報表聚合，不改寫既有 orders、order_items、付款或庫存資料。既有非取消現貨正式訂單會依新規則直接反映在報表。","rollback":"將 report_data 的營收、退款、商品成本、趨勢與月損益條件還原為只計 status='shipped'；不需資料庫 rollback。"},
-    {"version":"V24","date":"2026-08-30","type":"feature","summary":"銷售報表新增獨立現貨庫存資產區塊，顯示現貨庫存成本價值、本月現貨進貨、本月現貨銷售、現貨銷貨成本與現貨毛利。","database_changes":[],"api_changes":["api/neon-helper-admin.js: stock_support 增加 stockAsset SQL 聚合，不新增 Serverless Function"],"data_logic":"庫存成本價值以目前 available_qty 乘庫存平均成本計算，缺值時回退到規格成本／商品成本；本月現貨進貨只計 extra_receive；本月現貨銷售只計非取消、非虛擬 stock 正式訂單；現貨毛利=現貨銷售-現貨銷貨成本。","ui_changes":["src/components/StockAssetPanel.jsx","src/App.jsx: /reports 掛載現貨庫存資產區塊"],"data_migration":"無。全部為 Neon 唯讀 SQL 聚合與前端顯示，不改寫庫存、訂單或付款資料。","rollback":"移除 StockAssetPanel 與 /reports 掛載，並將 stock_support 還原為原本只回傳待入庫與庫存流水；不需資料庫 rollback。"},
-    {"version":"V25","date":"2026-08-31","type":"ui","summary":"未出貨報表的組合小計將訂貨件數移到品名旁，並改為橘色訂貨標示，方便管理者快速辨識各組合訂貨量。","database_changes":[],"api_changes":[],"ui_changes":["src/pages/PendingProductReportFiltered.jsx: 組合小計訂貨件數近距離顯示與訂貨 badge"],"data_logic":"不改變原有組合小計數量計算，只調整正式未出貨報表的呈現方式。","data_migration":"無。純前端 UI 調整，不改寫訂單、到貨、庫存或付款資料。","rollback":"移除 V25 組合小計 DOM 樣式增強並將 APP_VERSION 還原；不需資料庫 rollback。"},
-    {"version":"V26","date":"2026-08-31","type":"bugfix","summary":"修正 V25 組合小計訂貨 badge 的 MutationObserver 反覆重寫同一文字節點，造成未出貨報表前端卡在 Neon SQL 查詢中的問題。","database_changes":[],"api_changes":[],"ui_changes":["src/pages/PendingProductReportFiltered.jsx: 訂貨 badge 增加一次性 DOM 處理標記，避免 observer 自我觸發"],"data_logic":"保留 V25 的訂貨件數計算與橘色標示，只阻止同一 badge DOM 節點被重複改寫。","data_migration":"無。純前端 hotfix，不改寫訂單、到貨、庫存或付款資料。","rollback":"移除 V26 的 data-pending-order-badge 一次性判斷即可；不需資料庫 rollback。"},
-    {"version":"V27","date":"2026-08-31","type":"ui","summary":"未出貨報表組合小計恢復單純件數呈現，只將件數左移靠近品名，不再顯示訂貨文字或 badge。","database_changes":[],"api_changes":[],"ui_changes":["src/pages/PendingProductReportFiltered.jsx: 組合小計只調整左右間距，保留原本 X 件文字"],"data_logic":"不改變組合小計數量計算，不重寫件數文字，不新增其他訂貨資訊。","data_migration":"無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。","rollback":"將組合小計列恢復 justify-content: space-between 並移除 V27 版面調整即可；不需資料庫 rollback。"},
-    {"version":"V28","date":"2026-08-31","type":"ui","summary":"未出貨報表所有規格小計的件數統一左移靠近規格名稱，包含組合、口味、顏色與尺寸小計。","database_changes":[],"api_changes":[],"ui_changes":["src/pages/PendingProductReportFiltered.jsx: 組合／口味／顏色／尺寸小計統一左對齊件數"],"data_logic":"不改變任何小計數量計算，只調整顯示位置並保留原本 X 件文字。","data_migration":"無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。","rollback":"將各規格小計列恢復 justify-content: space-between；不需資料庫 rollback。"},
-    {"version":"V29","date":"2026-08-31","type":"ui","summary":"銷售與財務報表上方統計卡新增現貨庫存金額，數值與現貨庫存資產區塊的現貨庫存成本價值使用同一 stockAsset.inventoryCostValue 計算結果。","database_changes":[],"api_changes":["沿用 api/neon-helper-admin.js stock_support，不新增 Serverless Function"],"ui_changes":["src/components/StockValueTopCard.jsx","src/App.jsx: /reports 掛載上方現貨庫存金額卡片"],"data_logic":"現貨庫存金額=現貨庫存成本價值；沿用 available_qty × 庫存成本的既有 V24 計算口徑，不新增另一套公式。","data_migration":"無。純前端顯示並讀取既有唯讀 stock_support 統計，不改寫庫存、訂單或付款資料。","rollback":"移除 StockValueTopCard 與 /reports 掛載即可；不需資料庫 rollback。"}
+    {
+      "version": "V19",
+      "date": "2026-08-30",
+      "type": "governance",
+      "summary": "新增僅指定 owner 可見的系統備份／移轉中心、schema metadata、白名單資料匯出與 CI Registry 防漏規則。",
+      "database_changes": [],
+      "api_changes": ["api/neon-accounts-runtime.js: backup_overview / backup_export_table"],
+      "security": "後端要求 Firebase token UID 對應 Neon owner 帳號，且 token email 與 accounts.email 都必須為 jacky0530@gmail.com。",
+      "rollback": "移除 backup actions、/backup-center 路由與 Migration Registry CI 檢查；不需資料庫 rollback。"
+    },
+    {
+      "version": "V20",
+      "date": "2026-08-30",
+      "type": "bugfix",
+      "summary": "修正完整移轉 JSON 匯出假設所有資料表都有 created_at，造成 customers 等舊表匯出失敗。備份資料列不再強制依時間欄排序。",
+      "database_changes": [],
+      "api_changes": ["api/neon-accounts-runtime.js: backup_export_table 移除各表 ORDER BY created_at"],
+      "data_migration": "無。只修改只讀備份查詢，不修改正式資料。",
+      "rollback": "可還原 V19 backup_export_table；不需資料庫 rollback。"
+    },
+    {
+      "version": "V21",
+      "date": "2026-08-30",
+      "type": "backup",
+      "summary": "備份中心新增 PostgreSQL 完整 SQL、Schema-only SQL、Data-only SQL 邏輯備份下載，並補充 enum、sequence、identity/generated 欄位 metadata。",
+      "database_changes": [],
+      "api_changes": ["api/neon-accounts-runtime.js: backup_overview 增加 enums/sequences/sequence owners 與進階 column metadata"],
+      "backup_changes": ["group-buy-postgresql-full-YYYY-MM-DD.sql","group-buy-postgresql-schema-YYYY-MM-DD.sql","group-buy-postgresql-data-YYYY-MM-DD.sql"],
+      "restore_note": "Full SQL 可用 psql 匯入新的 PostgreSQL。此為應用層 logical SQL backup，不等同 pg_dump custom-format binary .dump。Secrets 仍不匯出。",
+      "data_migration": "無。只增加只讀 metadata 與瀏覽器端 SQL 檔案產生。",
+      "rollback": "移除 V21 SQL 產生按鈕與新增 metadata 查詢；不需資料庫 rollback。"
+    },
+    {
+      "version": "V22",
+      "date": "2026-08-30",
+      "type": "feature",
+      "summary": "即將到貨頁新增已完成批次商品封存中心，可單筆封存或勾選多筆批次封存，同商品多規格合併後只封存一次。",
+      "database_changes": [],
+      "api_changes": ["沿用 api/neon-runtime.js write_product op=archive，不新增 Serverless Function"],
+      "data_logic": "封存只將 products.active 設為 false 並寫 archived_at，不刪除商品、歷史訂單、order_items、到貨批次、付款或報表資料。",
+      "ui_changes": ["src/components/IncomingArchivePanel.jsx","/incoming 頁面顯示已完成批次商品封存卡片"],
+      "rollback": "移除 IncomingArchivePanel 與 Layout 掛載；已封存商品可由商品管理的還原功能恢復。"
+    },
+    {
+      "version": "V23",
+      "date": "2026-08-30",
+      "type": "bugfix",
+      "summary": "修正正式現貨訂單已扣庫存但銷售與財務報表仍只等 shipped 才認列營收與成本的時點不一致。現貨正式開單後即納入營收、毛利與趨勢；預購仍維持已出貨才認列。",
+      "database_changes": [],
+      "api_changes": ["api/neon-order-query.js: report_data 現貨營收／成本認列條件"],
+      "data_migration": "無。只修改 Neon SQL 唯讀報表聚合，不改寫既有 orders、order_items、付款或庫存資料。既有非取消現貨正式訂單會依新規則直接反映在報表。",
+      "rollback": "將 report_data 的營收、退款、商品成本、趨勢與月損益條件還原為只計 status='shipped'；不需資料庫 rollback。"
+    },
+    {
+      "version": "V24",
+      "date": "2026-08-30",
+      "type": "feature",
+      "summary": "銷售報表新增獨立現貨庫存資產區塊，顯示現貨庫存成本價值、本月現貨進貨、本月現貨銷售、現貨銷貨成本與現貨毛利。",
+      "database_changes": [],
+      "api_changes": ["api/neon-helper-admin.js: stock_support 增加 stockAsset SQL 聚合，不新增 Serverless Function"],
+      "data_logic": "庫存成本價值以目前 available_qty 乘庫存平均成本計算，缺值時回退到規格成本／商品成本；本月現貨進貨只計 extra_receive；本月現貨銷售只計非取消、非虛擬 stock 正式訂單；現貨毛利=現貨銷售-現貨銷貨成本。",
+      "ui_changes": ["src/components/StockAssetPanel.jsx","src/App.jsx: /reports 掛載現貨庫存資產區塊"],
+      "data_migration": "無。全部為 Neon 唯讀 SQL 聚合與前端顯示，不改寫庫存、訂單或付款資料。",
+      "rollback": "移除 StockAssetPanel 與 /reports 掛載，並將 stock_support 還原為原本只回傳待入庫與庫存流水；不需資料庫 rollback。"
+    },
+    {
+      "version": "V25",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "未出貨報表的組合小計將訂貨件數移到品名旁，並改為橘色訂貨標示，方便管理者快速辨識各組合訂貨量。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合小計訂貨件數近距離顯示與訂貨 badge"],
+      "data_logic": "不改變原有組合小計數量計算，只調整正式未出貨報表的呈現方式。",
+      "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "移除 V25 組合小計 DOM 樣式增強並將 APP_VERSION 還原；不需資料庫 rollback。"
+    },
+    {
+      "version": "V26",
+      "date": "2026-08-31",
+      "type": "bugfix",
+      "summary": "修正 V25 組合小計訂貨 badge 的 MutationObserver 反覆重寫同一文字節點，造成未出貨報表前端卡在 Neon SQL 查詢中的問題。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 訂貨 badge 增加一次性 DOM 處理標記，避免 observer 自我觸發"],
+      "data_logic": "保留 V25 的訂貨件數計算與橘色標示，只阻止同一 badge DOM 節點被重複改寫。",
+      "data_migration": "無。純前端 hotfix，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "移除 V26 的 data-pending-order-badge 一次性判斷即可；不需資料庫 rollback。"
+    },
+    {
+      "version": "V27",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "未出貨報表組合小計恢復單純件數呈現，只將件數左移靠近品名，不再顯示訂貨文字或 badge。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合小計只調整左右間距，保留原本 X 件文字"],
+      "data_logic": "不改變組合小計數量計算，不重寫件數文字，不新增其他訂貨資訊。",
+      "data_migration": "無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "將組合小計列恢復 justify-content: space-between 並移除 V27 版面調整即可；不需資料庫 rollback。"
+    },
+    {
+      "version": "V28",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "未出貨報表所有規格小計的件數統一左移靠近規格名稱，包含組合、口味、顏色與尺寸小計。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合／口味／顏色／尺寸小計統一左對齊件數"],
+      "data_logic": "不改變任何小計數量計算，只調整顯示位置並保留原本 X 件文字。",
+      "data_migration": "無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "將各規格小計列恢復 justify-content: space-between；不需資料庫 rollback。"
+    },
+    {
+      "version": "V29",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "銷售與財務報表上方統計卡新增現貨庫存金額，數值與現貨庫存資產區塊的現貨庫存成本價值使用同一 stockAsset.inventoryCostValue 計算結果。",
+      "database_changes": [],
+      "api_changes": ["沿用 api/neon-helper-admin.js stock_support，不新增 Serverless Function"],
+      "ui_changes": ["src/components/StockValueTopCard.jsx","src/App.jsx: /reports 掛載上方現貨庫存金額卡片"],
+      "data_logic": "現貨庫存金額=現貨庫存成本價值；沿用 available_qty × 庫存成本的既有 V24 計算口徑，不新增另一套公式。",
+      "data_migration": "無。純前端顯示並讀取既有唯讀 stock_support 統計，不改寫庫存、訂單或付款資料。",
+      "rollback": "移除 StockValueTopCard 與 /reports 掛載即可；不需資料庫 rollback。"
+    }
   ]
 }
