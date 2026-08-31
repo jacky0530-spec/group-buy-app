@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第27版：未出貨報表組合小計恢復單純件數顯示，只將件數左移靠近品名，V27 Registry 已同步。
-const APP_VERSION = '第27版｜2026/08/31'
+// 第28版：未出貨報表所有規格小計的件數統一左移靠近規格名稱，V28 Registry 已同步。
+const APP_VERSION = '第28版｜2026/08/31'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

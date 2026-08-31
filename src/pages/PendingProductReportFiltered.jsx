@@ -109,23 +109,25 @@ export default function PendingProductReportFiltered() {
     return () => observer.disconnect()
   },[])
 
-  // V27：組合小計維持原本「X 件」文字，只把件數靠近品名；不改寫文字、不加 badge。
+  // V28：所有規格小計（組合／口味／顏色／尺寸）都維持原本「X 件」文字，只把件數靠近規格名稱。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
-    const alignComboSummary = () => {
-      const title = Array.from(root.querySelectorAll('div')).find(el => String(el.textContent || '').trim() === '組合小計')
-      const body = title?.nextElementSibling
-      if (!body) return
-      Array.from(body.children).forEach(row => {
-        if (!(row instanceof HTMLElement)) return
-        row.style.justifyContent = 'flex-start'
-        row.style.alignItems = 'center'
-        row.style.gap = '20px'
+    const alignDimensionSummaries = () => {
+      const titles = Array.from(root.querySelectorAll('div')).filter(el => ['組合小計','口味小計','顏色小計','尺寸小計'].includes(String(el.textContent || '').trim()))
+      titles.forEach(title => {
+        const body = title.nextElementSibling
+        if (!body) return
+        Array.from(body.children).forEach(row => {
+          if (!(row instanceof HTMLElement)) return
+          row.style.justifyContent = 'flex-start'
+          row.style.alignItems = 'center'
+          row.style.gap = '20px'
+        })
       })
     }
-    alignComboSummary()
-    const observer = new MutationObserver(alignComboSummary)
+    alignDimensionSummaries()
+    const observer = new MutationObserver(alignDimensionSummaries)
     observer.observe(root,{ childList:true,subtree:true })
     return () => observer.disconnect()
   },[])
