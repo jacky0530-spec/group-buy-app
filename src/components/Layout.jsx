@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第24版：銷售報表新增獨立現貨庫存資產區塊，V24 Registry 已同步。
-const APP_VERSION = '第24版｜2026/08/30'
+// 第25版：未出貨報表組合小計改為緊鄰品名顯示訂貨件數標示，V25 Registry 已同步。
+const APP_VERSION = '第25版｜2026/08/31'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
