@@ -161,6 +161,18 @@
       "data_logic": "不修改訂單篩選、出貨狀態、商品／買家 SQL 查詢條件，只調整按鈕排列與初始前端狀態。",
       "data_migration": "無。純前端 UI 與預設狀態調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "將按鈕左右順序與初始 mode/shipmentView 還原為 V29；不需資料庫 rollback。"
+    },
+    {
+      "version": "V31",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "到貨／供應商付款更正畫面新增商品名稱即時搜尋，可快速篩出包含指定商品的預購更正訂單。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/OrdersCorrectable.jsx: 更正清單新增商品名稱搜尋框與篩選後筆數"],
+      "data_logic": "沿用既有最多 500 筆更正候選訂單，在前端依可更正品項的 product_name/name 做包含式、不分大小寫篩選；不改變到貨或供應商付款更正邏輯。",
+      "data_migration": "無。純前端查詢輔助，不改寫訂單、到貨、供應商付款或庫存資料。",
+      "rollback": "移除 OrdersCorrectable 的 productSearch/visibleCandidates 與搜尋框，並將 APP_VERSION 還原為 V30；不需資料庫 rollback。"
     }
   ]
 }

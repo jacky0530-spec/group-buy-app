@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { RotateCcw, WalletCards } from 'lucide-react'
+import { RotateCcw, Search, WalletCards } from 'lucide-react'
 import { OrdersAPI } from '../lib/db'
 import { useToast } from '../components/UI'
 import Orders from './OrdersFast'
@@ -13,6 +13,7 @@ function CorrectionPanel({ onChanged }) {
   const [loading,setLoading]=useState(false)
   const [open,setOpen]=useState(false)
   const [busy,setBusy]=useState('')
+  const [productSearch,setProductSearch]=useState('')
 
   const load=useCallback(async()=>{
     setLoading(true)
@@ -30,6 +31,15 @@ function CorrectionPanel({ onChanged }) {
     order.fulfillment_type!=='stock' && order.status!=='cancelled' && order.archived!==true &&
     (order.items||[]).some(item=>qty(item.arrived_qty)>0 || qty(item.supplier_paid_amount)>0)
   ),[orders])
+
+  const visibleCandidates=useMemo(()=>{
+    const q=productSearch.trim().toLowerCase()
+    if(!q)return candidates
+    return candidates.filter(order=>(order.items||[]).some(item=>
+      (qty(item.arrived_qty)>0 || qty(item.supplier_paid_amount)>0) &&
+      String(item.product_name||item.name||'').toLowerCase().includes(q)
+    ))
+  },[candidates,productSearch])
 
   async function toggleOpen(){
     if(open){setOpen(false);return}
@@ -75,9 +85,11 @@ function CorrectionPanel({ onChanged }) {
       <button className="btn btn-sm btn-ghost" disabled={loading&&!open} onClick={toggleOpen}>{loading&&!open?'載入中...':open?'收合':'開啟更正'} {!loading&&candidates.length>0&&`(${candidates.length})`}</button>
     </div>
     {open&&<div style={{borderTop:'1px solid var(--border)',padding:'10px 14px 14px'}}>
+      {!loading&&candidates.length>0&&<div className="search-input-wrap" style={{marginBottom:10}}><Search size={17}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="搜尋商品名稱..."/><span style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{visibleCandidates.length}/{candidates.length} 筆</span></div>}
       {loading&&<div style={{padding:12,color:'var(--text-muted)'}}>載入中...</div>}
       {!loading&&candidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>目前沒有需要更正的預購訂單。</div>}
-      {!loading&&candidates.map(order=>{
+      {!loading&&candidates.length>0&&visibleCandidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>查無符合此商品名稱的更正訂單。</div>}
+      {!loading&&visibleCandidates.map(order=>{
         const paid=(order.items||[]).reduce((sum,item)=>sum+qty(item.supplier_paid_amount),0)
         return <div key={order.id} style={{border:'1px solid var(--border)',borderRadius:9,padding:10,marginTop:8,background:'var(--surface-2)'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}>
