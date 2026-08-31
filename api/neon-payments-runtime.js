@@ -56,6 +56,59 @@ async function syncPayment(sql,row){
   return {id:legacyId,allocations}
 }
 
+async function updateOrderItemCost(sql,body){
+  const legacyOrderId=text(body?.order_id)
+  const itemIndex=Math.max(0,Math.trunc(num(body?.item_index)))
+  const unitCost=num(body?.unit_cost)
+  if(!legacyOrderId) throw new Error('缺少訂單 ID')
+  if(!(unitCost>0)) throw new Error('實際單位成本必須大於 0')
+
+  const rows=await sql`
+    SELECT o.id AS order_uuid,o.status,oi.id AS item_uuid,oi.qty,oi.product_name,
+      COALESCE(oi.supplier_paid_amount,0)::numeric AS paid
+    FROM orders o
+    JOIN order_items oi ON oi.order_id=o.id AND oi.line_no=${itemIndex+1}
+    WHERE o.legacy_id=${legacyOrderId}
+    LIMIT 1
+  `
+  const row=rows[0]
+  if(!row) throw new Error('找不到要修正成本的訂單品項')
+  if(row.status==='cancelled') throw new Error('已取消訂單不可修正供應商成本')
+  const qty=Math.max(0,num(row.qty))
+  if(!(qty>0)) throw new Error('訂單品項數量不正確')
+  const total=unitCost*qty
+  const paid=Math.max(0,num(row.paid))
+  if(paid>total+0.01) throw new Error(`此品項已付款 ${paid} 元，修正後總成本不可低於已付款金額`)
+
+  await sql`
+    UPDATE order_items SET
+      cost_price=${unitCost},cost_subtotal=${total},
+      supplier_payment_status=CASE WHEN ${paid}<=0 THEN 'unpaid' WHEN ${paid}>=${total}-0.01 THEN 'paid' ELSE 'partial' END,
+      updated_at=now()
+    WHERE id=${row.item_uuid}
+  `
+  await sql`
+    UPDATE orders o SET
+      payable_status=CASE WHEN EXISTS (
+        SELECT 1 FROM order_items oi
+        WHERE oi.order_id=o.id AND (
+          COALESCE(oi.cost_price,0)<=0 OR
+          COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+        )
+      ) THEN 'unpaid' ELSE 'paid' END,
+      payable_paid_at=CASE WHEN EXISTS (
+        SELECT 1 FROM order_items oi
+        WHERE oi.order_id=o.id AND (
+          COALESCE(oi.cost_price,0)<=0 OR
+          COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+        )
+      ) THEN NULL ELSE COALESCE(o.payable_paid_at,now()) END,
+      updated_at=now()
+    WHERE o.id=${row.order_uuid}
+  `
+  return {order_id:legacyOrderId,item_index:itemIndex,product_name:row.product_name||'',unit_cost:unitCost,total_cost:total,paid,outstanding:Math.max(0,total-paid)}
+}
+
 async function buildAllocations(sql,lines,totalAmount,supplier){
   const requested=(Array.isArray(lines)?lines:[]).map((line,seq)=>({
     seq,
@@ -187,10 +240,14 @@ async function createPayment(sql,body){
 
   await sql`
     UPDATE orders o SET payable_status=CASE WHEN NOT EXISTS (
-      SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+      SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND (
+        COALESCE(oi.cost_price,0)<=0 OR COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+      )
     ) THEN 'paid' ELSE 'unpaid' END,
     payable_paid_at=CASE WHEN NOT EXISTS (
-      SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+      SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND (
+        COALESCE(oi.cost_price,0)<=0 OR COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+      )
     ) THEN COALESCE(o.payable_paid_at,now()) ELSE NULL END,
     updated_at=now()
     WHERE o.id IN (SELECT DISTINCT NULLIF(order_uuid,'')::uuid FROM jsonb_to_recordset(${JSON.stringify(allocations)}::jsonb) AS x(kind text,order_uuid text) WHERE kind='order' AND COALESCE(order_uuid,'')<>'')
@@ -244,19 +301,27 @@ async function paymentDashboard(sql){
       WITH due AS (
         SELECT
           COALESCE(NULLIF(oi.supplier,''),'未指定供應商') AS supplier,
-          GREATEST(0,COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-COALESCE(oi.supplier_paid_amount,0))::numeric AS outstanding,
-          CASE WHEN COALESCE(oi.supplier_payment_term,'manual')='arrival'
-            AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
-            THEN false ELSE true END AS eligible
+          CASE WHEN COALESCE(oi.cost_price,0)>0
+            THEN GREATEST(0,COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-COALESCE(oi.supplier_paid_amount,0))
+            ELSE 0 END::numeric AS outstanding,
+          CASE WHEN COALESCE(oi.cost_price,0)<=0 THEN false
+            WHEN COALESCE(oi.supplier_payment_term,'manual')='arrival'
+              AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
+            THEN false ELSE true END AS eligible,
+          (COALESCE(oi.cost_price,0)<=0) AS needs_cost
         FROM order_items oi
         JOIN orders o ON o.id=oi.order_id
         WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false AND COALESCE(o.is_virtual,false)=false
-          AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+          AND (
+            COALESCE(oi.cost_price,0)<=0 OR
+            COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+          )
         UNION ALL
         SELECT
           COALESCE(NULLIF(e.supplier,''),'未指定供應商') AS supplier,
           GREATEST(0,COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-COALESCE(e.supplier_paid_amount,0))::numeric AS outstanding,
-          true AS eligible
+          true AS eligible,
+          false AS needs_cost
         FROM stock_purchase_extras e
         JOIN products p ON p.id=e.product_id
         WHERE e.status<>'cancelled' AND COALESCE(p.supplier_payment_term,'manual')='manual'
@@ -264,11 +329,12 @@ async function paymentDashboard(sql){
       )
       SELECT supplier,
         COALESCE(SUM(outstanding) FILTER (WHERE eligible),0)::numeric AS ready,
-        COALESCE(SUM(outstanding) FILTER (WHERE NOT eligible),0)::numeric AS waiting,
-        COUNT(*)::int AS count
+        COALESCE(SUM(outstanding) FILTER (WHERE NOT eligible AND NOT needs_cost),0)::numeric AS waiting,
+        COUNT(*)::int AS count,
+        COUNT(*) FILTER (WHERE needs_cost)::int AS unknown_count
       FROM due
       GROUP BY supplier
-      ORDER BY ready DESC,supplier ASC
+      ORDER BY unknown_count DESC,ready DESC,supplier ASC
     `,
     sql`
       SELECT
@@ -291,13 +357,14 @@ async function paymentDashboard(sql){
       LIMIT 30
     `,
   ])
-  const suppliers=supplierRows.map(r=>({supplier:r.supplier,ready:Number(r.ready||0),waiting:Number(r.waiting||0),count:Number(r.count||0)}))
+  const suppliers=supplierRows.map(r=>({supplier:r.supplier,ready:Number(r.ready||0),waiting:Number(r.waiting||0),count:Number(r.count||0),unknownCount:Number(r.unknown_count||0)}))
   const summary=summaryRows[0]||{}
   return {
     suppliers,
     summary:{
       ready:suppliers.reduce((s,r)=>s+r.ready,0),
       waiting:suppliers.reduce((s,r)=>s+r.waiting,0),
+      unknownCost:suppliers.reduce((s,r)=>s+r.unknownCount,0),
       allPaid:Number(summary.all_paid||0),
       paidNotArrived:Number(summary.paid_not_arrived||0),
     },
@@ -317,20 +384,30 @@ async function listSupplierPayables(sql,supplierName){
         oi.product_name,
         CONCAT_WS('／',NULLIF('組合：'||COALESCE(oi.spec_package,''),'組合：'),NULLIF('口味：'||COALESCE(oi.spec_flavor,''),'口味：'),NULLIF('顏色：'||COALESCE(oi.spec_color,''),'顏色：'),NULLIF('尺寸：'||COALESCE(oi.spec_size,''),'尺寸：')) AS spec,
         COALESCE(oi.qty,0)::int AS qty,
-        (COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0))::numeric AS cost,
+        COALESCE(oi.cost_price,0)::numeric AS unit_cost,
+        COALESCE(p.cost,0)::numeric AS suggested_unit_cost,
+        (COALESCE(NULLIF(oi.cost_price,0),NULLIF(p.cost,0),0)*COALESCE(oi.qty,0))::numeric AS cost,
         COALESCE(oi.supplier_paid_amount,0)::numeric AS paid,
-        GREATEST(0,COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-COALESCE(oi.supplier_paid_amount,0))::numeric AS outstanding,
+        CASE WHEN COALESCE(oi.cost_price,0)>0
+          THEN GREATEST(0,COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-COALESCE(oi.supplier_paid_amount,0))
+          ELSE 0 END::numeric AS outstanding,
         COALESCE(oi.supplier_payment_term,'manual') AS term,
         (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0) AS arrived,
-        CASE WHEN COALESCE(oi.supplier_payment_term,'manual')='arrival'
-          AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
+        CASE WHEN COALESCE(oi.cost_price,0)<=0 THEN false
+          WHEN COALESCE(oi.supplier_payment_term,'manual')='arrival'
+            AND NOT (COALESCE(oi.arrived_qty,0)>=COALESCE(oi.qty,0) AND COALESCE(oi.qty,0)>0)
           THEN false ELSE true END AS eligible,
+        (COALESCE(oi.cost_price,0)<=0) AS needs_cost,
         false AS is_stock_purchase
       FROM order_items oi
       JOIN orders o ON o.id=oi.order_id
+      LEFT JOIN products p ON p.id=oi.product_id
       WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false AND COALESCE(o.is_virtual,false)=false
         AND COALESCE(NULLIF(oi.supplier,''),'未指定供應商')=${supplier}
-        AND COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+        AND (
+          COALESCE(oi.cost_price,0)<=0 OR
+          COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
+        )
       UNION ALL
       SELECT
         ('stock:'||e.legacy_id)::text AS key,
@@ -339,12 +416,15 @@ async function listSupplierPayables(sql,supplierName){
         COALESCE(NULLIF(e.supplier,''),'未指定供應商') AS supplier,
         e.product_name,COALESCE(NULLIF(e.spec_label,''),'一般規格') AS spec,
         COALESCE(e.ordered_qty,0)::int AS qty,
+        COALESCE(e.unit_cost,0)::numeric AS unit_cost,
+        COALESCE(e.unit_cost,0)::numeric AS suggested_unit_cost,
         (COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0))::numeric AS cost,
         COALESCE(e.supplier_paid_amount,0)::numeric AS paid,
         GREATEST(0,COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-COALESCE(e.supplier_paid_amount,0))::numeric AS outstanding,
         'manual'::text AS term,
         (COALESCE(e.received_qty,0)>=COALESCE(e.ordered_qty,0) AND COALESCE(e.ordered_qty,0)>0) AS arrived,
         true AS eligible,
+        false AS needs_cost,
         true AS is_stock_purchase
       FROM stock_purchase_extras e
       JOIN products p ON p.id=e.product_id
@@ -352,13 +432,13 @@ async function listSupplierPayables(sql,supplierName){
         AND COALESCE(NULLIF(e.supplier,''),'未指定供應商')=${supplier}
         AND COALESCE(e.supplier_paid_amount,0)<COALESCE(e.unit_cost,0)*COALESCE(e.ordered_qty,0)-0.01
     )
-    SELECT * FROM due ORDER BY eligible DESC,order_date ASC,key ASC
+    SELECT * FROM due ORDER BY needs_cost DESC,eligible DESC,order_date ASC,key ASC
   `
   return rows.map(r=>({
     key:r.key,order_id:r.order_id||'',item_index:Number(r.item_index||0),extra_id:r.extra_id||'',customer_name:r.customer_name||'',order_date:r.order_date,
     supplier:r.supplier||'未指定供應商',product_name:r.product_name||'未命名商品',spec:r.spec||'一般規格',qty:Number(r.qty||0),
-    cost:Number(r.cost||0),paid:Number(r.paid||0),outstanding:Number(r.outstanding||0),term:r.term||'manual',arrived:r.arrived===true,
-    isEligible:r.eligible===true,isStockPurchase:r.is_stock_purchase===true,
+    unitCost:Number(r.unit_cost||0),suggestedUnitCost:Number(r.suggested_unit_cost||0),cost:Number(r.cost||0),paid:Number(r.paid||0),outstanding:Number(r.outstanding||0),term:r.term||'manual',arrived:r.arrived===true,
+    needsCost:r.needs_cost===true,isEligible:r.eligible===true,isStockPurchase:r.is_stock_purchase===true,
   }))
 }
 
@@ -372,6 +452,7 @@ export default async function handler(req,res){
     const action=text(req.body?.action)
     if(action==='sync') return res.status(200).json({ok:true,result:await syncPayment(sql,req.body?.row||{})})
     if(action==='create') return res.status(200).json({ok:true,result:await createPayment(sql,req.body||{})})
+    if(action==='update_cost') return res.status(200).json({ok:true,result:await updateOrderItemCost(sql,req.body||{})})
     if(action==='list') return res.status(200).json({ok:true,rows:await listPayments(sql)})
     if(action==='list_stock_payables') return res.status(200).json({ok:true,rows:await listStockPayables(sql)})
     if(action==='dashboard') return res.status(200).json({ok:true,...await paymentDashboard(sql)})
