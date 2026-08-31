@@ -89,6 +89,18 @@
       "ui_changes": ["src/components/StockAssetPanel.jsx","src/App.jsx: /reports 掛載現貨庫存資產區塊"],
       "data_migration": "無。全部為 Neon 唯讀 SQL 聚合與前端顯示，不改寫庫存、訂單或付款資料。",
       "rollback": "移除 StockAssetPanel 與 /reports 掛載，並將 stock_support 還原為原本只回傳待入庫與庫存流水；不需資料庫 rollback。"
+    },
+    {
+      "version": "V25",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "未出貨報表的組合小計將訂貨件數移到品名旁，並改為橘色訂貨標示，方便管理者快速辨識各組合訂貨量。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合小計訂貨件數近距離顯示與訂貨 badge"],
+      "data_logic": "不改變原有組合小計數量計算，只調整正式未出貨報表的呈現方式。",
+      "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "移除 V25 組合小計 DOM 樣式增強並將 APP_VERSION 還原；不需資料庫 rollback。"
     }
   ]
 }
