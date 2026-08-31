@@ -173,6 +173,18 @@
       "data_logic": "沿用既有最多 500 筆更正候選訂單，在前端依可更正品項的 product_name/name 做包含式、不分大小寫篩選；不改變到貨或供應商付款更正邏輯。",
       "data_migration": "無。純前端查詢輔助，不改寫訂單、到貨、供應商付款或庫存資料。",
       "rollback": "移除 OrdersCorrectable 的 productSearch/visibleCandidates 與搜尋框，並將 APP_VERSION 還原為 V30；不需資料庫 rollback。"
+    },
+    {
+      "version": "V32",
+      "date": "2026-08-31",
+      "type": "ui",
+      "summary": "放大到貨／供應商付款更正的商品名稱搜尋框，提升桌機與 iPad 點選及輸入易用性。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/OrdersCorrectable.jsx: 搜尋區高度調整為 48px、字體 16px、放大搜尋圖示與內距"],
+      "data_logic": "不修改 V31 商品名稱搜尋篩選條件與更正候選資料，只調整搜尋框視覺尺寸。",
+      "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、供應商付款或庫存資料。",
+      "rollback": "將 OrdersCorrectable 搜尋框樣式還原為 V31 並將 APP_VERSION 還原為 V31；不需資料庫 rollback。"
     }
   ]
 }

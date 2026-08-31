@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第31版：到貨／供應商付款更正新增商品名稱搜尋，V31 Registry 已同步。
-const APP_VERSION = '第31版｜2026/08/31'
+// 第32版：到貨／供應商付款更正的商品搜尋框放大，V32 Registry 已同步。
+const APP_VERSION = '第32版｜2026/08/31'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
