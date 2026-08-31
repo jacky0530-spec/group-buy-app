@@ -185,6 +185,23 @@
       "data_logic": "不修改 V31 商品名稱搜尋篩選條件與更正候選資料，只調整搜尋框視覺尺寸。",
       "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、供應商付款或庫存資料。",
       "rollback": "將 OrdersCorrectable 搜尋框樣式還原為 V31 並將 APP_VERSION 還原為 V31；不需資料庫 rollback。"
+    },
+    {
+      "version": "V33",
+      "date": "2026-09-01",
+      "type": "finance",
+      "summary": "供應商延後請款改以訂單商品成本在原銷售月份認列，付款中心新增成本待確認與單位成本補正；實際匯款日期只影響應付款與現金流。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-edit.js: 建立／編輯預購訂單時，cost_price 缺值或為 0 會回退規格成本／商品成本作為訂單成本快照",
+        "api/neon-payments-runtime.js: dashboard / supplier_payables 納入成本待確認品項，新增 update_cost 修正訂單品項單位成本，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/pages/SupplierPayments.jsx: 新增成本待確認統計、單位成本輸入與儲存功能，輸入框沿用 48px／16px 標準"
+      ],
+      "data_logic": "損益仍依訂單銷售／出貨月份與 order_items.cost_price 計算；供應商實際付款不重複列為當月銷貨成本。帳單到達後更新 cost_price/cost_subtotal，報表依原 order_date/shipped 認列期間重新計算毛利。成本未知的品項不可付款，必須先確認單位成本。",
+      "data_migration": "無自動歷史資料回填、無 schema migration。既有 cost_price=0 品項會在供應商付款中心顯示成本待確認，可參考目前商品成本後人工確認；不直接改寫既有歷史成本。",
+      "rollback": "還原 V33 的 neon-order-edit 成本回退、neon-payments-runtime update_cost/成本待確認查詢與 SupplierPayments UI；不需資料庫 rollback。"
     }
   ]
 }

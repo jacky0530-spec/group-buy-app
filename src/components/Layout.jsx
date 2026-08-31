@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第32版：到貨／供應商付款更正的商品搜尋框放大，V32 Registry 已同步。
-const APP_VERSION = '第32版｜2026/08/31'
+// 第33版：供應商延後請款改採訂單成本認列，並可於付款中心補正實際單位成本，V33 Registry 已同步。
+const APP_VERSION = '第33版｜2026/09/01'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

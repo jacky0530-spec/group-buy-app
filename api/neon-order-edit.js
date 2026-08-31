@@ -20,6 +20,20 @@ async function productUuid(sql,legacyId){
   return rows[0]?.id||null
 }
 
+async function resolvedItemCost(sql,productId,spec,suppliedCost){
+  const direct=Math.max(0,num(suppliedCost))
+  if(direct>0)return direct
+  if(!productId)return 0
+  const rows=await sql`SELECT cost,price_options FROM products WHERE id=${productId} LIMIT 1`
+  const product=rows[0]||{}
+  const options=Array.isArray(product.price_options)?product.price_options:[]
+  const packageLabel=text(spec?.package)
+  const option=packageLabel?options.find(row=>text(row?.label)===packageLabel):null
+  const optionCost=Math.max(0,num(option?.cost))
+  if(optionCost>0)return optionCost
+  return Math.max(0,num(product.cost))
+}
+
 async function customerUuid(sql,legacyId){
   if(!legacyId)return null
   const rows=await sql`SELECT id FROM customers WHERE legacy_id=${text(legacyId)} LIMIT 1`
@@ -48,7 +62,7 @@ async function insertItems(sql,orderId,items,{preserve=[]}={}){
     const spec=cleanSpec(item)
     const qty=Math.max(1,Math.trunc(num(item.qty)||1))
     const sale=num(item.sale_price??item.price)
-    const cost=num(item.cost_price)
+    const cost=await resolvedItemCost(sql,productId,spec,item.cost_price)
     const same=old&&text(old.product_id)===legacyProduct&&sameSpec(spec,{package:old.spec_package,flavor:old.spec_flavor,color:old.spec_color,size:old.spec_size})
     const originalQty=same?Math.max(1,Math.trunc(num(old.original_qty??old.qty)||qty)):qty
     const paid=same?Math.max(0,num(old.supplier_paid_amount)):0
@@ -130,8 +144,11 @@ async function editOrder(sql,id,data){
     if(!next) throw new Error(`第 ${old.line_no} 項已有供應商付款，不可刪除`)
     const nextProduct=text(next.original_product_id||next.product_id||next.id).replace(/^stock:/,'')
     const oldSpec={package:old.spec_package,flavor:old.spec_flavor,color:old.spec_color,size:old.spec_size}
-    if(nextProduct!==text(old.product_id)||!sameSpec(cleanSpec(next),oldSpec)) throw new Error(`第 ${old.line_no} 項已有供應商付款，不可更換商品或規格`)
-    const nextCost=num(next.cost_price)*Math.max(1,Math.trunc(num(next.qty)||1))
+    const nextSpec=cleanSpec(next)
+    if(nextProduct!==text(old.product_id)||!sameSpec(nextSpec,oldSpec)) throw new Error(`第 ${old.line_no} 項已有供應商付款，不可更換商品或規格`)
+    const nextProductId=await productUuid(sql,nextProduct)
+    const nextUnitCost=await resolvedItemCost(sql,nextProductId,nextSpec,next.cost_price)
+    const nextCost=nextUnitCost*Math.max(1,Math.trunc(num(next.qty)||1))
     if(paid>nextCost+0.01) throw new Error(`第 ${old.line_no} 項已付供應商 ${paid} 元，修改後成本不可低於已付款金額`)
   }
   const customerId=await customerUuid(sql,data.customer_id)
