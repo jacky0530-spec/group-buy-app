@@ -109,11 +109,11 @@ export default function PendingProductReportFiltered() {
     return () => observer.disconnect()
   },[])
 
-  // V26 hotfix：V25 訂貨 badge 每個 DOM 節點只處理一次，避免 MutationObserver 自我觸發形成無限迴圈。
+  // V27：組合小計維持原本「X 件」文字，只把件數靠近品名；不改寫文字、不加 badge。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
-    const compactComboSummary = () => {
+    const alignComboSummary = () => {
       const title = Array.from(root.querySelectorAll('div')).find(el => String(el.textContent || '').trim() === '組合小計')
       const body = title?.nextElementSibling
       if (!body) return
@@ -121,29 +121,11 @@ export default function PendingProductReportFiltered() {
         if (!(row instanceof HTMLElement)) return
         row.style.justifyContent = 'flex-start'
         row.style.alignItems = 'center'
-        row.style.flexWrap = 'wrap'
-        row.style.gap = '8px'
-        const qty = row.querySelector('strong')
-        if (!qty || qty.dataset.pendingOrderBadge === '1') return
-        const match = String(qty.textContent || '').match(/(\d+(?:\.\d+)?)\s*件/)
-        if (!match) return
-        qty.dataset.pendingOrderBadge = '1'
-        qty.textContent = `訂貨 ${match[1]} 件`
-        qty.style.display = 'inline-flex'
-        qty.style.alignItems = 'center'
-        qty.style.marginLeft = '4px'
-        qty.style.padding = '3px 9px'
-        qty.style.borderRadius = '999px'
-        qty.style.background = '#fff7ed'
-        qty.style.border = '1px solid #fdba74'
-        qty.style.color = '#c2410c'
-        qty.style.fontSize = '12px'
-        qty.style.fontWeight = '900'
-        qty.style.whiteSpace = 'nowrap'
+        row.style.gap = '20px'
       })
     }
-    compactComboSummary()
-    const observer = new MutationObserver(compactComboSummary)
+    alignComboSummary()
+    const observer = new MutationObserver(alignComboSummary)
     observer.observe(root,{ childList:true,subtree:true })
     return () => observer.disconnect()
   },[])
