@@ -101,6 +101,18 @@
       "data_logic": "不改變原有組合小計數量計算，只調整正式未出貨報表的呈現方式。",
       "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "移除 V25 組合小計 DOM 樣式增強並將 APP_VERSION 還原；不需資料庫 rollback。"
+    },
+    {
+      "version": "V26",
+      "date": "2026-08-31",
+      "type": "bugfix",
+      "summary": "修正 V25 組合小計訂貨 badge 的 MutationObserver 反覆重寫同一文字節點，造成未出貨報表前端卡在 Neon SQL 查詢中的問題。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 訂貨 badge 增加一次性 DOM 處理標記，避免 observer 自我觸發"],
+      "data_logic": "保留 V25 的訂貨件數計算與橘色標示，只阻止同一 badge DOM 節點被重複改寫。",
+      "data_migration": "無。純前端 hotfix，不改寫訂單、到貨、庫存或付款資料。",
+      "rollback": "移除 V26 的 data-pending-order-badge 一次性判斷即可；不需資料庫 rollback。"
     }
   ]
 }
