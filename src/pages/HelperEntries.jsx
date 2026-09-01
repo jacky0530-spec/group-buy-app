@@ -66,7 +66,9 @@ export default function HelperEntries() {
     pending:a.pending+Number(r.pending||0),
     cancelled:a.cancelled+Number(r.cancelled||0),
     virtual:a.virtual+Number(r.virtual||0),
-  }),{total:0,converted:0,pending:0,cancelled:0,virtual:0}),[stats])
+    formal:a.formal+Number(r.formal||0),
+    payUnits:a.payUnits+Number(r.pay_units||0),
+  }),{total:0,converted:0,pending:0,cancelled:0,virtual:0,formal:0,payUnits:0}),[stats])
 
   return <div className="animate-fade">
     <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:18}}>
@@ -81,7 +83,7 @@ export default function HelperEntries() {
     </div>
 
     <div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',padding:12,borderRadius:10,marginBottom:14,fontSize:13,color:'#065f46'}}>
-      新版流程會同時寫入正式訂單與小幫手登記紀錄。此頁現在直接從資料庫依月份統計，不再先下載全部歷史資料到瀏覽器。
+      薪資計算規則：正式訂單依商品數量計算（例如 ×5 就算 5）；虛擬訂單維持每筆登記算 1。舊待確認與已取消不列入薪資。
     </div>
 
     <div className="card" style={{marginBottom:14}}>
@@ -96,17 +98,19 @@ export default function HelperEntries() {
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
       <div style={{background:'var(--indigo-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>當月登記筆數</div><strong style={{fontSize:26,color:'var(--indigo)'}}>{totals.total}</strong></div>
       <div style={{background:'var(--emerald-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>已建立實際訂單</div><strong style={{fontSize:26,color:'var(--emerald)'}}>{totals.converted}</strong></div>
+      <div style={{background:'#eefbf4',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>正式商品數量</div><strong style={{fontSize:26,color:'#047857'}}>{totals.formal}</strong></div>
+      <div style={{background:'#fff1f2',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>虛擬薪資筆數</div><strong style={{fontSize:26,color:'#be123c'}}>{totals.virtual}</strong></div>
+      <div style={{background:'#f5f3ff',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>薪資計算數量</div><strong style={{fontSize:26,color:'#6d28d9'}}>{totals.payUnits}</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>目前 1 單位 = NT$1</div></div>
       <div style={{background:'var(--amber-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>舊待確認</div><strong style={{fontSize:26,color:'#b45309'}}>{totals.pending}</strong></div>
-      <div style={{background:'#fff1f2',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>虛擬訂單</div><strong style={{fontSize:26,color:'#be123c'}}>{totals.virtual}</strong></div>
     </div>
 
     <div className="card" style={{marginBottom:14}}>
       <div className="card-header"><strong>{month || '全部月份'} 小幫手薪資統計</strong></div>
       <div className="table-container"><table>
-        <thead><tr><th>小幫手</th><th>登記筆數</th><th>已建立訂單</th><th>正式</th><th>虛擬</th><th>舊待確認</th><th>已取消</th><th>成功率</th></tr></thead>
+        <thead><tr><th>小幫手</th><th>登記筆數</th><th>已建立訂單</th><th>正式數量</th><th>虛擬筆數</th><th>薪資數量</th><th>薪資</th><th>舊待確認</th><th>已取消</th><th>成功率</th></tr></thead>
         <tbody>
-          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td>{r.formal}</td><td>{r.virtual}</td><td>{r.pending}</td><td>{r.cancelled}</td><td>{r.total?`${Math.round(Number(r.converted||0)/Number(r.total||1)*100)}%`:'—'}</td></tr>)}
-          {!loading&&!stats.length&&<tr><td colSpan={8} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>此月份沒有小幫手登記資料</td></tr>}
+          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td><strong>{r.formal}</strong></td><td>{r.virtual}</td><td><strong style={{color:'#6d28d9'}}>{r.pay_units}</strong></td><td><strong>{money(r.pay_units)}</strong></td><td>{r.pending}</td><td>{r.cancelled}</td><td>{r.total?`${Math.round(Number(r.converted||0)/Number(r.total||1)*100)}%`:'—'}</td></tr>)}
+          {!loading&&!stats.length&&<tr><td colSpan={10} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>此月份沒有小幫手登記資料</td></tr>}
         </tbody>
       </table></div>
     </div>

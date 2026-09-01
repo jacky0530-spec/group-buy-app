@@ -215,6 +215,18 @@
       "data_logic": "實際售價為唯讀參考欄位，不寫回 incoming_batch_items、orders 或 order_items，不影響到貨數量、成本、供應商付款與損益。",
       "data_migration": "無。舊到貨批次亦可由目前商品資料顯示售價。",
       "rollback": "移除 IncomingBatches 的商品價格載入、salePriceOf 與實際售價欄，並將 APP_VERSION 還原為 V34；不需資料庫 rollback。"
+    },
+    {
+      "version": "V36",
+      "date": "2026-09-01",
+      "type": "finance",
+      "summary": "修正小幫手薪資統計：正式訂單改依商品數量計算，虛擬訂單維持依登記筆數計算。",
+      "database_changes": [],
+      "api_changes": ["api/neon-helper-admin.js: dashboard 新增 formal_units / virtual_units / pay_units 聚合；正式已建立訂單依 helper_entries items.qty 加總，虛擬已建立訂單每筆算 1，不新增 Serverless Function"],
+      "ui_changes": ["src/pages/HelperEntries.jsx: 分開顯示登記筆數、正式商品數量、虛擬薪資筆數、薪資計算數量與薪資金額"],
+      "data_logic": "登記筆數與轉單成功率仍維持 COUNT(*) 作流程 KPI；薪資數量獨立計算：status='converted' 且非虛擬時加總每個 item.qty，status='converted' 且虛擬時每筆計 1；舊待確認與已取消不列入薪資。薪資目前 1 單位=NT$1。",
+      "data_migration": "無。只修改 Neon 唯讀統計 SQL 與前端顯示，既有歷史 helper_entries 會依新公式即時重算，不回寫資料。",
+      "rollback": "將 helperDashboard 恢復 V35 的 COUNT(*) formal/virtual 統計，移除 HelperEntries 的薪資數量欄位並將 APP_VERSION 還原為 V35；不需資料庫 rollback。"
     }
   ]
 }
