@@ -53,6 +53,21 @@ async function helperDashboard(sql,body){
   const offset=Math.max(0,int(body?.offset,0))
   const [stats,rows]=await Promise.all([
     sql`
+      WITH helper_rows AS (
+        SELECT h.*,
+          CASE
+            WHEN h.status='converted' AND COALESCE(h.is_virtual,false)=false THEN COALESCE((
+              SELECT SUM(GREATEST(0,
+                CASE WHEN COALESCE(item->>'qty','') ~ '^[0-9]+([.][0-9]+)?$' THEN (item->>'qty')::numeric ELSE 0 END
+              ))
+              FROM jsonb_array_elements(COALESCE(h.items,h.payload->'items','[]'::jsonb)) AS item
+            ),0)
+            ELSE 0
+          END::numeric AS formal_units,
+          CASE WHEN h.status='converted' AND COALESCE(h.is_virtual,false)=true THEN 1 ELSE 0 END::int AS virtual_units
+        FROM helper_entries h
+        WHERE (${month}='' OR to_char(h.created_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month})
+      )
       SELECT
         COALESCE(NULLIF(h.created_by_uid,''),'name:'||COALESCE(NULLIF(h.created_by_name,''),'unknown')) AS key,
         COALESCE(h.created_by_uid,'') AS uid,
@@ -61,12 +76,12 @@ async function helperDashboard(sql,body){
         COUNT(*) FILTER (WHERE h.status='converted')::int AS converted,
         COUNT(*) FILTER (WHERE h.status NOT IN ('converted','cancelled'))::int AS pending,
         COUNT(*) FILTER (WHERE h.status='cancelled')::int AS cancelled,
-        COUNT(*) FILTER (WHERE COALESCE(h.is_virtual,false)=true)::int AS virtual,
-        COUNT(*) FILTER (WHERE COALESCE(h.is_virtual,false)=false)::int AS formal
-      FROM helper_entries h
-      WHERE (${month}='' OR to_char(h.created_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=${month})
+        COALESCE(SUM(h.virtual_units),0)::int AS virtual,
+        COALESCE(SUM(h.formal_units),0)::numeric AS formal,
+        (COALESCE(SUM(h.formal_units),0)+COALESCE(SUM(h.virtual_units),0))::numeric AS pay_units
+      FROM helper_rows h
       GROUP BY 1,2,3
-      ORDER BY total DESC,name ASC
+      ORDER BY pay_units DESC,total DESC,name ASC
     `,
     sql`
       SELECT h.legacy_id AS id,h.payload,h.created_by_uid,h.created_by_name,c.legacy_id AS customer_id,
@@ -93,7 +108,7 @@ async function helperDashboard(sql,body){
   ])
   const totalCount=rows.length?Number(rows[0].total_count||0):0
   return {
-    stats:stats.map(r=>({...r,total:Number(r.total||0),converted:Number(r.converted||0),pending:Number(r.pending||0),cancelled:Number(r.cancelled||0),virtual:Number(r.virtual||0),formal:Number(r.formal||0)})),
+    stats:stats.map(r=>({...r,total:Number(r.total||0),converted:Number(r.converted||0),pending:Number(r.pending||0),cancelled:Number(r.cancelled||0),virtual:Number(r.virtual||0),formal:Number(r.formal||0),pay_units:Number(r.pay_units||0)})),
     rows:rows.map(({total_count,...row})=>mapEntry(row)),
     totalCount,
     hasMore:offset+rows.length<totalCount,
