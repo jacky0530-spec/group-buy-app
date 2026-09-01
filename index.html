@@ -26,6 +26,13 @@
           font-size: 17px;
         }
       }
+      /* 第34版：全域列印規則會隱藏 animate-fade 的一般直接子層；
+         /incoming 的到貨表單位於含 .print-only 的 card 內，列印時需保留該 card。 */
+      @media print {
+        body:has(a[href="/incoming"].active) .animate-fade > .card:has(.print-only) {
+          display: block !important;
+        }
+      }
     </style>
   </head>
   <body>
