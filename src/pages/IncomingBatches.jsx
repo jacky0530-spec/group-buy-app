@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PackageCheck, Plus, Printer, RefreshCw, Search, Truck, WalletCards } from 'lucide-react'
-import { neonPaymentsRuntime } from '../lib/neonRuntime'
+import { neonPaymentsRuntime, neonRuntime } from '../lib/neonRuntime'
 import { neonOrderStatusRuntime } from '../lib/neonOrderStatusRuntime'
 import { useToast } from '../components/UI'
 
@@ -14,12 +14,24 @@ const specLabel=i=>[
 ].filter(Boolean).join('／')||'一般規格'
 const statusLabel=s=>s==='completed'?'已完成':s==='receiving'?'理貨中':s==='cancelled'?'已取消':'即將到貨'
 const payId=()=>`incoming-pay-${Date.now()}-${Math.random().toString(36).slice(2,8)}`
+const salePriceOf=(item,productMap)=>{
+  const product=productMap.get(String(item?.product_id||''))
+  if(!product)return 0
+  const packageLabel=String(item?.spec_package||'').trim()
+  if(packageLabel){
+    const option=(Array.isArray(product.price_options)?product.price_options:[]).find(o=>String(o?.label||'').trim()===packageLabel)
+    const optionPrice=Number(option?.price||0)
+    if(optionPrice>0)return optionPrice
+  }
+  return Number(product.price||0)
+}
 
 export default function IncomingBatches(){
   const toast=useToast()
   const[loading,setLoading]=useState(true)
   const[suppliers,setSuppliers]=useState([])
   const[batches,setBatches]=useState([])
+  const[products,setProducts]=useState([])
   const[selectedSupplier,setSelectedSupplier]=useState('')
   const[candidates,setCandidates]=useState([])
   const[selectedKeys,setSelectedKeys]=useState([])
@@ -38,17 +50,21 @@ export default function IncomingBatches(){
   const loadHome=useCallback(async()=>{
     setLoading(true)
     try{
-      const [c,l]=await Promise.all([
+      const [c,l,p]=await Promise.all([
         neonOrderStatusRuntime('incoming_candidates'),
         neonOrderStatusRuntime('incoming_list'),
+        neonRuntime('list_products',{includeArchived:true}),
       ])
       setSuppliers(c?.result?.suppliers||[])
       setBatches(l?.result||[])
+      setProducts(Array.isArray(p?.rows)?p.rows:[])
     }catch(e){toast('即將到貨資料載入失敗：'+e.message,'error')}
     finally{setLoading(false)}
   },[toast])
 
   useEffect(()=>{loadHome()},[loadHome])
+
+  const productMap=useMemo(()=>new Map(products.map(p=>[String(p.id||''),p])),[products])
 
   const chooseSupplier=async name=>{
     setSelectedSupplier(name);setSelectedKeys([]);setCandidates([]);setSearch('')
@@ -189,7 +205,7 @@ export default function IncomingBatches(){
 
     {activeBatch&&<div className="card" style={{marginTop:15}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap'}}><div><strong>{activeBatch.supplier}｜{statusLabel(activeBatch.status)}</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>批次 {activeBatch.id}｜預計 {activeBatch.expected_date||'未設定'}</div></div><button className="btn btn-sm btn-ghost no-print" onClick={()=>window.print()}><Printer size={14}/>列印到貨表單</button></div><div className="card-body">
       <div className="print-only" style={{marginBottom:14}}><h2>到貨表單</h2><div>供應商：{activeBatch.supplier}　批次：{activeBatch.id}　預計到貨：{activeBatch.expected_date||'—'}　完成：{activeBatch.completed_at||'—'}</div></div>
-      <div className="table-container"><table><thead><tr><th>商品 / 規格</th><th>預計</th><th>實收</th><th>單位成本</th><th>本批成本</th></tr></thead><tbody>{draftItems.map(i=><tr key={i.id}><td><div style={{fontWeight:850}}>{i.product_name}</div><div style={{fontSize:11,color:'var(--indigo)'}}>{specLabel(i)}</div></td><td>{i.expected_qty}</td><td>{activeBatch.status==='completed'?<strong>{i.received_qty}</strong>:<><input className="no-print" type="number" min="0" max={i.expected_qty} value={i.received_qty} onFocus={e=>e.currentTarget.select()} onClick={e=>e.currentTarget.select()} onChange={e=>setReceived(i.id,e.target.value)} style={{width:90}}/><span className="print-only">{i.received_qty}</span></>}</td><td>{money(i.unit_cost)}</td><td>{money(Number(i.received_qty)*Number(i.unit_cost))}</td></tr>)}</tbody></table></div>
+      <div className="table-container"><table><thead><tr><th>商品 / 規格</th><th>預計</th><th>實收</th><th>實際售價</th><th>單位成本</th><th>本批成本</th></tr></thead><tbody>{draftItems.map(i=><tr key={i.id}><td><div style={{fontWeight:850}}>{i.product_name}</div><div style={{fontSize:11,color:'var(--indigo)'}}>{specLabel(i)}</div></td><td>{i.expected_qty}</td><td>{activeBatch.status==='completed'?<strong>{i.received_qty}</strong>:<><input className="no-print" type="number" min="0" max={i.expected_qty} value={i.received_qty} onFocus={e=>e.currentTarget.select()} onClick={e=>e.currentTarget.select()} onChange={e=>setReceived(i.id,e.target.value)} style={{width:90}}/><span className="print-only">{i.received_qty}</span></>}</td><td style={{fontWeight:900,color:'var(--indigo-dark)'}}>{salePriceOf(i,productMap)>0?money(salePriceOf(i,productMap)):'—'}</td><td>{money(i.unit_cost)}</td><td>{money(Number(i.received_qty)*Number(i.unit_cost))}</td></tr>)}</tbody></table></div>
       <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginTop:12}}><div><strong>實收 {draftReceived} 件</strong>　預估成本 <strong>{money(draftAmount)}</strong></div>{activeBatch.status!=='completed'&&<div className="no-print" style={{display:'flex',gap:7,flexWrap:'wrap'}}><button className="btn btn-ghost" onClick={fillExpected}>全部符合預計數量</button><button className="btn btn-ghost" disabled={saving} onClick={saveReceiving}>儲存理貨</button><button className="btn btn-primary" disabled={saving||draftReceived<=0} onClick={completeBatch}><PackageCheck size={15}/>{saving?'處理中...':'完成本批到貨'}</button></div>}</div>
 
       {activeBatch.status==='completed'&&<div className="no-print" style={{marginTop:16,paddingTop:14,borderTop:'1px solid var(--border)'}}><div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}><WalletCards size={18}/><strong>本批付款</strong></div>{paymentLines.length===0?<div style={{padding:12,borderRadius:10,background:'var(--emerald-light)',fontSize:12}}>若本批剛完成且有可手動付款明細，系統會自動帶入；若沒有，代表已付款或付款條件由系統自動處理。</div>:<><div style={{background:'var(--amber-light)',padding:10,borderRadius:10,fontSize:12,marginBottom:10}}>本批可付款 {paymentLines.length} 筆，共 <strong>{money(paymentLines.reduce((s,l)=>s+Number(l.outstanding||0),0))}</strong>。只包含本批實際到貨影響的訂單。</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:9}}><div className="form-group"><label>付款日期</label><input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/></div><div className="form-group"><label>本次付款金額</label><input type="number" min="1" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/></div></div><div className="form-group"><label>付款備註</label><input value={paymentNote} onChange={e=>setPaymentNote(e.target.value)} placeholder="例：本批貨到全額付款"/></div><button className="btn btn-primary" disabled={paying} onClick={payBatch}><Truck size={15}/>{paying?'付款處理中...':'完成本批付款'}</button></>}</div>}

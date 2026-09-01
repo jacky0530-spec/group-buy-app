@@ -14,15 +14,9 @@
       "date": "2026-08-30",
       "type": "baseline",
       "summary": "建立目前正式系統可移轉基準。",
-      "database_objects": [
-        "accounts","customers","products","orders","order_items","helper_entries","stock_inventory","inventory_transactions","stock_purchase_extras","supplier_payments","supplier_payment_allocations","expenses","incoming_batches","incoming_batch_items"
-      ],
-      "critical_fields": [
-        "order_items.qty","order_items.original_qty","order_items.arrived_qty","order_items.arrived_at","order_items.cost_price","order_items.supplier_paid_amount","stock_inventory.average_cost"
-      ],
-      "important_logic": [
-        "訂單到貨數量以 order_items.arrived_qty 為主","供應商付款需保留 supplier_payment_allocations","庫存需同時保留 stock_inventory 與 inventory_transactions","即將到貨使用 incoming_batches / incoming_batch_items","Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"
-      ],
+      "database_objects": ["accounts","customers","products","orders","order_items","helper_entries","stock_inventory","inventory_transactions","stock_purchase_extras","supplier_payments","supplier_payment_allocations","expenses","incoming_batches","incoming_batch_items"],
+      "critical_fields": ["order_items.qty","order_items.original_qty","order_items.arrived_qty","order_items.arrived_at","order_items.cost_price","order_items.supplier_paid_amount","stock_inventory.average_cost"],
+      "important_logic": ["訂單到貨數量以 order_items.arrived_qty 為主","供應商付款需保留 supplier_payment_allocations","庫存需同時保留 stock_inventory 與 inventory_transactions","即將到貨使用 incoming_batches / incoming_batch_items","Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"],
       "rollback": "此筆為基準文件，無資料庫變更。"
     },
     {
@@ -192,13 +186,8 @@
       "type": "finance",
       "summary": "供應商延後請款改以訂單商品成本在原銷售月份認列，付款中心新增成本待確認與單位成本補正；實際匯款日期只影響應付款與現金流。",
       "database_changes": [],
-      "api_changes": [
-        "api/neon-order-edit.js: 建立／編輯預購訂單時，cost_price 缺值或為 0 會回退規格成本／商品成本作為訂單成本快照",
-        "api/neon-payments-runtime.js: dashboard / supplier_payables 納入成本待確認品項，新增 update_cost 修正訂單品項單位成本，不新增 Serverless Function"
-      ],
-      "ui_changes": [
-        "src/pages/SupplierPayments.jsx: 新增成本待確認統計、單位成本輸入與儲存功能，輸入框沿用 48px／16px 標準"
-      ],
+      "api_changes": ["api/neon-order-edit.js: 建立／編輯預購訂單時，cost_price 缺值或為 0 會回退規格成本／商品成本作為訂單成本快照","api/neon-payments-runtime.js: dashboard / supplier_payables 納入成本待確認品項，新增 update_cost 修正訂單品項單位成本，不新增 Serverless Function"],
+      "ui_changes": ["src/pages/SupplierPayments.jsx: 新增成本待確認統計、單位成本輸入與儲存功能，輸入框沿用 48px／16px 標準"],
       "data_logic": "損益仍依訂單銷售／出貨月份與 order_items.cost_price 計算；供應商實際付款不重複列為當月銷貨成本。帳單到達後更新 cost_price/cost_subtotal，報表依原 order_date/shipped 認列期間重新計算毛利。成本未知的品項不可付款，必須先確認單位成本。",
       "data_migration": "無自動歷史資料回填、無 schema migration。既有 cost_price=0 品項會在供應商付款中心顯示成本待確認，可參考目前商品成本後人工確認；不直接改寫既有歷史成本。",
       "rollback": "還原 V33 的 neon-order-edit 成本回退、neon-payments-runtime update_cost/成本待確認查詢與 SupplierPayments UI；不需資料庫 rollback。"
@@ -214,6 +203,18 @@
       "data_logic": "不修改 incoming_batches、incoming_batch_items、到貨數量、供應商付款或任何資料查詢；只修正列印 CSS 可見性。",
       "data_migration": "無。純前端列印樣式修正。",
       "rollback": "移除 index.html 第34版 /incoming @media print 規則並將 APP_VERSION 還原為 V33；不需資料庫 rollback。"
+    },
+    {
+      "version": "V35",
+      "date": "2026-09-01",
+      "type": "ui",
+      "summary": "即將到貨的到貨表單新增實際售價欄，方便點貨後依商品／規格標示售價。",
+      "database_changes": [],
+      "api_changes": ["沿用既有 api/neon-runtime.js list_products 讀取商品與價格，不新增 Serverless Function"],
+      "ui_changes": ["src/pages/IncomingBatches.jsx: 到貨表單在實收後新增實際售價欄，規格組合優先使用 price_options 售價，否則使用商品售價；畫面與列印皆顯示"],
+      "data_logic": "實際售價為唯讀參考欄位，不寫回 incoming_batch_items、orders 或 order_items，不影響到貨數量、成本、供應商付款與損益。",
+      "data_migration": "無。舊到貨批次亦可由目前商品資料顯示售價。",
+      "rollback": "移除 IncomingBatches 的商品價格載入、salePriceOf 與實際售價欄，並將 APP_VERSION 還原為 V34；不需資料庫 rollback。"
     }
   ]
 }

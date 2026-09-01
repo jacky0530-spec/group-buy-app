@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第34版：修正即將到貨表單列印預覽空白，V34 Registry 已同步。
-const APP_VERSION = '第34版｜2026/09/01'
+// 第35版：即將到貨表單新增實際售價欄位，方便點貨後標價，V35 Registry 已同步。
+const APP_VERSION = '第35版｜2026/09/01'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
