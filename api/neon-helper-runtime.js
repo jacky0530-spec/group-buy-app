@@ -7,6 +7,7 @@ const int=(v,d=0)=>Number.isFinite(Number(v))?Math.trunc(Number(v)):d
 const iso=v=>{if(!v)return null;if(typeof v==='string')return v;if(v?.seconds)return new Date(Number(v.seconds)*1000).toISOString();return null}
 const j=v=>JSON.stringify(v??{})
 const nowISO=()=>new Date().toISOString()
+let productDeadlineSchemaReady=false
 
 async function requireAccount(sql,auth){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
@@ -20,9 +21,21 @@ function requireStaff(account){
   if(!['owner','staff'].includes(account?.role)) throw new Error('權限不足')
 }
 async function ensureProductDeadlineSchema(sql){
-  await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS order_deadline date`
+  if(productDeadlineSchemaReady)return
+  const columns=await sql`
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='products' AND column_name='order_deadline'
+    LIMIT 1`
+  if(!columns.length) await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS order_deadline date`
+  productDeadlineSchemaReady=true
 }
-const deadlineText=v=>v?String(v).slice(0,10):''
+const deadlineText=v=>{
+  if(!v)return''
+  if(typeof v==='string')return v.slice(0,10)
+  if(v instanceof Date&&!Number.isNaN(v.getTime()))return v.toISOString().slice(0,10)
+  const parsed=new Date(v)
+  return Number.isNaN(parsed.getTime())?String(v).slice(0,10):parsed.toISOString().slice(0,10)
+}
 
 async function customerRow(sql,legacyId){
   if(!legacyId)return null
