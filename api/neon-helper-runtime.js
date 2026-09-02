@@ -16,6 +16,13 @@ async function requireAccount(sql,auth){
   if(!['owner','staff','helper'].includes(account.role)) throw new Error('權限不足')
   return account
 }
+function requireStaff(account){
+  if(!['owner','staff'].includes(account?.role)) throw new Error('權限不足')
+}
+async function ensureProductDeadlineSchema(sql){
+  await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS order_deadline date`
+}
+const deadlineText=v=>v?String(v).slice(0,10):''
 
 async function customerRow(sql,legacyId){
   if(!legacyId)return null
@@ -25,12 +32,16 @@ async function customerRow(sql,legacyId){
 async function customerUuid(sql,legacyId){return (await customerRow(sql,legacyId))?.id||null}
 async function orderUuid(sql,legacyId){if(!legacyId)return null;const rows=await sql`SELECT id FROM orders WHERE legacy_id=${legacyId} LIMIT 1`;return rows[0]?.id||null}
 
-async function productSnapshot(sql,line={}){
+async function productSnapshot(sql,line={},enforceDeadline=false){
   const legacy=text(line.product_id||line.id).replace(/^stock:/,'')
   if(!legacy) throw new Error('商品資料不完整')
-  const rows=await sql`SELECT id,legacy_id,name,category,supplier,price,cost,price_options,supplier_payment_term FROM products WHERE legacy_id=${legacy} AND active<>false LIMIT 1`
+  const rows=await sql`
+    SELECT id,legacy_id,name,category,supplier,price,cost,price_options,supplier_payment_term,order_deadline,
+      (order_deadline IS NOT NULL AND order_deadline < (now() AT TIME ZONE 'Asia/Taipei')::date) AS helper_closed
+    FROM products WHERE legacy_id=${legacy} AND active<>false LIMIT 1`
   const p=rows[0]
   if(!p) throw new Error(`商品「${text(line.product_name||line.name)||legacy}」不存在或已封存`)
+  if(enforceDeadline&&p.helper_closed===true) throw new Error(`商品「${p.name}」已於 ${deadlineText(p.order_deadline)} 結單，小幫手不可再開單`)
   const spec=line.spec||{}
   const packageLabel=text(spec.package)
   const options=Array.isArray(p.price_options)?p.price_options:[]
@@ -47,19 +58,37 @@ async function productSnapshot(sql,line={}){
   }
 }
 
-async function hydrateItems(sql,lines=[]){
+async function hydrateItems(sql,lines=[],enforceDeadline=false){
+  await ensureProductDeadlineSchema(sql)
   const items=[]
-  for(const line of lines) items.push(await productSnapshot(sql,line))
+  for(const line of lines) items.push(await productSnapshot(sql,line,enforceDeadline))
   if(!items.length) throw new Error('至少需要一個商品')
   return items
 }
 
-async function upsertHelperPreorder(sql,auth,payload,{editing=false}={}){
+async function assertHelperNewOrderProductsOpen(sql,account,lines=[]){
+  if(account?.role!=='helper') return
+  await ensureProductDeadlineSchema(sql)
+  const ids=[...new Set((Array.isArray(lines)?lines:[]).map(line=>text(line?.product_id||line?.id).replace(/^stock:/,'')).filter(Boolean))]
+  if(!ids.length)return
+  const rows=await sql`
+    SELECT legacy_id AS id,name,order_deadline
+    FROM products
+    WHERE legacy_id=ANY(${ids}::text[])
+      AND active<>false
+      AND order_deadline IS NOT NULL
+      AND order_deadline < (now() AT TIME ZONE 'Asia/Taipei')::date
+    ORDER BY name ASC LIMIT 1`
+  if(rows[0]) throw new Error(`商品「${rows[0].name}」已於 ${deadlineText(rows[0].order_deadline)} 結單，小幫手不可再開單`)
+}
+
+async function upsertHelperPreorder(sql,auth,account,payload,{editing=false}={}){
   const orderLegacy=text(payload.order_id),entryLegacy=text(payload.entry_id||payload.helper_entry_id)
   if(!orderLegacy||!entryLegacy) throw new Error('缺少訂單識別碼')
   const customer=await customerRow(sql,text(payload.customer_id))
   if(!customer) throw new Error('找不到客戶')
-  const items=await hydrateItems(sql,Array.isArray(payload.items)?payload.items:[])
+  const sourceLines=Array.isArray(payload.items)?payload.items:[]
+  const items=await hydrateItems(sql,sourceLines,account?.role==='helper'&&!editing)
   const total=items.reduce((s,x)=>s+x.subtotal,0)
   const createdAt=text(payload.created_at)||nowISO()
   const displayName=text(payload.created_by_name||payload.display_name)
@@ -125,11 +154,12 @@ async function syncEntry(sql,auth,account,row){
 }
 
 function mapCatalogRows(rows){
-  return rows.map(row=>({...row,price:Number(row.price||0),shipped_out:row.shipped_out===true,price_options:(row.price_options||[]).map(option=>({label:option?.label||'',price:Number(option?.price||0)}))}))
+  return rows.map(row=>({...row,price:Number(row.price||0),order_deadline:deadlineText(row.order_deadline),shipped_out:row.shipped_out===true,price_options:(row.price_options||[]).map(option=>({label:option?.label||'',price:Number(option?.price||0)}))}))
 }
 async function listCatalog(sql){
+  await ensureProductDeadlineSchema(sql)
   const rows=await sql`
-    SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.active,p.updated_at,
+    SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.order_deadline,p.active,p.updated_at,
       CASE WHEN EXISTS (
         SELECT 1 FROM order_items oi JOIN orders o ON o.id=oi.order_id
         WHERE oi.product_id=p.id AND o.archived<>true AND o.status='shipped'
@@ -142,11 +172,13 @@ async function listCatalog(sql){
     ORDER BY p.name ASC`
   return mapCatalogRows(rows)
 }
-async function searchCatalog(sql,q,limit=30){
+async function searchCatalog(sql,q,limit=30,account=null){
+  await ensureProductDeadlineSchema(sql)
   const query=text(q).toLowerCase()
   const take=Math.min(50,Math.max(1,int(limit,30)))
+  const helperOnly=account?.role==='helper'
   const rows=await sql`
-    SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.active,p.updated_at,
+    SELECT p.legacy_id AS id,p.name,p.price,p.category,p.pricing_mode,p.spec_mode,p.spec_colors,p.spec_sizes,p.spec_flavors,p.price_options,p.order_deadline,p.active,p.updated_at,
       CASE WHEN EXISTS (
         SELECT 1 FROM order_items oi JOIN orders o ON o.id=oi.order_id
         WHERE oi.product_id=p.id AND o.archived<>true AND o.status='shipped'
@@ -156,11 +188,43 @@ async function searchCatalog(sql,q,limit=30){
       ) THEN true ELSE false END AS shipped_out
     FROM products p
     WHERE p.active<>false
+      AND (NOT ${helperOnly}::boolean OR p.order_deadline IS NULL OR p.order_deadline >= (now() AT TIME ZONE 'Asia/Taipei')::date)
       AND (${query}='' OR POSITION(${query} IN LOWER(COALESCE(p.name,'')))>0)
     ORDER BY p.name ASC
     LIMIT ${take}`
   return mapCatalogRows(rows)
 }
+
+async function listProductDeadlines(sql,body){
+  await ensureProductDeadlineSchema(sql)
+  const query=text(body?.q).toLowerCase()
+  const take=Math.min(250,Math.max(20,int(body?.limit,100)))
+  const rows=await sql`
+    SELECT legacy_id AS id,name,order_deadline,
+      CASE WHEN order_deadline IS NULL THEN 'open'
+        WHEN order_deadline < (now() AT TIME ZONE 'Asia/Taipei')::date THEN 'closed'
+        WHEN order_deadline = (now() AT TIME ZONE 'Asia/Taipei')::date THEN 'today'
+        ELSE 'scheduled' END AS deadline_status
+    FROM products
+    WHERE active<>false
+      AND (${query}='' OR POSITION(${query} IN LOWER(COALESCE(name,'')))>0)
+    ORDER BY name ASC
+    LIMIT ${take}`
+  return rows.map(r=>({...r,order_deadline:deadlineText(r.order_deadline)}))
+}
+async function setProductDeadline(sql,body){
+  await ensureProductDeadlineSchema(sql)
+  const id=text(body?.id),deadline=text(body?.order_deadline)
+  if(!id) throw new Error('缺少商品 ID')
+  if(deadline&&!/^\d{4}-\d{2}-\d{2}$/.test(deadline)) throw new Error('結單日格式不正確')
+  const rows=await sql`
+    UPDATE products SET order_deadline=NULLIF(${deadline},'')::date,updated_at=now()
+    WHERE legacy_id=${id} AND active<>false
+    RETURNING legacy_id AS id,name,order_deadline`
+  if(!rows[0]) throw new Error('找不到商品')
+  return {id:rows[0].id,name:rows[0].name,order_deadline:deadlineText(rows[0].order_deadline)}
+}
+
 async function listCustomers(sql){return sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note FROM customers WHERE active<>false ORDER BY name ASC`}
 async function searchCustomers(sql,q,limit=20){
   const query=text(q).toLowerCase()
@@ -203,21 +267,27 @@ export default async function handler(req,res){
     const account=await requireAccount(sql,auth)
     const action=text(req.body?.action)
     if(action==='catalog')return res.status(200).json({ok:true,rows:await listCatalog(sql)})
-    if(action==='search_catalog')return res.status(200).json({ok:true,rows:await searchCatalog(sql,req.body?.q,req.body?.limit)})
+    if(action==='search_catalog')return res.status(200).json({ok:true,rows:await searchCatalog(sql,req.body?.q,req.body?.limit,account)})
+    if(action==='product_deadlines'){requireStaff(account);return res.status(200).json({ok:true,rows:await listProductDeadlines(sql,req.body||{})})}
+    if(action==='set_product_deadline'){requireStaff(account);return res.status(200).json({ok:true,result:await setProductDeadline(sql,req.body||{})})}
     if(action==='customers')return res.status(200).json({ok:true,rows:await listCustomers(sql)})
     if(action==='search_customers')return res.status(200).json({ok:true,rows:await searchCustomers(sql,req.body?.q,req.body?.limit)})
     if(action==='my_entries')return res.status(200).json({ok:true,rows:await listMyEntries(sql,auth,req.body?.limit)})
     if(action==='my_pending_orders')return res.status(200).json({ok:true,rows:await listMyPendingOrders(sql,auth)})
-    if(action==='create_direct')return res.status(200).json({ok:true,result:await upsertHelperPreorder(sql,auth,req.body||{})})
+    if(action==='create_direct'){
+      await assertHelperNewOrderProductsOpen(sql,account,req.body?.items||[])
+      return res.status(200).json({ok:true,result:await upsertHelperPreorder(sql,auth,account,req.body||{})})
+    }
     if(action==='create_direct_many'){
       const rows=Array.isArray(req.body?.rows)?req.body.rows:[]
       if(!rows.length)throw new Error('沒有可建立的訂單')
       if(rows.length>100)throw new Error('單次最多建立 100 筆')
+      await assertHelperNewOrderProductsOpen(sql,account,rows.flatMap(row=>Array.isArray(row?.items)?row.items:[]))
       const created=[]
-      for(const row of rows)created.push(await upsertHelperPreorder(sql,auth,row))
+      for(const row of rows)created.push(await upsertHelperPreorder(sql,auth,account,row))
       return res.status(200).json({ok:true,rows:created})
     }
-    if(action==='update_pending')return res.status(200).json({ok:true,result:await upsertHelperPreorder(sql,auth,req.body||{},{editing:true})})
+    if(action==='update_pending')return res.status(200).json({ok:true,result:await upsertHelperPreorder(sql,auth,account,req.body||{},{editing:true})})
     if(action==='sync')return res.status(200).json({ok:true,id:await syncEntry(sql,auth,account,req.body?.row||{})})
     if(action==='sync_many'){
       const rows=Array.isArray(req.body?.rows)?req.body.rows:[]
