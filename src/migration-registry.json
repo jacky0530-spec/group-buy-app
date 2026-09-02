@@ -251,6 +251,17 @@
       "data_logic": "結單日當天仍可由小幫手開單，僅 order_deadline 小於 Asia/Taipei 當日才視為已結單。限制只套用 helper 的新開單；owner/staff 管理者不受限制。小幫手修改既有未出貨訂單不因後來超過結單日被鎖住。",
       "data_migration": "以 idempotent schema bootstrap 新增 nullable products.order_deadline，不回填既有商品；既有商品全部維持 NULL＝不限結單，不修改既有 orders、order_items 或 helper_entries。",
       "rollback": "還原 V38 的 ProductDeadlineManager、helper deadline actions／篩選／驗證並將 APP_VERSION 還原為 V37；order_deadline 欄位可保留不影響舊版，若確認無需保留再另行移除。"
+    },
+    {
+      "version": "V39",
+      "date": "2026-09-02",
+      "type": "bugfix",
+      "summary": "強化 V38 商品結單日：統一日期輸出格式，並避免每次商品搜尋都重複執行 schema DDL。",
+      "database_changes": [],
+      "api_changes": ["api/neon-helper-runtime.js: order_deadline 支援 Date／ISO 字串統一輸出 YYYY-MM-DD；ensureProductDeadlineSchema 改為先查 information_schema，僅缺欄位時 ALTER，並於同一 Serverless instance 快取完成狀態"],
+      "data_logic": "不改變 V38 結單規則：結單日當天仍可開單，只有超過 Asia/Taipei 結單日才限制 helper 新開單；owner/staff 與既有 helper pending 訂單修改仍不受限制。",
+      "data_migration": "無。products.order_deadline 欄位定義與既有資料不變，只改善日期序列化與 schema bootstrap 執行方式。",
+      "rollback": "還原 V39 的 deadlineText 與 ensureProductDeadlineSchema 實作並將 APP_VERSION 還原為 V38；不需資料庫 rollback。"
     }
   ]
 }
