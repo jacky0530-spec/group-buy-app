@@ -262,6 +262,18 @@
       "data_logic": "不改變 V38 結單規則：結單日當天仍可開單，只有超過 Asia/Taipei 結單日才限制 helper 新開單；owner/staff 與既有 helper pending 訂單修改仍不受限制。",
       "data_migration": "無。products.order_deadline 欄位定義與既有資料不變，只改善日期序列化與 schema bootstrap 執行方式。",
       "rollback": "還原 V39 的 deadlineText 與 ensureProductDeadlineSchema 實作並將 APP_VERSION 還原為 V38；不需資料庫 rollback。"
+    },
+    {
+      "version": "V40",
+      "date": "2026-09-02",
+      "type": "ui",
+      "summary": "修正商品結單日入口不易發現：結單日直接整合到商品列表與新增／編輯商品視窗。",
+      "database_changes": [],
+      "api_changes": ["沿用 V38/V39 api/neon-helper-runtime.js product_deadlines / set_product_deadline，不新增 Serverless Function"],
+      "ui_changes": ["src/components/ProductDeadlineManager.jsx: 移除商品列表最下方獨立結單日卡片；商品名稱下方直接顯示不限結單／結單日／今日結單／已結單 badge；新增與編輯商品 Modal 在商品名稱下方直接加入 48px／16px 結單日期輸入"],
+      "data_logic": "商品表單成功關閉後才同步結單日；取消、關閉或表單驗證失敗不改寫 order_deadline。新增商品有設定日期時會依商品名稱解析新商品 ID 後寫入；編輯商品直接沿用既有 product legacy_id。V38 小幫手結單限制規則不變。",
+      "data_migration": "無。不修改既有 products.order_deadline 資料，不回填商品，不改 orders/order_items/helper_entries。",
+      "rollback": "將 ProductDeadlineManager 還原 V39 的獨立結單日設定卡片，並將 APP_VERSION 還原為 V39；不需資料庫 rollback。"
     }
   ]
 }
