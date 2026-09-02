@@ -6,6 +6,7 @@ import OrderArrivalResetPatch from './components/OrderArrivalResetPatch'
 import StockAssetPanel from './components/StockAssetPanel'
 import StockValueTopCard from './components/StockValueTopCard'
 import FinanceCostWarning from './components/FinanceCostWarning'
+import ProductDeadlineManager from './components/ProductDeadlineManager'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Home from './pages/Home'
@@ -40,7 +41,7 @@ export default function App() {
               <Route element={<RoleGuard roles={['owner','staff']} />}>
                 <Route path="/" element={<Layout />}>
                   <Route index element={<Home />} />
-                  <Route path="products" element={<Products />} />
+                  <Route path="products" element={<><Products/><ProductDeadlineManager/></>} />
                   <Route path="customers" element={<Customers />} />
                   <Route path="orders" element={<Orders />} />
                   <Route element={<RoleGuard roles={['owner']} />}>

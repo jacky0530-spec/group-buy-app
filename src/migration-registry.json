@@ -239,6 +239,18 @@
       "data_logic": "自動出貨只針對本次付款實際 allocation 對應的正式、非虛擬、preorder 訂單；訂單必須 status='pending' 且所有 order_items 的 arrived_qty>=qty 才能出貨。同張訂單仍有任何商品未到齊時保留待出貨。出貨沿用既有 shipped 狀態規則，寫 shipped_at、status_history，且非退款狀態的客戶 payment_status 更新為 paid。",
       "data_migration": "無。沒有 schema migration，也不批次改寫歷史訂單；只在使用者於即將到貨區完成本批全額付款後觸發。",
       "rollback": "移除 IncomingBatches 付款後 incoming_ship_ready 呼叫與 neon-order-status 的 incomingShipReady/action，並將 APP_VERSION 還原為 V36；不需資料庫 rollback。"
+    },
+    {
+      "version": "V38",
+      "date": "2026-09-02",
+      "type": "workflow",
+      "summary": "商品新增選填結單日；超過結單日後小幫手搜尋不到且不可新開單，管理者仍可自行開單。",
+      "database_changes": ["products.order_deadline: 新增可空白的結單日期欄位；NULL 代表不限結單"],
+      "api_changes": ["api/neon-helper-runtime.js: 新增 product_deadlines / set_product_deadline 管理動作；helper search_catalog 依台灣日期排除已過結單日商品；create_direct / create_direct_many 新增後端結單日防繞過驗證；沿用既有 Serverless Function"],
+      "ui_changes": ["src/components/ProductDeadlineManager.jsx: 商品管理頁新增結單日搜尋、日期設定與不限結單操作，搜尋框／日期輸入沿用 48px／16px 標準","src/App.jsx: /products 掛載商品結單日設定區"],
+      "data_logic": "結單日當天仍可由小幫手開單，僅 order_deadline 小於 Asia/Taipei 當日才視為已結單。限制只套用 helper 的新開單；owner/staff 管理者不受限制。小幫手修改既有未出貨訂單不因後來超過結單日被鎖住。",
+      "data_migration": "以 idempotent schema bootstrap 新增 nullable products.order_deadline，不回填既有商品；既有商品全部維持 NULL＝不限結單，不修改既有 orders、order_items 或 helper_entries。",
+      "rollback": "還原 V38 的 ProductDeadlineManager、helper deadline actions／篩選／驗證並將 APP_VERSION 還原為 V37；order_deadline 欄位可保留不影響舊版，若確認無需保留再另行移除。"
     }
   ]
 }
