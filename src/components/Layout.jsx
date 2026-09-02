@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第39版：結單日日期統一格式化，並避免重複執行商品結單日 schema DDL，V39 Registry 已同步。
-const APP_VERSION = '第39版｜2026/09/02'
+// 第40版：商品列表與新增／編輯商品視窗直接整合結單日顯示與輸入，V40 Registry 已同步。
+const APP_VERSION = '第40版｜2026/09/02'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
