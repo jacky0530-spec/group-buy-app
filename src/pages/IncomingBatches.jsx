@@ -175,6 +175,7 @@ export default function IncomingBatches(){
     if(!activeBatch||!paymentLines.length){toast('本批目前沒有可付款明細','error');return}
     const max=paymentLines.reduce((s,l)=>s+Number(l.outstanding||0),0)
     if(!(amount>0)||amount>max+0.01){toast(`付款金額需介於 1 ～ ${money(max)}`,'error');return}
+    const fullPayment=amount>=max-0.01
     setPaying(true)
     try{
       const data=await neonPaymentsRuntime('create',{
@@ -183,8 +184,31 @@ export default function IncomingBatches(){
         lines:paymentLines,
       })
       const result=data?.result||{}
-      toast(`✅ 本批已建立付款 ${money(result.amount)}，分配 ${result.allocation_count||0} 筆`)
       setPaymentLines([]);setPaymentAmount('');setPaymentNote('')
+
+      if(!fullPayment){
+        toast(`✅ 本批已建立付款 ${money(result.amount)}；目前為部分付款，本次不自動出貨`)
+        return
+      }
+
+      const orderIds=[...new Set((result.allocations||[]).map(a=>String(a.order_id||'').trim()).filter(Boolean))]
+      if(!orderIds.length){
+        toast(`✅ 本批已建立付款 ${money(result.amount)}；沒有需要自動出貨的正式訂單`)
+        return
+      }
+
+      try{
+        const shippedData=await neonOrderStatusRuntime('incoming_ship_ready',{
+          order_ids:orderIds,
+          reason:`即將到貨批次 ${activeBatch.id} 全額付款後自動批次出貨`,
+        })
+        const shipped=shippedData?.result||{}
+        const shippedCount=Number(shipped.shipped||0)
+        const waitingCount=Number(shipped.waiting||0)
+        toast(`✅ 本批已付款 ${money(result.amount)}；自動批次出貨 ${shippedCount} 張${waitingCount>0?`，另 ${waitingCount} 張仍有商品未到齊`:''}`)
+      }catch(shipErr){
+        toast(`✅ 本批付款已完成，但自動批次出貨失敗：${shipErr.message}。付款不會重複建立。`,'error')
+      }
     }catch(e){toast('本批付款失敗：'+e.message,'error')}
     finally{setPaying(false)}
   }
@@ -208,7 +232,7 @@ export default function IncomingBatches(){
       <div className="table-container"><table><thead><tr><th>商品 / 規格</th><th>預計</th><th>實收</th><th>實際售價</th><th>單位成本</th><th>本批成本</th></tr></thead><tbody>{draftItems.map(i=><tr key={i.id}><td><div style={{fontWeight:850}}>{i.product_name}</div><div style={{fontSize:11,color:'var(--indigo)'}}>{specLabel(i)}</div></td><td>{i.expected_qty}</td><td>{activeBatch.status==='completed'?<strong>{i.received_qty}</strong>:<><input className="no-print" type="number" min="0" max={i.expected_qty} value={i.received_qty} onFocus={e=>e.currentTarget.select()} onClick={e=>e.currentTarget.select()} onChange={e=>setReceived(i.id,e.target.value)} style={{width:90}}/><span className="print-only">{i.received_qty}</span></>}</td><td style={{fontWeight:900,color:'var(--indigo-dark)'}}>{salePriceOf(i,productMap)>0?money(salePriceOf(i,productMap)):'—'}</td><td>{money(i.unit_cost)}</td><td>{money(Number(i.received_qty)*Number(i.unit_cost))}</td></tr>)}</tbody></table></div>
       <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginTop:12}}><div><strong>實收 {draftReceived} 件</strong>　預估成本 <strong>{money(draftAmount)}</strong></div>{activeBatch.status!=='completed'&&<div className="no-print" style={{display:'flex',gap:7,flexWrap:'wrap'}}><button className="btn btn-ghost" onClick={fillExpected}>全部符合預計數量</button><button className="btn btn-ghost" disabled={saving} onClick={saveReceiving}>儲存理貨</button><button className="btn btn-primary" disabled={saving||draftReceived<=0} onClick={completeBatch}><PackageCheck size={15}/>{saving?'處理中...':'完成本批到貨'}</button></div>}</div>
 
-      {activeBatch.status==='completed'&&<div className="no-print" style={{marginTop:16,paddingTop:14,borderTop:'1px solid var(--border)'}}><div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}><WalletCards size={18}/><strong>本批付款</strong></div>{paymentLines.length===0?<div style={{padding:12,borderRadius:10,background:'var(--emerald-light)',fontSize:12}}>若本批剛完成且有可手動付款明細，系統會自動帶入；若沒有，代表已付款或付款條件由系統自動處理。</div>:<><div style={{background:'var(--amber-light)',padding:10,borderRadius:10,fontSize:12,marginBottom:10}}>本批可付款 {paymentLines.length} 筆，共 <strong>{money(paymentLines.reduce((s,l)=>s+Number(l.outstanding||0),0))}</strong>。只包含本批實際到貨影響的訂單。</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:9}}><div className="form-group"><label>付款日期</label><input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/></div><div className="form-group"><label>本次付款金額</label><input type="number" min="1" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/></div></div><div className="form-group"><label>付款備註</label><input value={paymentNote} onChange={e=>setPaymentNote(e.target.value)} placeholder="例：本批貨到全額付款"/></div><button className="btn btn-primary" disabled={paying} onClick={payBatch}><Truck size={15}/>{paying?'付款處理中...':'完成本批付款'}</button></>}</div>}
+      {activeBatch.status==='completed'&&<div className="no-print" style={{marginTop:16,paddingTop:14,borderTop:'1px solid var(--border)'}}><div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}><WalletCards size={18}/><strong>本批付款</strong></div>{paymentLines.length===0?<div style={{padding:12,borderRadius:10,background:'var(--emerald-light)',fontSize:12}}>若本批剛完成且有可手動付款明細，系統會自動帶入；若沒有，代表已付款或付款條件由系統自動處理。</div>:<><div style={{background:'var(--amber-light)',padding:10,borderRadius:10,fontSize:12,marginBottom:10}}>本批可付款 {paymentLines.length} 筆，共 <strong>{money(paymentLines.reduce((s,l)=>s+Number(l.outstanding||0),0))}</strong>。全額付款成功後，會自動批次出貨「整張訂單商品均已到齊」的正式預購訂單；仍有其他商品未到齊的訂單會保留待出貨。</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:9}}><div className="form-group"><label>付款日期</label><input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/></div><div className="form-group"><label>本次付款金額</label><input type="number" min="1" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/></div></div><div className="form-group"><label>付款備註</label><input value={paymentNote} onChange={e=>setPaymentNote(e.target.value)} placeholder="例：本批貨到全額付款"/></div><button className="btn btn-primary" disabled={paying} onClick={payBatch}><Truck size={15}/>{paying?'付款／出貨處理中...':'完成本批付款＋自動出貨'}</button></>}</div>}
     </div></div>}
   </div>
 }

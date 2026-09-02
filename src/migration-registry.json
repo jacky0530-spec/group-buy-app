@@ -227,6 +227,18 @@
       "data_logic": "登記筆數與轉單成功率仍維持 COUNT(*) 作流程 KPI；薪資數量獨立計算：status='converted' 且非虛擬時加總每個 item.qty，status='converted' 且虛擬時每筆計 1；舊待確認與已取消不列入薪資。薪資目前 1 單位=NT$1。",
       "data_migration": "無。只修改 Neon 唯讀統計 SQL 與前端顯示，既有歷史 helper_entries 會依新公式即時重算，不回寫資料。",
       "rollback": "將 helperDashboard 恢復 V35 的 COUNT(*) formal/virtual 統計，移除 HelperEntries 的薪資數量欄位並將 APP_VERSION 還原為 V35；不需資料庫 rollback。"
+    },
+    {
+      "version": "V37",
+      "date": "2026-09-02",
+      "type": "workflow",
+      "summary": "即將到貨批次完成後，全額支付本批供應商款項時自動批次出貨已全數到齊的正式預購訂單。",
+      "database_changes": [],
+      "api_changes": ["api/neon-order-status.js: 新增 incoming_ship_ready 動作，以單次 SQL 將付款明細對應且整張訂單所有商品均已到齊的 pending 預購訂單更新為 shipped；不新增 Serverless Function"],
+      "ui_changes": ["src/pages/IncomingBatches.jsx: 本批全額付款成功後自動呼叫 incoming_ship_ready；部分付款不自動出貨，畫面明示規則並回報已出貨／仍待到貨張數"],
+      "data_logic": "自動出貨只針對本次付款實際 allocation 對應的正式、非虛擬、preorder 訂單；訂單必須 status='pending' 且所有 order_items 的 arrived_qty>=qty 才能出貨。同張訂單仍有任何商品未到齊時保留待出貨。出貨沿用既有 shipped 狀態規則，寫 shipped_at、status_history，且非退款狀態的客戶 payment_status 更新為 paid。",
+      "data_migration": "無。沒有 schema migration，也不批次改寫歷史訂單；只在使用者於即將到貨區完成本批全額付款後觸發。",
+      "rollback": "移除 IncomingBatches 付款後 incoming_ship_ready 呼叫與 neon-order-status 的 incomingShipReady/action，並將 APP_VERSION 還原為 V36；不需資料庫 rollback。"
     }
   ]
 }

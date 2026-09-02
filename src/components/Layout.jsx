@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第36版：小幫手正式薪資改依商品數量計算，虛擬訂單維持依登記筆數計算，V36 Registry 已同步。
-const APP_VERSION = '第36版｜2026/09/01'
+// 第37版：即將到貨本批全額付款後，自動批次出貨已全數到齊的正式預購訂單；未到齊維持待出貨。
+const APP_VERSION = '第37版｜2026/09/02'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

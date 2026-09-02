@@ -253,6 +253,44 @@ async function incomingComplete(sql,body){
   return {completed:true,requested:Number(r.requested||0),allocated:Number(r.allocated||0),affected}
 }
 
+async function incomingShipReady(sql,body){
+  const ids=[...new Set((Array.isArray(body?.order_ids)?body.order_ids:[]).map(text).filter(Boolean))]
+  if(!ids.length) return {requested:0,shipped:0,waiting:0,ids:[]}
+  if(ids.length>400) throw new Error('單次最多自動批次出貨 400 張訂單')
+  const reason=text(body?.reason)||'即將到貨批次全額付款後自動批次出貨'
+  const event=JSON.stringify([{status:'shipped',at:new Date().toISOString(),note:reason}])
+  const rows=await sql`
+    WITH eligible AS (
+      SELECT o.id,o.legacy_id
+      FROM orders o
+      WHERE o.legacy_id=ANY(${ids}::text[])
+        AND o.status='pending'
+        AND COALESCE(o.is_virtual,false)=false
+        AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+        AND EXISTS (
+          SELECT 1 FROM order_items oi
+          WHERE oi.order_id=o.id AND COALESCE(oi.qty,0)>0
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM order_items oi
+          WHERE oi.order_id=o.id
+            AND COALESCE(oi.arrived_qty,0)<COALESCE(oi.qty,0)
+        )
+      FOR UPDATE
+    ), shipped AS (
+      UPDATE orders o SET
+        status='shipped',shipped_at=now(),cancelled_at=NULL,cancellation_reason='',
+        payment_status=CASE WHEN o.payment_status IN ('partial_refund','refunded') THEN o.payment_status ELSE 'paid' END,
+        status_history=COALESCE(o.status_history,'[]'::jsonb)||${event}::jsonb,updated_at=now()
+      FROM eligible e
+      WHERE o.id=e.id
+      RETURNING o.legacy_id AS id
+    )
+    SELECT COALESCE(jsonb_agg(id ORDER BY id),'[]'::jsonb) AS ids,COUNT(*)::int AS shipped FROM shipped`
+  const shippedIds=Array.isArray(rows[0]?.ids)?rows[0].ids:[]
+  return {requested:ids.length,shipped:Number(rows[0]?.shipped||0),waiting:Math.max(0,ids.length-shippedIds.length),ids:shippedIds}
+}
+
 async function getOrder(sql,legacyId){
   const rows=await sql`
     SELECT id,legacy_id,status,payment_status,fulfillment_type,status_history
@@ -453,6 +491,7 @@ export default async function handler(req,res){
     if(action==='incoming_create') return res.status(200).json({ok:true,result:await incomingCreate(sql,req.body||{},auth)})
     if(action==='incoming_save') return res.status(200).json({ok:true,result:await incomingSave(sql,req.body||{})})
     if(action==='incoming_complete') return res.status(200).json({ok:true,result:await incomingComplete(sql,req.body||{})})
+    if(action==='incoming_ship_ready') return res.status(200).json({ok:true,result:await incomingShipReady(sql,req.body||{})})
     throw new Error('未知的訂單狀態動作')
   }catch(err){
     console.error('neon-order-status',err)
