@@ -187,10 +187,10 @@ export default function GroupedReceipt({ orders, onClose }) {
               const releasedQty=Number(item.released_qty||0)
               const pickupQty=Number(item.pickup_qty??item.qty??0)
               return <div key={`${group.key}-${i}`} style={{ display:'grid',gridTemplateColumns:'1fr 80px 90px 100px',gap:8,padding:'7px 12px',borderTop:'1px solid var(--border)',fontSize:13,opacity:releasedQty>0 ? .78 : 1 }}>
-                <span>{item.product_name || item.name}{specText(item)}{item.note && ` — ${item.note}`}{releasedQty>0&&<strong style={{color:'#7c3aed'}}>　🟣 已釋出 {releasedQty}/{item.qty}</strong>}</span>
+                <span>{item.product_name || item.name}{specText(item)}{item.note && ` — ${item.note}`}{releasedQty>0&&<strong style={{color:'#dc2626',fontWeight:900}}>　🔴 已釋出 {releasedQty}/{item.qty}</strong>}</span>
                 <span style={{ textAlign:'right' }}>NT${Number(item.sale_price ?? item.price ?? 0).toLocaleString()}</span>
                 <span style={{ textAlign:'center' }}>{releasedQty>0?`應取 ×${pickupQty}`:`×${item.qty}`}</span>
-                <strong style={{ textAlign:'right',color:releasedQty>0?'#7c3aed':undefined }}>{pickupQty>0?`NT${Number(item.subtotal || 0).toLocaleString()}`:'已釋出'}</strong>
+                <strong style={{ textAlign:'right',color:releasedQty>0?'#dc2626':undefined }}>{pickupQty>0?`NT${Number(item.subtotal || 0).toLocaleString()}`:'已釋出'}</strong>
               </div>
             })}
 
