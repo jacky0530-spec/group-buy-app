@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, updateDoc, writeBatch, Timestamp, query, where } from 'firebase/firestore'
 import { db } from './firebase'
-import { bestEffortNeonHelperSync, bestEffortNeonOrderSync } from './neonRuntime'
+import { bestEffortNeonHelperSync, bestEffortNeonOrderSync, neonHelperRuntime, neonOrdersRuntime } from './neonRuntime'
 
 const now = () => Timestamp.now()
 const nowISO = () => new Date().toISOString()
@@ -42,6 +42,15 @@ async function syncPairById(entryId, orderId) {
   } catch (err) {
     console.error('[Neon dual-write] helper pair readback failed',err)
   }
+}
+
+async function syncPairByIdRequired(entryId, orderId) {
+  const [entrySnap,orderSnap] = await Promise.all([
+    entryId ? getDoc(doc(db,'helper_entries',entryId)) : Promise.resolve(null),
+    orderId ? getDoc(doc(db,'orders',orderId)) : Promise.resolve(null),
+  ])
+  if (orderSnap?.exists?.()) await neonOrdersRuntime('sync',{row:cleanForNeon({ id:orderSnap.id,...orderSnap.data() })})
+  if (entrySnap?.exists?.()) await neonHelperRuntime('sync',{row:cleanForNeon({ id:entrySnap.id,...entrySnap.data() })})
 }
 
 async function syncPairsInBackground(pairs=[]) {
@@ -135,15 +144,9 @@ export const HelperAPI = {
     const snap = await getDocs(query(collection(db,'helper_entries'),where('created_by_uid','==',uid)))
     return snap.docs.map(normalize).sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
   },
-  async myPendingOrders(uid){
-    const snap = await getDocs(query(
-      collection(db,'orders'),
-      where('created_by_uid','==',uid),
-      where('source','==','helper')
-    ))
-    return snap.docs.map(normalize)
-      .filter(x=>x.status==='pending' && x.archived!==true)
-      .sort((a,b)=>String(b.order_date||b.created_at||'').localeCompare(String(a.order_date||a.created_at||'')))
+  async myPendingOrders(){
+    const result=await neonHelperRuntime('my_pending_orders')
+    return Array.isArray(result?.rows)?result.rows:[]
   },
   async allEntries(){
     const snap = await getDocs(collection(db,'helper_entries'))
@@ -219,6 +222,8 @@ export const HelperAPI = {
     if (current.source !== 'helper' || current.created_by_uid !== uid) throw new Error('只能修改自己建立的訂單')
     if (current.status !== 'pending' || current.archived === true) throw new Error('此訂單已離開未出貨狀態，不能修改')
     if ((current.items || []).some(item => Number(item.arrived_qty || 0) > 0)) throw new Error('此訂單已有商品到貨，請聯絡管理者修改')
+    if (current.fulfillment_type === 'stock' || (current.items || []).some(item => item.fulfillment_type === 'stock')) throw new Error('現貨訂單不可由小幫手修改')
+    if ((current.items || []).some(item => Number(item.supplier_paid_amount || 0) > 0 || ['paid','partial'].includes(item.supplier_payment_status) || (item.supplier_payment_refs || []).length > 0)) throw new Error('此訂單已有供應商付款紀錄，請聯絡管理者修改')
     const items = await hydrateOrderItems(data.items || [])
     const total = items.reduce((s,item)=>s+Number(item.subtotal||0),0)
     const at = now()
@@ -239,8 +244,32 @@ export const HelperAPI = {
       }
     }
     await batch.commit()
-    await syncPairById(current.helper_entry_id,orderId)
+    await syncPairByIdRequired(current.helper_entry_id,orderId)
     return true
+  },
+  async deleteMyPendingOrder(uid,orderId){
+    const orderRef=doc(db,'orders',orderId)
+    const snap=await getDoc(orderRef)
+    const current=snap.exists()?snap.data():null
+    if(current){
+      if(current.source!=='helper'||current.created_by_uid!==uid) throw new Error('只能刪除自己建立的訂單')
+      if(current.status!=='pending'||current.archived===true) throw new Error('此訂單已離開未出貨狀態，不能刪除')
+      if((current.items||[]).some(item=>Number(item.arrived_qty||0)>0)) throw new Error('此訂單已有商品到貨，請聯絡管理者刪除')
+      if(current.fulfillment_type==='stock'||(current.items||[]).some(item=>item.fulfillment_type==='stock')) throw new Error('現貨訂單不可由小幫手刪除')
+      if((current.items||[]).some(item=>Number(item.supplier_paid_amount||0)>0||['paid','partial'].includes(item.supplier_payment_status)||(item.supplier_payment_refs||[]).length>0)) throw new Error('此訂單已有供應商付款紀錄，請聯絡管理者刪除')
+    }
+    const result=await neonOrdersRuntime('delete_own_helper',{id:orderId})
+    if(current){
+      try{
+        const batch=writeBatch(db)
+        batch.delete(orderRef)
+        if(current.helper_entry_id) batch.delete(doc(db,'helper_entries',current.helper_entry_id))
+        await batch.commit()
+      }catch(err){
+        console.error('[Firestore backup cleanup] helper delete failed',err)
+      }
+    }
+    return result?.result||true
   },
   async updateEntry(id,data){
     const ref = doc(db,'helper_entries',id)
