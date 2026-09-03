@@ -13,36 +13,86 @@ function money(value){
   return `NT$${Math.round(Number(value||0)).toLocaleString()}`
 }
 
-function releasedPickupPage(page){
+function releasedPickupPage(page,status=''){
   return {
     ...page,
-    rows:(page?.rows||[]).map(order=>({
-      ...order,
-      items:(order.items||[]).map(item=>{
-        const qty=Math.max(0,Number(item?.qty||0))
-        const released=Math.min(qty,Math.max(0,Number(item?.released_qty||0)))
-        if(!(qty>0&&released>0))return item
-        const originalName=String(item.original_product_name||item.product_name||item.name||'商品')
-        const originalPrice=Number(item.sale_price??item.price??0)
-        const pickupQty=Math.max(0,qty-released)
-        const pickupRate=qty>0?pickupQty/qty:0
-        const label=released>=qty
-          ? `${originalName}　🟣 已釋出（原價 ${money(originalPrice)}）`
-          : `${originalName}　🟣 已釋出 ${released}/${qty}（原價 ${money(originalPrice)}）`
-        return {
-          ...item,
-          original_product_name:originalName,
-          product_name:label,
-          name:label,
-          pickup_original_price:originalPrice,
-          pickup_released_qty:released,
-          pickup_qty:pickupQty,
-          sale_price:originalPrice*pickupRate,
-          price:originalPrice*pickupRate,
-          subtotal:originalPrice*pickupQty,
-        }
-      }),
-    })),
+    rows:(page?.rows||[]).map(order=>{
+      const sourceItems=order.items||[]
+      if(status==='shipped'){
+        const activeItems=[]
+        const releasedItems=[]
+        sourceItems.forEach(item=>{
+          const qty=Math.max(0,Number(item?.qty||0))
+          const released=Math.min(qty,Math.max(0,Number(item?.released_qty||0)))
+          if(!(qty>0&&released>0)){
+            activeItems.push(item)
+            return
+          }
+          const originalName=String(item.original_product_name||item.product_name||item.name||'商品')
+          const originalPrice=Number(item.sale_price??item.price??0)
+          const pickupQty=Math.max(0,qty-released)
+          if(pickupQty>0){
+            activeItems.push({
+              ...item,
+              original_product_name:originalName,
+              product_name:originalName,
+              name:originalName,
+              qty:pickupQty,
+              arrived_qty:Math.min(pickupQty,Math.max(0,Number(item.arrived_qty||pickupQty))),
+              subtotal:originalPrice*pickupQty,
+              pickup_original_qty:qty,
+              pickup_released_qty:released,
+            })
+          }
+          const releaseLabel=released>=qty
+            ? `${originalName}　🟣 已釋出（原價 ${money(originalPrice)}／件，不計取貨小計）`
+            : `${originalName}　🟣 已釋出 ${released}/${qty}（原價 ${money(originalPrice)}／件，不計取貨小計）`
+          releasedItems.push({
+            ...item,
+            original_product_name:originalName,
+            product_name:releaseLabel,
+            name:releaseLabel,
+            qty:released,
+            arrived_qty:released,
+            sale_price:0,
+            price:0,
+            subtotal:0,
+            pickup_original_price:originalPrice,
+            pickup_original_qty:qty,
+            pickup_released_qty:released,
+            pickup_release_marker:true,
+          })
+        })
+        return {...order,items:[...activeItems,...releasedItems]}
+      }
+      return {
+        ...order,
+        items:sourceItems.map(item=>{
+          const qty=Math.max(0,Number(item?.qty||0))
+          const released=Math.min(qty,Math.max(0,Number(item?.released_qty||0)))
+          if(!(qty>0&&released>0))return item
+          const originalName=String(item.original_product_name||item.product_name||item.name||'商品')
+          const originalPrice=Number(item.sale_price??item.price??0)
+          const pickupQty=Math.max(0,qty-released)
+          const pickupRate=qty>0?pickupQty/qty:0
+          const label=released>=qty
+            ? `${originalName}　🟣 已釋出（原價 ${money(originalPrice)}）`
+            : `${originalName}　🟣 已釋出 ${released}/${qty}（原價 ${money(originalPrice)}）`
+          return {
+            ...item,
+            original_product_name:originalName,
+            product_name:label,
+            name:label,
+            pickup_original_price:originalPrice,
+            pickup_released_qty:released,
+            pickup_qty:pickupQty,
+            sale_price:originalPrice*pickupRate,
+            price:originalPrice*pickupRate,
+            subtotal:originalPrice*pickupQty,
+          }
+        }),
+      }
+    }),
   }
 }
 
@@ -92,7 +142,7 @@ export default function PendingProductReportFiltered() {
     }
 
     OrdersAPI.searchPage = async (params = {}) => {
-      const page = releasedPickupPage(await originalSearchPage(params))
+      const page = releasedPickupPage(await originalSearchPage(params),params?.status)
       const isPendingCatalogQuery = params?.status === 'pending'
         && !params?.productId
         && !String(params?.search || '').trim()
