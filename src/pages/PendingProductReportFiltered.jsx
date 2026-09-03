@@ -9,6 +9,29 @@ const ARRIVAL_BUTTONS = {
   '尚未到貨': 'missing',
 }
 
+function taipeiDateLabel(value) {
+  const date = new Date(value || '')
+  if (!Number.isFinite(date.getTime())) return '日期未記錄'
+  const parts = new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const read = type => parts.find(part => part.type === type)?.value || ''
+  return `${read('year')}/${read('month')}/${read('day')}`
+}
+
+function shippedTimestamp(order) {
+  const value = order?.shipped_at || order?.updated_at || order?.order_date || order?.created_at || ''
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : 0
+}
+
+function productNameOfItem(item) {
+  return String(item?.original_product_name || item?.product_name || item?.name || '').trim()
+}
+
 export default function PendingProductReportFiltered() {
   const [showArchivedProducts,setShowArchivedProducts] = useState(false)
   const [arrivalCatalogView,setArrivalCatalogView] = useState('all')
@@ -17,9 +40,11 @@ export default function PendingProductReportFiltered() {
   const originalListRef = useRef(ProductsAPI.list)
   const originalSearchPageRef = useRef(OrdersAPI.searchPage)
   const qtyTimersRef = useRef(new Map())
+  const shippedProductDatesRef = useRef(new Map())
 
   // 報表內部固定以 includeArchived:true 載入商品目錄。
   // 同時讓「全部待出貨 / 已到貨可取貨 / 尚未到貨」各自重建真正有數量的商品目錄。
+  // V43：攔截已出貨商品目錄 SQL 查詢時，一併記錄各商品最近一次實際出貨日期，供商品按日期分組排序。
   useEffect(() => {
     const originalList = originalListRef.current
     const originalSearchPage = originalSearchPageRef.current
@@ -34,6 +59,26 @@ export default function PendingProductReportFiltered() {
       const isPendingCatalogQuery = params?.status === 'pending'
         && !params?.productId
         && !String(params?.search || '').trim()
+      const isShippedCatalogQuery = params?.status === 'shipped'
+        && !params?.productId
+        && !String(params?.search || '').trim()
+
+      if (isShippedCatalogQuery) {
+        const offset = Number(params?.cursor?.offset || 0)
+        if (!offset) shippedProductDatesRef.current = new Map()
+        const dateMap = shippedProductDatesRef.current
+        ;(page?.rows || []).forEach(order => {
+          const time = shippedTimestamp(order)
+          const label = taipeiDateLabel(order?.shipped_at || order?.updated_at || order?.order_date || order?.created_at)
+          ;(order.items || []).forEach(item => {
+            if (Math.max(0, Number(item?.qty || 0)) <= 0) return
+            const name = productNameOfItem(item)
+            if (!name) return
+            const previous = dateMap.get(name)
+            if (!previous || time > previous.time) dateMap.set(name,{ time,label })
+          })
+        })
+      }
 
       if (!isPendingCatalogQuery || arrivalCatalogView === 'all') return page
 
@@ -90,6 +135,93 @@ export default function PendingProductReportFiltered() {
     },0)
     return () => window.clearTimeout(timer)
   },[filterReady,arrivalCatalogView])
+
+  // V43：已出貨商品候選清單改依「最近一次實際出貨日」由新到舊排列，並用日期分隔線分組。
+  // 不搬動 React 管理的按鈕節點，只利用 flex order 排序，避免影響原本點選／搜尋狀態。
+  useEffect(() => {
+    const root = reportRef.current
+    if (!root) return undefined
+
+    const enhanceShippedCatalog = () => {
+      const header = Array.from(root.querySelectorAll('.card-header')).find(el => String(el.textContent || '').trim() === '挑選有已出貨訂單的商品')
+      const card = header?.closest('.card')
+      const body = card?.querySelector('.card-body')
+      if (!body) return
+      const list = Array.from(body.children).find(el => el instanceof HTMLElement && el.style.display === 'flex' && el.style.flexWrap === 'wrap')
+      if (!list) return
+
+      list.querySelectorAll('[data-shipped-date-divider="1"]').forEach(el => el.remove())
+      const buttons = Array.from(list.children).filter(el => el instanceof HTMLButtonElement)
+      buttons.forEach(button => { button.style.order = '' })
+      if (!buttons.length) return
+
+      const groups = new Map()
+      buttons.forEach(button => {
+        const name = String(button.textContent || '').replace(/（已封存）\s*$/,'').trim()
+        const info = shippedProductDatesRef.current.get(name) || { time:0,label:'日期未記錄' }
+        if (!groups.has(info.label)) groups.set(info.label,{ label:info.label,time:info.time,buttons:[] })
+        const group = groups.get(info.label)
+        group.time = Math.max(group.time,info.time)
+        group.buttons.push({button,name})
+      })
+
+      const orderedGroups = Array.from(groups.values()).sort((a,b) => {
+        if (a.label === '日期未記錄') return 1
+        if (b.label === '日期未記錄') return -1
+        return b.time - a.time || b.label.localeCompare(a.label,'zh-Hant')
+      })
+
+      orderedGroups.forEach((group,index) => {
+        const baseOrder = index * 1000
+        const divider = document.createElement('div')
+        divider.dataset.shippedDateDivider = '1'
+        divider.style.order = String(baseOrder)
+        divider.style.flexBasis = '100%'
+        divider.style.width = '100%'
+        divider.style.display = 'flex'
+        divider.style.alignItems = 'center'
+        divider.style.gap = '10px'
+        divider.style.margin = index === 0 ? '2px 0 7px' : '10px 0 7px'
+        divider.style.color = '#64748b'
+        divider.style.fontSize = '12px'
+        divider.style.fontWeight = '800'
+
+        const leftLine = document.createElement('span')
+        leftLine.style.flex = '1'
+        leftLine.style.borderTop = '1px solid #cbd5e1'
+        const label = document.createElement('strong')
+        label.textContent = group.label === '日期未記錄' ? '出貨日期未記錄' : `出貨日期 ${group.label}`
+        label.style.whiteSpace = 'nowrap'
+        label.style.color = '#475569'
+        const rightLine = document.createElement('span')
+        rightLine.style.flex = '1'
+        rightLine.style.borderTop = '1px solid #cbd5e1'
+        divider.append(leftLine,label,rightLine)
+        list.appendChild(divider)
+
+        group.buttons
+          .sort((a,b) => a.name.localeCompare(b.name,'zh-Hant',{numeric:true}))
+          .forEach(({button},buttonIndex) => {
+            button.style.order = String(baseOrder + 1 + buttonIndex)
+          })
+      })
+    }
+
+    enhanceShippedCatalog()
+    const observer = new MutationObserver(() => {
+      observer.disconnect()
+      enhanceShippedCatalog()
+      observer.observe(root,{ childList:true,subtree:true })
+    })
+    observer.observe(root,{ childList:true,subtree:true })
+    return () => {
+      observer.disconnect()
+      root.querySelectorAll('[data-shipped-date-divider="1"]').forEach(el => el.remove())
+      root.querySelectorAll('button').forEach(button => {
+        if (button.style.order) button.style.order = ''
+      })
+    }
+  },[filterReady,showArchivedProducts])
 
   // 小幫手/訂單備註在出貨畫面一律用紅字提醒。
   useEffect(() => {

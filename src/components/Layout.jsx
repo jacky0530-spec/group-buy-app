@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第42版：已出貨訂單封存改用系統確認視窗，避免 iPad／Safari 原生 confirm 偶發未顯示，V42 Registry 已同步。
-const APP_VERSION = '第42版｜2026/09/03'
+// 第43版：已出貨商品依最近實際出貨日由新到舊排列，並以日期分隔線分組，V43 Registry 已同步。
+const APP_VERSION = '第43版｜2026/09/03'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
