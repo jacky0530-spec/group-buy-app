@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第41版：小幫手可安全刪除自己未到貨未付款的預購訂單，修改／刪除後薪資重算，管理表移除待確認／已取消欄位，V41 Registry 已同步。
-const APP_VERSION = '第41版｜2026/09/03'
+// 第42版：已出貨訂單封存改用系統確認視窗，避免 iPad／Safari 原生 confirm 偶發未顯示，V42 Registry 已同步。
+const APP_VERSION = '第42版｜2026/09/03'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

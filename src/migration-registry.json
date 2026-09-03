@@ -286,6 +286,18 @@
       "data_logic": "薪資仍沿用 V36：正式=商品 qty 加總、虛擬=每筆 1。修改訂單時同步更新 helper_entries.items/payload，管理端 SQL 即時重算；刪除時連同 helper_entries 移除，因此當月登記筆數、正式／虛擬薪資數量與薪資立即依剩餘資料重算。",
       "data_migration": "無 schema migration、無歷史資料批次改寫。只有小幫手主動確認刪除符合條件的自己未出貨訂單時才永久刪除該 order、其 order_items（FK cascade）與對應 helper_entry。",
       "rollback": "移除 delete_own_helper、HelperPortalV4 刪除介面與 helper.js deleteMyPendingOrder／強制同步，還原 HelperEntries V40 欄位與 APP_VERSION；已由小幫手確認刪除的訂單為永久刪除，程式 rollback 不會自動復原資料。"
+    },
+    {
+      "version": "V42",
+      "date": "2026-09-03",
+      "type": "bugfix",
+      "summary": "已出貨查詢的封存訂單改用系統 ConfirmDialog，避免 iPad／Safari 原生 window.confirm 偶發未顯示而造成封存操作看似直接執行。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportSql.jsx: 封存按鈕先開啟系統確認視窗，顯示買家與封存訂單筆數；只有按下確認後才呼叫既有 OrdersAPI.archive，並提示封存後可從顯示封存解除"],
+      "data_logic": "不修改封存 API、orders.archived 欄位、已出貨查詢 SQL 或解除封存流程。封存操作由原生同步 window.confirm 改為 React ConfirmDialog 狀態流程，取消／點背景關閉都不會送出封存 API。",
+      "data_migration": "無。純前端確認流程修正，不回寫任何既有訂單資料。",
+      "rollback": "將 PendingProductReportSql 封存確認改回 V41 window.confirm，並將 APP_VERSION 還原為 V41；不需資料庫 rollback。"
     }
   ]
 }
