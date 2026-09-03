@@ -322,6 +322,18 @@
       "data_logic": "沿用 V43 各商品最近一次實際出貨日作為分組日期，只反轉日期群組顯示順序；不改 shipped_at、訂單狀態、出貨／封存、商品搜尋或任何資料寫入邏輯。",
       "data_migration": "無。純前端排序方向調整，不改寫 orders、order_items、products、到貨、付款或庫存資料。",
       "rollback": "將 PendingProductReportFiltered 日期群組排序恢復 V43 的由新到舊，並將 APP_VERSION 還原為 V43；不需資料庫 rollback。"
+    },
+    {
+      "version": "V45",
+      "date": "2026-09-03",
+      "type": "workflow",
+      "summary": "預購訂單新增品項層級「已釋出」狀態；久未取貨可只釋出同張訂單中的指定商品，保留原銷售紀錄但從客戶取貨應收小計排除。",
+      "database_changes": ["order_items.released_qty: integer NOT NULL DEFAULT 0，記錄此訂單品項已釋出數量","order_items.released_at: timestamptz nullable，記錄釋出時間","order_items.released_by_uid: text nullable，記錄執行釋出的管理帳號 UID"],
+      "api_changes": ["api/neon-orders-runtime.js: idempotent 建立釋出欄位；新增 set_item_release / release_states；只允許 owner/staff 對已全數到貨的預購品項釋出或取消釋出，訂單 sync / 到貨 / 數量更新保留釋出狀態，不新增 Serverless Function","api/neon-order-edit.js: 建立／編輯預購訂單時保留相同商品規格的 released_qty/released_at/released_by_uid，避免一般編輯清掉釋出紀錄","src/lib/enableNeonOrderRead.js: Neon 訂單讀取疊加品項釋出狀態","src/lib/enableNeonPrimaryOrderWrites.js: OrdersAPI 新增 setItemRelease"],
+      "ui_changes": ["src/components/OrderReleaseManager.jsx + src/App.jsx: 訂單管理新增已到貨商品釋出中心，提供 48px/16px 搜尋、品項級釋出／取消釋出與系統確認視窗","src/pages/PendingProductReportReleased.jsx: 已到貨／已出貨報表保留已釋出品項並顯示『已釋出』，該品項金額不計入本檢視取貨小計","src/components/GroupedReceipt.jsx: 出貨／取貨明細仍顯示已釋出商品，但釋出數量不計入取貨應收小計與應取件數"],
+      "data_logic": "釋出不是取消訂單、退款或刪除品項；orders.total_amount、order_items.qty/sale_price/subtotal/cost_price/cost_subtotal、銷售報表 report_data、供應商付款與庫存流水均不因釋出而改寫。釋出只改 released_* 欄位與取貨呈現／應收小計；同張訂單可只釋出其中一個品項，其餘品項正常取貨。取消釋出後恢復計入取貨應收。",
+      "data_migration": "以既有 neon-orders-runtime / neon-order-edit 的 idempotent schema bootstrap 新增三個 order_items 欄位；舊資料 released_qty 預設 0、時間與 UID 為 NULL，不批次改寫歷史訂單。order_items 已在既有備份白名單，因此新欄位會隨 schema/data 備份保存。",
+      "rollback": "移除 OrderReleaseManager、PendingProductReportReleased、GroupedReceipt 釋出小計邏輯、set_item_release/release_states 與讀寫 overlay，並將 APP_VERSION 還原為 V44。三個 nullable/default 欄位可保留而不影響舊版；若正式資料已有 released_qty>0，程式 rollback 前應先決定是否保留其業務語意，不自動清除釋出紀錄。"
     }
   ]
 }
