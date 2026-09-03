@@ -229,7 +229,7 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   const costPrice=num(item.cost_price)
   const paid=Math.max(0,num(item.supplier_paid_amount))
   const released=Math.max(0,Math.trunc(num(item.released_qty)))
-  if(nextQty<released) throw new Error(`此品項已有 ${released} 件標記已釋出，請先取消釋出再降低數量`)
+  if(nextQty<released) throw new Error(`此品項已有 ${released} 件標記已釋出，請先降低／取消釋出數量再降低訂購量`)
   const nextCost=costPrice*nextQty
   if(paid>nextCost+0.01) throw new Error(`此品項已付供應商 ${paid} 元，數量不可降到已付款成本以下`)
   const arrived=Math.min(nextQty,Math.max(released,Math.max(0,Math.trunc(num(item.arrived_qty)))))
@@ -246,7 +246,7 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   return {total_amount:total}
 }
 
-async function setItemRelease(sql,auth,legacyId,itemIndex,released){
+async function setItemRelease(sql,auth,legacyId,itemIndex,releasedQtyInput){
   const id=text(legacyId)
   const lineNo=Math.trunc(num(itemIndex))+1
   if(!id||lineNo<1) throw new Error('缺少訂單品項')
@@ -260,17 +260,15 @@ async function setItemRelease(sql,auth,legacyId,itemIndex,released){
   if(row.fulfillment_type==='stock') throw new Error('現貨訂單不使用預購商品釋出功能')
   const qty=Math.max(0,Math.trunc(num(row.qty)))
   const arrived=Math.max(0,Math.trunc(num(row.arrived_qty)))
-  if(released===true){
-    if(!(qty>0&&arrived>=qty)) throw new Error('商品需全數到貨後才能標記已釋出')
-    const updated=await sql`
-      UPDATE order_items SET released_qty=${qty},released_at=now(),released_by_uid=${auth.uid},updated_at=now()
-      WHERE order_id=${row.order_id} AND line_no=${lineNo}
-      RETURNING line_no,product_name,qty,arrived_qty,released_qty,released_at,released_by_uid`
-    await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
-    return updated[0]
-  }
+  const releasedQty=Math.trunc(num(releasedQtyInput))
+  if(releasedQty<0||releasedQty>qty) throw new Error(`釋出數量必須介於 0～${qty} 件`)
+  if(releasedQty>0&&!(qty>0&&arrived>=qty)) throw new Error('商品需全數到貨後才能標記已釋出')
   const updated=await sql`
-    UPDATE order_items SET released_qty=0,released_at=NULL,released_by_uid=NULL,updated_at=now()
+    UPDATE order_items SET
+      released_qty=${releasedQty},
+      released_at=${releasedQty>0?new Date().toISOString():null},
+      released_by_uid=${releasedQty>0?auth.uid:null},
+      updated_at=now()
     WHERE order_id=${row.order_id} AND line_no=${lineNo}
     RETURNING line_no,product_name,qty,arrived_qty,released_qty,released_at,released_by_uid`
   await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
@@ -402,7 +400,7 @@ export default async function handler(req,res){
     if(action==='clear_refunds') return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
     if(action==='update_arrival') return res.status(200).json({ok:true,result:await updateArrival(sql,req.body?.id,req.body?.items)})
     if(action==='update_item_qty') return res.status(200).json({ok:true,result:await updateItemQty(sql,req.body?.id,req.body?.item_index,req.body?.qty)})
-    if(action==='set_item_release') return res.status(200).json({ok:true,result:await setItemRelease(sql,auth,req.body?.id,req.body?.item_index,req.body?.released===true)})
+    if(action==='set_item_release') return res.status(200).json({ok:true,result:await setItemRelease(sql,auth,req.body?.id,req.body?.item_index,req.body?.released_qty)})
     if(action==='update_virtual') return res.status(200).json({ok:true,result:await updateVirtual(sql,req.body?.ids,req.body?.is_virtual)})
     if(action==='delete'){
       const ids=Array.isArray(req.body?.ids)?req.body.ids:[]
