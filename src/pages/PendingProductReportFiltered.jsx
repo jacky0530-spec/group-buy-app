@@ -136,7 +136,7 @@ export default function PendingProductReportFiltered() {
     return () => window.clearTimeout(timer)
   },[filterReady,arrivalCatalogView])
 
-  // V43：已出貨商品候選清單改依「最近一次實際出貨日」由新到舊排列，並用日期分隔線分組。
+  // V44：已出貨商品候選清單依「最近一次實際出貨日」由舊到新排列，日期較遠（較早）的商品優先顯示。
   // 不搬動 React 管理的按鈕節點，只利用 flex order 排序，避免影響原本點選／搜尋狀態。
   useEffect(() => {
     const root = reportRef.current
@@ -168,7 +168,7 @@ export default function PendingProductReportFiltered() {
       const orderedGroups = Array.from(groups.values()).sort((a,b) => {
         if (a.label === '日期未記錄') return 1
         if (b.label === '日期未記錄') return -1
-        return b.time - a.time || b.label.localeCompare(a.label,'zh-Hant')
+        return a.time - b.time || a.label.localeCompare(b.label,'zh-Hant')
       })
 
       orderedGroups.forEach((group,index) => {
