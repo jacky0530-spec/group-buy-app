@@ -298,6 +298,18 @@
       "data_logic": "不修改封存 API、orders.archived 欄位、已出貨查詢 SQL 或解除封存流程。封存操作由原生同步 window.confirm 改為 React ConfirmDialog 狀態流程，取消／點背景關閉都不會送出封存 API。",
       "data_migration": "無。純前端確認流程修正，不回寫任何既有訂單資料。",
       "rollback": "將 PendingProductReportSql 封存確認改回 V41 window.confirm，並將 APP_VERSION 還原為 V41；不需資料庫 rollback。"
+    },
+    {
+      "version": "V43",
+      "date": "2026-09-03",
+      "type": "ui",
+      "summary": "已出貨查詢的商品候選清單改依最近一次實際出貨日期由新到舊排列，並用日期分隔線分組。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 攔截既有 shipped 商品目錄查詢，依各商品最近 shipped_at 建立日期索引；商品候選按日期分組，顯示出貨日期 YYYY/MM/DD 水平分隔線，同日商品依名稱排序"],
+      "data_logic": "只使用既有 OrdersAPI.searchPage 回傳的 shipped_at；同商品有多次已出貨訂單時以最近一次出貨日歸組。舊訂單若 shipped_at 缺失，依 updated_at、order_date、created_at 依序回退。待出貨清單、商品搜尋、出貨／封存、訂單 SQL 與資料寫入邏輯不變。",
+      "data_migration": "無。純前端排序與分組顯示，不改寫 orders、order_items、products、到貨、付款或庫存資料。",
+      "rollback": "移除 PendingProductReportFiltered 的 shippedProductDatesRef、已出貨目錄日期攔截與日期分隔線 DOM 增強，並將 APP_VERSION 還原為 V42；不需資料庫 rollback。"
     }
   ]
 }
