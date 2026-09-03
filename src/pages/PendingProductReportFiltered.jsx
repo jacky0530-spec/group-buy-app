@@ -9,6 +9,93 @@ const ARRIVAL_BUTTONS = {
   '尚未到貨': 'missing',
 }
 
+function money(value){
+  return `NT$${Math.round(Number(value||0)).toLocaleString()}`
+}
+
+function releasedPickupPage(page,status=''){
+  return {
+    ...page,
+    rows:(page?.rows||[]).map(order=>{
+      const sourceItems=order.items||[]
+      if(status==='shipped'){
+        const activeItems=[]
+        const releasedItems=[]
+        sourceItems.forEach(item=>{
+          const qty=Math.max(0,Number(item?.qty||0))
+          const released=Math.min(qty,Math.max(0,Number(item?.released_qty||0)))
+          if(!(qty>0&&released>0)){
+            activeItems.push(item)
+            return
+          }
+          const originalName=String(item.original_product_name||item.product_name||item.name||'商品')
+          const originalPrice=Number(item.sale_price??item.price??0)
+          const pickupQty=Math.max(0,qty-released)
+          if(pickupQty>0){
+            activeItems.push({
+              ...item,
+              original_product_name:originalName,
+              product_name:originalName,
+              name:originalName,
+              qty:pickupQty,
+              arrived_qty:Math.min(pickupQty,Math.max(0,Number(item.arrived_qty||pickupQty))),
+              subtotal:originalPrice*pickupQty,
+              pickup_original_qty:qty,
+              pickup_released_qty:released,
+            })
+          }
+          const releaseLabel=released>=qty
+            ? `${originalName}　🟣 已釋出（原價 ${money(originalPrice)}／件，不計取貨小計）`
+            : `${originalName}　🟣 已釋出 ${released}/${qty}（原價 ${money(originalPrice)}／件，不計取貨小計）`
+          releasedItems.push({
+            ...item,
+            original_product_name:originalName,
+            product_name:releaseLabel,
+            name:releaseLabel,
+            qty:released,
+            arrived_qty:released,
+            sale_price:0,
+            price:0,
+            subtotal:0,
+            pickup_original_price:originalPrice,
+            pickup_original_qty:qty,
+            pickup_released_qty:released,
+            pickup_release_marker:true,
+          })
+        })
+        return {...order,items:[...activeItems,...releasedItems]}
+      }
+      return {
+        ...order,
+        items:sourceItems.map(item=>{
+          const qty=Math.max(0,Number(item?.qty||0))
+          const released=Math.min(qty,Math.max(0,Number(item?.released_qty||0)))
+          if(!(qty>0&&released>0))return item
+          const originalName=String(item.original_product_name||item.product_name||item.name||'商品')
+          const originalPrice=Number(item.sale_price??item.price??0)
+          const pickupQty=Math.max(0,qty-released)
+          const pickupRate=qty>0?pickupQty/qty:0
+          const label=released>=qty
+            ? `${originalName}　🟣 已釋出（原價 ${money(originalPrice)}）`
+            : `${originalName}　🟣 已釋出 ${released}/${qty}（原價 ${money(originalPrice)}）`
+          return {
+            ...item,
+            original_product_name:originalName,
+            product_name:label,
+            name:label,
+            pickup_original_price:originalPrice,
+            pickup_released_qty:released,
+            pickup_qty:pickupQty,
+            sale_price:originalPrice*pickupRate,
+            price:originalPrice*pickupRate,
+            subtotal:originalPrice*pickupQty,
+          }
+        }),
+      }
+    }),
+  }
+}
+
 function taipeiDateLabel(value) {
   const date = new Date(value || '')
   if (!Number.isFinite(date.getTime())) return '日期未記錄'
@@ -44,7 +131,7 @@ export default function PendingProductReportFiltered() {
 
   // 報表內部固定以 includeArchived:true 載入商品目錄。
   // 同時讓「全部待出貨 / 已到貨可取貨 / 尚未到貨」各自重建真正有數量的商品目錄。
-  // V43：攔截已出貨商品目錄 SQL 查詢時，一併記錄各商品最近一次實際出貨日期，供商品按日期分組排序。
+  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示，但排除取貨應收小計。
   useEffect(() => {
     const originalList = originalListRef.current
     const originalSearchPage = originalSearchPageRef.current
@@ -55,7 +142,7 @@ export default function PendingProductReportFiltered() {
     }
 
     OrdersAPI.searchPage = async (params = {}) => {
-      const page = await originalSearchPage(params)
+      const page = releasedPickupPage(await originalSearchPage(params),params?.status)
       const isPendingCatalogQuery = params?.status === 'pending'
         && !params?.productId
         && !String(params?.search || '').trim()
@@ -107,7 +194,6 @@ export default function PendingProductReportFiltered() {
     setShowArchivedProducts(v => !v)
   }
 
-  // 監聽到貨分頁；切換時重新掛載 SQL 報表，讓候選商品目錄與該分頁同步。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
@@ -123,7 +209,6 @@ export default function PendingProductReportFiltered() {
     return () => root.removeEventListener('click',onClick,true)
   },[arrivalCatalogView])
 
-  // 報表重新掛載後，把內部 arrivalView 恢復到使用者剛選的分頁。
   useEffect(() => {
     if (!filterReady || arrivalCatalogView === 'all') return undefined
     const timer = window.setTimeout(() => {
@@ -137,7 +222,6 @@ export default function PendingProductReportFiltered() {
   },[filterReady,arrivalCatalogView])
 
   // V44：已出貨商品候選清單依「最近一次實際出貨日」由舊到新排列，日期較遠（較早）的商品優先顯示。
-  // 不搬動 React 管理的按鈕節點，只利用 flex order 排序，避免影響原本點選／搜尋狀態。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
@@ -223,7 +307,6 @@ export default function PendingProductReportFiltered() {
     }
   },[filterReady,showArchivedProducts])
 
-  // 小幫手/訂單備註在出貨畫面一律用紅字提醒。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
@@ -241,7 +324,6 @@ export default function PendingProductReportFiltered() {
     return () => observer.disconnect()
   },[])
 
-  // V28：所有規格小計（組合／口味／顏色／尺寸）都維持原本「X 件」文字，只把件數靠近規格名稱。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined
@@ -264,7 +346,6 @@ export default function PendingProductReportFiltered() {
     return () => observer.disconnect()
   },[])
 
-  // 訂購量停止輸入約 450ms 後自動觸發同一個 focusout 儲存流程。
   useEffect(() => {
     const root = reportRef.current
     if (!root) return undefined

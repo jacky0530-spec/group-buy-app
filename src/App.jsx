@@ -3,6 +3,7 @@ import { ToastProvider } from './components/UI'
 import { AuthProvider, AuthGuard, RoleGuard, useAuth } from './components/AuthGuard'
 import CustomerSearchNotes from './components/CustomerSearchNotes'
 import OrderArrivalResetPatch from './components/OrderArrivalResetPatch'
+import OrderReleaseManager from './components/OrderReleaseManager'
 import StockAssetPanel from './components/StockAssetPanel'
 import StockValueTopCard from './components/StockValueTopCard'
 import FinanceCostWarning from './components/FinanceCostWarning'
@@ -43,7 +44,7 @@ export default function App() {
                   <Route index element={<Home />} />
                   <Route path="products" element={<><Products/><ProductDeadlineManager/></>} />
                   <Route path="customers" element={<Customers />} />
-                  <Route path="orders" element={<Orders />} />
+                  <Route path="orders" element={<><OrderReleaseManager/><Orders/></>} />
                   <Route element={<RoleGuard roles={['owner']} />}>
                     <Route path="order-cleanup" element={<OrderCleanup />} />
                     <Route path="backup-center" element={<BackupMigrationCenter />} />

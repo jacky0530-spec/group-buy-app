@@ -9,6 +9,20 @@ const j=v=>JSON.stringify(v??[])
 const fulfillment=v=>v==='stock'?'stock':'preorder'
 const orderStatus=v=>['pending','shipped','cancelled'].includes(v)?v:'pending'
 const cleanSpec=row=>{const s=row?.spec||{};return{package:text(s.package??row?.spec_package),flavor:text(s.flavor??row?.spec_flavor),color:text(s.color??row?.spec_color),size:text(s.size??row?.spec_size)}}
+let releaseSchemaReady=false
+
+async function ensureReleaseSchema(sql){
+  if(releaseSchemaReady)return
+  const rows=await sql`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='order_items'
+      AND column_name IN ('released_qty','released_at','released_by_uid')`
+  const names=new Set(rows.map(r=>r.column_name))
+  if(!names.has('released_qty')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_qty integer NOT NULL DEFAULT 0`
+  if(!names.has('released_at')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_at timestamptz`
+  if(!names.has('released_by_uid')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_by_uid text`
+  releaseSchemaReady=true
+}
 
 async function requireAccount(sql,auth){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
@@ -85,7 +99,9 @@ async function syncOrder(sql,row){
   `
   const orderId=inserted[0]?.id
   if(!orderId) throw new Error('Neon 訂單同步失敗')
-  const previousItems=await sql`SELECT line_no,product_id,spec_package,spec_flavor,spec_color,spec_size,qty,original_qty FROM order_items WHERE order_id=${orderId}`
+  const previousItems=await sql`
+    SELECT line_no,product_id,spec_package,spec_flavor,spec_color,spec_size,qty,original_qty,released_qty,released_at,released_by_uid
+    FROM order_items WHERE order_id=${orderId}`
   await sql`DELETE FROM order_items WHERE order_id=${orderId}`
   let lineNo=0
   for(const item of itemRows){
@@ -97,18 +113,21 @@ async function syncOrder(sql,row){
     const previous=previousItems.find(x=>Number(x.line_no)===lineNo&&text(x.product_id)===text(productId)&&text(x.spec_package)===spec.package&&text(x.spec_flavor)===spec.flavor&&text(x.spec_color)===spec.color&&text(x.spec_size)===spec.size)
     const suppliedOriginal=Math.max(1,Math.trunc(num(item.original_qty)||qty))
     const originalQty=previous?Math.max(1,Math.trunc(num(previous.original_qty??previous.qty)||qty)):suppliedOriginal
+    const releasedQty=Math.min(qty,Math.max(0,Math.trunc(num(previous?.released_qty??item.released_qty))))
+    const releasedAt=releasedQty>0?(iso(previous?.released_at)||iso(item.released_at)||new Date().toISOString()):null
+    const releasedBy=releasedQty>0?text(previous?.released_by_uid||item.released_by_uid):''
     const salePrice=num(item.sale_price??item.price)
     const costPrice=num(item.cost_price)
     await sql`
       INSERT INTO order_items (
         order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,original_qty,subtotal,cost_subtotal,note,
-        spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,supplier_payment_term,
+        spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,released_qty,released_at,released_by_uid,supplier_payment_term,
         supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at
       ) VALUES (
         ${orderId},${lineNo},${productId},${text(item.product_name||item.name)},${text(item.category)||'other'},${text(item.supplier)},
         ${salePrice},${costPrice},${qty},${originalQty},${num(item.subtotal||salePrice*qty)},${num(item.cost_subtotal||costPrice*qty)},${text(item.note)},
         ${spec.package},${spec.flavor},${spec.color},${spec.size},${fulfillment(item.fulfillment_type||orderFulfillment)},
-        ${Math.max(0,Math.trunc(num(item.arrived_qty)))},${iso(item.arrived_at)},${text(item.supplier_payment_term)||'manual'},
+        ${Math.max(0,Math.trunc(num(item.arrived_qty)))},${iso(item.arrived_at)},${releasedQty},${releasedAt},${releasedBy||null},${text(item.supplier_payment_term)||'manual'},
         ${num(item.supplier_paid_amount)},${text(item.supplier_payment_status)||'unpaid'},${j(item.supplier_payment_refs)}::jsonb,
         ${iso(row.created_at)||new Date().toISOString()},${iso(row.updated_at)||new Date().toISOString()}
       )
@@ -179,13 +198,14 @@ async function clearRefunds(sql,legacyId){
 
 async function updateArrival(sql,legacyId,items){
   const order=await existingOrder(sql,legacyId)
-  const current=await sql`SELECT line_no,qty FROM order_items WHERE order_id=${order.id} ORDER BY line_no`
+  const current=await sql`SELECT line_no,qty,released_qty FROM order_items WHERE order_id=${order.id} ORDER BY line_no`
   const incoming=Array.isArray(items)?items:[]
   if(current.length!==incoming.length) throw new Error('訂單品項數量不一致，請重新整理後再試')
   let allArrived=current.length>0
   for(let i=0;i<current.length;i++){
     const qty=Math.max(0,Math.trunc(num(current[i].qty)))
-    const arrived=Math.min(qty,Math.max(0,Math.trunc(num(incoming[i]?.arrived_qty))))
+    const released=Math.min(qty,Math.max(0,Math.trunc(num(current[i].released_qty))))
+    const arrived=Math.min(qty,Math.max(released,Math.max(0,Math.trunc(num(incoming[i]?.arrived_qty)))))
     const arrivedAt=arrived>=qty&&qty>0?(iso(incoming[i]?.arrived_at)||new Date().toISOString()):null
     if(!(qty>0&&arrived>=qty)) allArrived=false
     await sql`UPDATE order_items SET arrived_qty=${arrived},arrived_at=${arrivedAt},updated_at=now() WHERE order_id=${order.id} AND line_no=${current[i].line_no}`
@@ -200,7 +220,7 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   if(nextQty<1) throw new Error('訂購量至少為 1')
   const lineNo=Math.trunc(num(itemIndex))+1
   const rows=await sql`
-    SELECT line_no,sale_price,cost_price,qty,arrived_qty,supplier_paid_amount,supplier_payment_status
+    SELECT line_no,sale_price,cost_price,qty,arrived_qty,released_qty,supplier_paid_amount,supplier_payment_status
     FROM order_items WHERE order_id=${order.id} AND line_no=${lineNo} LIMIT 1
   `
   const item=rows[0]
@@ -208,9 +228,11 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   const salePrice=num(item.sale_price)
   const costPrice=num(item.cost_price)
   const paid=Math.max(0,num(item.supplier_paid_amount))
+  const released=Math.max(0,Math.trunc(num(item.released_qty)))
+  if(nextQty<released) throw new Error(`此品項已有 ${released} 件標記已釋出，請先降低／取消釋出數量再降低訂購量`)
   const nextCost=costPrice*nextQty
   if(paid>nextCost+0.01) throw new Error(`此品項已付供應商 ${paid} 元，數量不可降到已付款成本以下`)
-  const arrived=Math.min(nextQty,Math.max(0,Math.trunc(num(item.arrived_qty))))
+  const arrived=Math.min(nextQty,Math.max(released,Math.max(0,Math.trunc(num(item.arrived_qty)))))
   const supplierStatus=paid>0?(paid>=nextCost-0.01?'paid':'partial'):(item.supplier_payment_status||'unpaid')
   await sql`
     UPDATE order_items SET qty=${nextQty},subtotal=${salePrice*nextQty},cost_subtotal=${nextCost},
@@ -222,6 +244,46 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   const total=num(totals[0]?.total_amount)
   await sql`UPDATE orders SET total_amount=${total},updated_at=now() WHERE id=${order.id}`
   return {total_amount:total}
+}
+
+async function setItemRelease(sql,auth,legacyId,itemIndex,releasedQtyInput){
+  const id=text(legacyId)
+  const lineNo=Math.trunc(num(itemIndex))+1
+  if(!id||lineNo<1) throw new Error('缺少訂單品項')
+  const rows=await sql`
+    SELECT o.id AS order_id,o.status,o.fulfillment_type,oi.line_no,oi.product_name,oi.qty,oi.arrived_qty,oi.released_qty
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.legacy_id=${id} AND oi.line_no=${lineNo} LIMIT 1`
+  const row=rows[0]
+  if(!row) throw new Error('找不到訂單商品')
+  if(row.status==='cancelled') throw new Error('已取消訂單不可釋出商品')
+  if(row.fulfillment_type==='stock') throw new Error('現貨訂單不使用預購商品釋出功能')
+  const qty=Math.max(0,Math.trunc(num(row.qty)))
+  const arrived=Math.max(0,Math.trunc(num(row.arrived_qty)))
+  const releasedQty=Math.trunc(num(releasedQtyInput))
+  if(releasedQty<0||releasedQty>qty) throw new Error(`釋出數量必須介於 0～${qty} 件`)
+  if(releasedQty>0&&!(qty>0&&arrived>=qty)) throw new Error('商品需全數到貨後才能標記已釋出')
+  const updated=await sql`
+    UPDATE order_items SET
+      released_qty=${releasedQty},
+      released_at=${releasedQty>0?new Date().toISOString():null},
+      released_by_uid=${releasedQty>0?auth.uid:null},
+      updated_at=now()
+    WHERE order_id=${row.order_id} AND line_no=${lineNo}
+    RETURNING line_no,product_name,qty,arrived_qty,released_qty,released_at,released_by_uid`
+  await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
+  return updated[0]
+}
+
+async function releaseStates(sql,ids){
+  const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
+  if(!target.length)return[]
+  if(target.length>250) throw new Error('單次最多讀取 250 筆訂單釋出狀態')
+  return sql`
+    SELECT o.legacy_id AS id,oi.line_no,oi.released_qty,oi.released_at,oi.released_by_uid
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.legacy_id=ANY(${target}::text[])
+    ORDER BY o.legacy_id,oi.line_no`
 }
 
 async function updateVirtual(sql,ids,isVirtual){
@@ -316,6 +378,7 @@ export default async function handler(req,res){
     const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
     const account=await requireAccount(sql,auth)
+    await ensureReleaseSchema(sql)
     const action=text(req.body?.action)
     if(action==='sync'){
       const row=req.body?.row||{}
@@ -328,6 +391,7 @@ export default async function handler(req,res){
       return res.status(200).json({ok:true,result:await deleteOwnHelperOrder(sql,auth,req.body?.id)})
     }
     requireStaff(account)
+    if(action==='release_states') return res.status(200).json({ok:true,rows:await releaseStates(sql,req.body?.ids)})
     if(action==='update_payment') return res.status(200).json({ok:true,result:await updatePayment(sql,req.body?.id,req.body?.payment_status)})
     if(action==='update_payable') return res.status(200).json({ok:true,result:await updatePayable(sql,req.body?.id,req.body?.payable_status)})
     if(action==='archive') return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,true)})
@@ -336,6 +400,7 @@ export default async function handler(req,res){
     if(action==='clear_refunds') return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
     if(action==='update_arrival') return res.status(200).json({ok:true,result:await updateArrival(sql,req.body?.id,req.body?.items)})
     if(action==='update_item_qty') return res.status(200).json({ok:true,result:await updateItemQty(sql,req.body?.id,req.body?.item_index,req.body?.qty)})
+    if(action==='set_item_release') return res.status(200).json({ok:true,result:await setItemRelease(sql,auth,req.body?.id,req.body?.item_index,req.body?.released_qty)})
     if(action==='update_virtual') return res.status(200).json({ok:true,result:await updateVirtual(sql,req.body?.ids,req.body?.is_virtual)})
     if(action==='delete'){
       const ids=Array.isArray(req.body?.ids)?req.body.ids:[]

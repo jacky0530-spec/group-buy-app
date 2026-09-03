@@ -1,5 +1,5 @@
 import { OrdersAPI } from './db'
-import { neonOrderQuery } from './neonRuntime'
+import { neonOrderQuery, neonOrdersRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-order-read-installed')
 
@@ -19,13 +19,36 @@ function withOriginalQtyLabels(rows=[]){
   }))
 }
 
+async function withReleaseStates(rows=[]){
+  if(!rows.length)return withOriginalQtyLabels(rows)
+  const ids=[...new Set(rows.map(row=>row.id).filter(Boolean))]
+  const stateMap=new Map()
+  for(let i=0;i<ids.length;i+=250){
+    const result=await neonOrdersRuntime('release_states',{ids:ids.slice(i,i+250)})
+    ;(result?.rows||[]).forEach(row=>stateMap.set(`${row.id}:${Number(row.line_no)}`,row))
+  }
+  const merged=rows.map(order=>({
+    ...order,
+    items:(order.items||[]).map((item,index)=>{
+      const state=stateMap.get(`${order.id}:${index+1}`)
+      return state?{
+        ...item,
+        released_qty:Number(state.released_qty||0),
+        released_at:state.released_at||null,
+        released_by_uid:state.released_by_uid||'',
+      }:{...item,released_qty:0,released_at:null,released_by_uid:''}
+    }),
+  }))
+  return withOriginalQtyLabels(merged)
+}
+
 if(!globalThis[INSTALLED]){
   globalThis[INSTALLED]=true
 
   OrdersAPI.list=async function(){
     const result=await neonOrderQuery('all')
     if(!Array.isArray(result?.rows)) throw new Error('Neon 訂單回傳格式錯誤')
-    return withOriginalQtyLabels(result.rows)
+    return withReleaseStates(result.rows)
   }
 
   OrdersAPI.summary=async function(){
@@ -46,7 +69,7 @@ if(!globalThis[INSTALLED]){
     const result=await neonOrderQuery('query',{search,productId,dateFrom,dateTo,status,payment,includeArchived,pageSize,cursor:neonCursor})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 訂單搜尋回傳格式錯誤')
     return {
-      rows:withOriginalQtyLabels(result.rows),
+      rows:await withReleaseStates(result.rows),
       totalCount:Number(result.totalCount||0),
       nextCursor:result.nextCursor||null,
       hasMore:result.hasMore===true,
@@ -56,7 +79,7 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.listCorrectionCandidates=async function({pageSize=250}={}){
     const result=await neonOrderQuery('correction_candidates',{pageSize})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 更正候選訂單回傳格式錯誤')
-    return withOriginalQtyLabels(result.rows)
+    return withReleaseStates(result.rows)
   }
 
   OrdersAPI.reportData=async function({mode='month',month='',start='',end=''}={}){
@@ -74,7 +97,7 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.listByDateRange=async function(startISO,endISO){
     const result=await neonOrderQuery('date_range',{startISO,endISO})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 日期區間訂單回傳格式錯誤')
-    return withOriginalQtyLabels(result.rows)
+    return withReleaseStates(result.rows)
   }
 
   OrdersAPI.listPage=async function({pageSize=100,cursor=null}={}){
@@ -82,6 +105,6 @@ if(!globalThis[INSTALLED]){
     if(cursor&&!neonCursor) throw new Error('目前 cursor 非 Neon 格式')
     const result=await neonOrderQuery('page',{pageSize,cursor:neonCursor})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 分頁訂單回傳格式錯誤')
-    return {rows:withOriginalQtyLabels(result.rows),nextCursor:result.nextCursor||null,hasMore:result.hasMore===true}
+    return {rows:await withReleaseStates(result.rows),nextCursor:result.nextCursor||null,hasMore:result.hasMore===true}
   }
 }
