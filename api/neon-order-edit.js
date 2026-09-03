@@ -6,6 +6,20 @@ const num=v=>Number.isFinite(Number(v))?Number(v):0
 const cleanSpec=row=>{const s=row?.spec||{};return{package:text(s.package),flavor:text(s.flavor),color:text(s.color),size:text(s.size)}}
 const sameSpec=(a,b)=>['package','flavor','color','size'].every(k=>text(a?.[k])===text(b?.[k]))
 const nowISO=()=>new Date().toISOString()
+let releaseSchemaReady=false
+
+async function ensureReleaseSchema(sql){
+  if(releaseSchemaReady)return
+  const rows=await sql`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='order_items'
+      AND column_name IN ('released_qty','released_at','released_by_uid')`
+  const names=new Set(rows.map(r=>r.column_name))
+  if(!names.has('released_qty')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_qty integer NOT NULL DEFAULT 0`
+  if(!names.has('released_at')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_at timestamptz`
+  if(!names.has('released_by_uid')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_by_uid text`
+  releaseSchemaReady=true
+}
 
 async function requireStaff(sql,uid){
   const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${uid} LIMIT 1`
@@ -68,17 +82,20 @@ async function insertItems(sql,orderId,items,{preserve=[]}={}){
     const paid=same?Math.max(0,num(old.supplier_paid_amount)):0
     const paidStatus=paid>0?(paid>=cost*qty-0.01?'paid':'partial'):'unpaid'
     const refs=paid>0?(old?.supplier_payment_refs||[]):[]
-    const arrived=Math.min(qty,Math.max(0,Math.trunc(num(item.arrived_qty??old?.arrived_qty))))
+    const releasedQty=same?Math.min(qty,Math.max(0,Math.trunc(num(old?.released_qty)))):0
+    const releasedAt=releasedQty>0?(old?.released_at||null):null
+    const releasedBy=releasedQty>0?text(old?.released_by_uid):''
+    const arrived=Math.min(qty,Math.max(releasedQty,Math.max(0,Math.trunc(num(item.arrived_qty??old?.arrived_qty)))))
     const arrivedAt=arrived>=qty?(item.arrived_at||old?.arrived_at||nowISO()):null
     await sql`
       INSERT INTO order_items (
         order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,original_qty,subtotal,cost_subtotal,note,
-        spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,supplier_payment_term,
+        spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,released_qty,released_at,released_by_uid,supplier_payment_term,
         supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at
       ) VALUES (
         ${orderId},${i+1},${productId},${text(item.product_name||item.name)},${text(item.category)||'other'},${text(item.supplier)},
         ${sale},${cost},${qty},${originalQty},${sale*qty},${cost*qty},${text(item.note)},${spec.package},${spec.flavor},${spec.color},${spec.size},'preorder',
-        ${arrived},${arrivedAt},${text(item.supplier_payment_term)||'manual'},${paid},${paidStatus},${JSON.stringify(refs)}::jsonb,now(),now()
+        ${arrived},${arrivedAt},${releasedQty},${releasedAt},${releasedBy||null},${text(item.supplier_payment_term)||'manual'},${paid},${paidStatus},${JSON.stringify(refs)}::jsonb,now(),now()
       )
     `
   }
@@ -114,7 +131,8 @@ async function createOrder(sql,row){
   if(!orderId) throw new Error(`訂單 ${id} 建立失敗`)
   const current=await sql`
     SELECT oi.line_no,p.legacy_id AS product_id,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
-           oi.qty,oi.original_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at
+           oi.qty,oi.original_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at,
+           oi.released_qty,oi.released_at,oi.released_by_uid
     FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id
     WHERE oi.order_id=${orderId} ORDER BY oi.line_no
   `
@@ -133,22 +151,27 @@ async function editOrder(sql,id,data){
   if(!incoming.length) throw new Error('訂單至少需要一個品項')
   const current=await sql`
     SELECT oi.line_no,p.legacy_id AS product_id,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
-           oi.qty,oi.original_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at
+           oi.qty,oi.original_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,oi.arrived_qty,oi.arrived_at,
+           oi.released_qty,oi.released_at,oi.released_by_uid
     FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id
     WHERE oi.order_id=${order.id} ORDER BY oi.line_no
   `
   for(const old of current){
     const paid=Math.max(0,num(old.supplier_paid_amount))
-    if(paid<=0) continue
+    const released=Math.max(0,Math.trunc(num(old.released_qty)))
     const next=incoming[Number(old.line_no)-1]
-    if(!next) throw new Error(`第 ${old.line_no} 項已有供應商付款，不可刪除`)
+    if((paid>0||released>0)&&!next) throw new Error(`第 ${old.line_no} 項已有${released>0?'釋出紀錄':'供應商付款'}，不可刪除`)
+    if(!next) continue
     const nextProduct=text(next.original_product_id||next.product_id||next.id).replace(/^stock:/,'')
     const oldSpec={package:old.spec_package,flavor:old.spec_flavor,color:old.spec_color,size:old.spec_size}
     const nextSpec=cleanSpec(next)
-    if(nextProduct!==text(old.product_id)||!sameSpec(nextSpec,oldSpec)) throw new Error(`第 ${old.line_no} 項已有供應商付款，不可更換商品或規格`)
+    if((paid>0||released>0)&&(nextProduct!==text(old.product_id)||!sameSpec(nextSpec,oldSpec))) throw new Error(`第 ${old.line_no} 項已有${released>0?'釋出紀錄':'供應商付款'}，不可更換商品或規格`)
+    const nextQty=Math.max(1,Math.trunc(num(next.qty)||1))
+    if(released>nextQty) throw new Error(`第 ${old.line_no} 項已有 ${released} 件標記已釋出，請先取消釋出再降低數量`)
+    if(paid<=0) continue
     const nextProductId=await productUuid(sql,nextProduct)
     const nextUnitCost=await resolvedItemCost(sql,nextProductId,nextSpec,next.cost_price)
-    const nextCost=nextUnitCost*Math.max(1,Math.trunc(num(next.qty)||1))
+    const nextCost=nextUnitCost*nextQty
     if(paid>nextCost+0.01) throw new Error(`第 ${old.line_no} 項已付供應商 ${paid} 元，修改後成本不可低於已付款金額`)
   }
   const customerId=await customerUuid(sql,data.customer_id)
@@ -172,6 +195,7 @@ export default async function handler(req,res){
     const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
     await requireStaff(sql,auth.uid)
+    await ensureReleaseSchema(sql)
     const action=text(req.body?.action)||'edit'
     if(action==='edit') return res.status(200).json({ok:true,result:await editOrder(sql,text(req.body?.id),req.body?.data||{})})
     if(action==='create'){
