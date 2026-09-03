@@ -310,6 +310,18 @@
       "data_logic": "只使用既有 OrdersAPI.searchPage 回傳的 shipped_at；同商品有多次已出貨訂單時以最近一次出貨日歸組。舊訂單若 shipped_at 缺失，依 updated_at、order_date、created_at 依序回退。待出貨清單、商品搜尋、出貨／封存、訂單 SQL 與資料寫入邏輯不變。",
       "data_migration": "無。純前端排序與分組顯示，不改寫 orders、order_items、products、到貨、付款或庫存資料。",
       "rollback": "移除 PendingProductReportFiltered 的 shippedProductDatesRef、已出貨目錄日期攔截與日期分隔線 DOM 增強，並將 APP_VERSION 還原為 V42；不需資料庫 rollback。"
+    },
+    {
+      "version": "V44",
+      "date": "2026-09-03",
+      "type": "ui",
+      "summary": "已出貨商品日期分組排序改為較早出貨日優先，讓距今天較遠的已出貨商品先顯示。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 已出貨日期群組排序由新到舊改為舊到新；保留日期分隔線、同日商品名稱排序與日期未記錄固定最後"],
+      "data_logic": "沿用 V43 各商品最近一次實際出貨日作為分組日期，只反轉日期群組顯示順序；不改 shipped_at、訂單狀態、出貨／封存、商品搜尋或任何資料寫入邏輯。",
+      "data_migration": "無。純前端排序方向調整，不改寫 orders、order_items、products、到貨、付款或庫存資料。",
+      "rollback": "將 PendingProductReportFiltered 日期群組排序恢復 V43 的由新到舊，並將 APP_VERSION 還原為 V43；不需資料庫 rollback。"
     }
   ]
 }
