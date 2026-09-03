@@ -277,6 +277,17 @@ async function setItemRelease(sql,auth,legacyId,itemIndex,released){
   return updated[0]
 }
 
+async function releaseStates(sql,ids){
+  const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
+  if(!target.length)return[]
+  if(target.length>250) throw new Error('單次最多讀取 250 筆訂單釋出狀態')
+  return sql`
+    SELECT o.legacy_id AS id,oi.line_no,oi.released_qty,oi.released_at,oi.released_by_uid
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.legacy_id=ANY(${target}::text[])
+    ORDER BY o.legacy_id,oi.line_no`
+}
+
 async function updateVirtual(sql,ids,isVirtual){
   const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
   if(!target.length) return {updated:0}
@@ -382,6 +393,7 @@ export default async function handler(req,res){
       return res.status(200).json({ok:true,result:await deleteOwnHelperOrder(sql,auth,req.body?.id)})
     }
     requireStaff(account)
+    if(action==='release_states') return res.status(200).json({ok:true,rows:await releaseStates(sql,req.body?.ids)})
     if(action==='update_payment') return res.status(200).json({ok:true,result:await updatePayment(sql,req.body?.id,req.body?.payment_status)})
     if(action==='update_payable') return res.status(200).json({ok:true,result:await updatePayable(sql,req.body?.id,req.body?.payable_status)})
     if(action==='archive') return res.status(200).json({ok:true,result:await updateArchive(sql,req.body?.id,true)})
