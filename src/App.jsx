@@ -4,6 +4,7 @@ import { AuthProvider, AuthGuard, RoleGuard, useAuth } from './components/AuthGu
 import CustomerSearchNotes from './components/CustomerSearchNotes'
 import OrderArrivalResetPatch from './components/OrderArrivalResetPatch'
 import OrderReleaseManager from './components/OrderReleaseManager'
+import ReleasedTextStyler from './components/ReleasedTextStyler'
 import StockAssetPanel from './components/StockAssetPanel'
 import StockValueTopCard from './components/StockValueTopCard'
 import FinanceCostWarning from './components/FinanceCostWarning'
@@ -34,6 +35,7 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
         <BrowserRouter>
+          <ReleasedTextStyler />
           <CustomerSearchNotes />
           <OrderArrivalResetPatch />
           <Routes>
