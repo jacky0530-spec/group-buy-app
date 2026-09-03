@@ -30,11 +30,14 @@ function specText(item) {
 
 function itemKey(item) {
   const price = Number(item.sale_price ?? item.price ?? 0)
+  const qty = Math.max(0,Number(item.qty || 0))
+  const released = Math.min(qty,Math.max(0,Number(item.released_qty || 0)))
   const spec = item?.spec || {}
   return [
     item.product_id || item.id || '',
     item.product_name || item.name || '',
     price,
+    released > 0 ? 'released' : 'active',
     spec.package || '',
     spec.flavor || '',
     spec.color || '',
@@ -65,19 +68,25 @@ export function groupReceiptOrders(orders = []) {
 
     ;(order.items || []).forEach(item => {
       const key = itemKey(item)
-      const qty = Number(item.qty || 0)
+      const qty = Math.max(0,Number(item.qty || 0))
+      const releasedQty = Math.min(qty,Math.max(0,Number(item.released_qty || 0)))
+      const pickupQty = Math.max(0,qty-releasedQty)
       const price = Number(item.sale_price ?? item.price ?? 0)
-      const subtotal = Number(item.subtotal ?? price * qty)
+      const pickupSubtotal = price * pickupQty
       const old = group.items.get(key)
       if (old) {
         old.qty += qty
-        old.subtotal += subtotal
+        old.released_qty += releasedQty
+        old.pickup_qty += pickupQty
+        old.subtotal += pickupSubtotal
       } else {
         group.items.set(key, {
           ...item,
           qty,
+          released_qty:releasedQty,
+          pickup_qty:pickupQty,
           sale_price:price,
-          subtotal,
+          subtotal:pickupSubtotal,
         })
       }
     })
@@ -103,8 +112,6 @@ function printReceiptInIsolatedWindow() {
   const source = document.getElementById('receipt-area')
   if (!source) return
 
-  // iPad/Safari 對整個 SPA 呼叫 window.print() 可能會把 modal/backdrop 當成畫面快照。
-  // 從使用者點擊事件同步開啟一個乾淨文件，只放出貨單內容，可大幅降低重新排版成本。
   const printWindow = window.open('', '_blank')
   if (!printWindow) {
     window.print()
@@ -145,7 +152,6 @@ function printReceiptInIsolatedWindow() {
 
   const launchPrint = () => {
     printWindow.focus()
-    // 給 WebKit 一個很短的排版週期，不再等待整個主網站重排。
     window.setTimeout(() => {
       printWindow.print()
     }, 120)
@@ -158,7 +164,7 @@ function printReceiptInIsolatedWindow() {
 export default function GroupedReceipt({ orders, onClose }) {
   const groups = groupReceiptOrders(orders)
   const grandTotal = groups.reduce((sum,group) => sum + group.subtotal,0)
-  const itemCount = groups.reduce((sum,group) => sum + group.items.reduce((s,item) => s + Number(item.qty || 0),0),0)
+  const itemCount = groups.reduce((sum,group) => sum + group.items.reduce((s,item) => s + Number(item.pickup_qty ?? item.qty ?? 0),0),0)
 
   return (
     <Modal title="📋 出貨明細單" onClose={onClose} width={760}>
@@ -166,7 +172,7 @@ export default function GroupedReceipt({ orders, onClose }) {
         <div style={{ textAlign:'center',marginBottom:16,paddingBottom:12,borderBottom:'2px solid var(--border)' }}>
           <div style={{ fontWeight:900,fontSize:20 }}>🛍️ 團購百貨 出貨單</div>
           <div style={{ color:'var(--text-secondary)',fontSize:12,marginTop:4 }}>
-            列印日期：{new Date().toLocaleDateString('zh-TW')}　｜　共 {groups.length} 位客戶／{itemCount} 件
+            列印日期：{new Date().toLocaleDateString('zh-TW')}　｜　共 {groups.length} 位客戶／應取 {itemCount} 件
           </div>
         </div>
 
@@ -177,24 +183,26 @@ export default function GroupedReceipt({ orders, onClose }) {
               <span style={{ color:'var(--text-secondary)',fontSize:12 }}>📱 {phoneLabel(group)}</span>
             </div>
 
-            {group.items.map((item,i) => (
-              <div key={`${group.key}-${i}`} style={{ display:'grid',gridTemplateColumns:'1fr 80px 70px 100px',gap:8,padding:'7px 12px',borderTop:'1px solid var(--border)',fontSize:13 }}>
-                <span>{item.product_name || item.name}{specText(item)}{item.note && ` — ${item.note}`}</span>
+            {group.items.map((item,i) => {
+              const releasedQty=Number(item.released_qty||0)
+              const pickupQty=Number(item.pickup_qty??item.qty??0)
+              return <div key={`${group.key}-${i}`} style={{ display:'grid',gridTemplateColumns:'1fr 80px 90px 100px',gap:8,padding:'7px 12px',borderTop:'1px solid var(--border)',fontSize:13,opacity:releasedQty>0?.78:1 }}>
+                <span>{item.product_name || item.name}{specText(item)}{item.note && ` — ${item.note}`}{releasedQty>0&&<strong style={{color:'#7c3aed'}}>　🟣 已釋出 {releasedQty}/{item.qty}</strong>}</span>
                 <span style={{ textAlign:'right' }}>NT${Number(item.sale_price ?? item.price ?? 0).toLocaleString()}</span>
-                <span style={{ textAlign:'center' }}>×{item.qty}</span>
-                <strong style={{ textAlign:'right' }}>NT${Number(item.subtotal || 0).toLocaleString()}</strong>
+                <span style={{ textAlign:'center' }}>{releasedQty>0?`應取 ×${pickupQty}`:`×${item.qty}`}</span>
+                <strong style={{ textAlign:'right',color:releasedQty>0?'#7c3aed':undefined }}>{pickupQty>0?`NT${Number(item.subtotal || 0).toLocaleString()}`:'已釋出'}</strong>
               </div>
-            ))}
+            })}
 
             <div style={{ borderTop:'2px solid var(--border)',padding:'9px 12px',display:'flex',justifyContent:'flex-end',alignItems:'center',gap:18,background:'var(--surface-2)' }}>
-              <span style={{ fontSize:12,color:'var(--text-secondary)' }}>客戶小計</span>
+              <span style={{ fontSize:12,color:'var(--text-secondary)' }}>取貨應收小計</span>
               <strong style={{ fontSize:16,color:'var(--indigo)' }}>NT${group.subtotal.toLocaleString()}</strong>
             </div>
           </div>
         ))}
 
         <div style={{ borderTop:'3px double var(--border)',marginTop:18,padding:'14px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--indigo-light)',borderRadius:10 }}>
-          <strong>總合計（{groups.length} 位客戶）</strong>
+          <strong>取貨應收總合計（{groups.length} 位客戶）</strong>
           <strong style={{ fontSize:22,color:'var(--indigo)' }}>NT${grandTotal.toLocaleString()}</strong>
         </div>
       </div>
