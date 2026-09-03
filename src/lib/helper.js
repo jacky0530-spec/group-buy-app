@@ -29,21 +29,6 @@ async function syncPairRows(entryRow, orderRow) {
   if (entryRow) await bestEffortNeonHelperSync(cleanForNeon(entryRow))
 }
 
-async function syncPairById(entryId, orderId) {
-  try {
-    const [entrySnap,orderSnap] = await Promise.all([
-      entryId ? getDoc(doc(db,'helper_entries',entryId)) : Promise.resolve(null),
-      orderId ? getDoc(doc(db,'orders',orderId)) : Promise.resolve(null),
-    ])
-    await syncPairRows(
-      entrySnap?.exists?.() ? { id:entrySnap.id,...entrySnap.data() } : null,
-      orderSnap?.exists?.() ? { id:orderSnap.id,...orderSnap.data() } : null,
-    )
-  } catch (err) {
-    console.error('[Neon dual-write] helper pair readback failed',err)
-  }
-}
-
 async function syncPairByIdRequired(entryId, orderId) {
   const [entrySnap,orderSnap] = await Promise.all([
     entryId ? getDoc(doc(db,'helper_entries',entryId)) : Promise.resolve(null),
