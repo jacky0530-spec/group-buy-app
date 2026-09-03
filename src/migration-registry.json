@@ -274,6 +274,18 @@
       "data_logic": "商品表單成功關閉後才同步結單日；取消、關閉或表單驗證失敗不改寫 order_deadline。新增商品有設定日期時會依商品名稱解析新商品 ID 後寫入；編輯商品直接沿用既有 product legacy_id。V38 小幫手結單限制規則不變。",
       "data_migration": "無。不修改既有 products.order_deadline 資料，不回填商品，不改 orders/order_items/helper_entries。",
       "rollback": "將 ProductDeadlineManager 還原 V39 的獨立結單日設定卡片，並將 APP_VERSION 還原為 V39；不需資料庫 rollback。"
+    },
+    {
+      "version": "V41",
+      "date": "2026-09-03",
+      "type": "workflow",
+      "summary": "小幫手可刪除自己尚未到貨、尚未支付供應商款項的未出貨預購訂單；修改或刪除後薪資依 Neon 最新資料重新計算，管理薪資表移除待確認與已取消欄位。",
+      "database_changes": [],
+      "api_changes": ["api/neon-orders-runtime.js: 新增 delete_own_helper；只允許 helper 刪除自己建立的 pending preorder，後端阻擋已到貨、現貨／庫存、供應商已付款或已有付款 allocation 的訂單；以單一 CTE SQL 同時刪除 orders 與對應 helper_entries，不新增 Serverless Function","src/lib/helper.js: 我的未出貨改讀 Neon my_pending_orders；小幫手修改訂單改要求 Neon 訂單／helper entry 同步成功；新增 deleteMyPendingOrder 並在 Neon 成功後清理 Firestore 備份"],
+      "ui_changes": ["src/pages/HelperPortalV4.jsx: 我的未出貨新增刪除按鈕、不可逆確認與到貨／付款／現貨鎖定提示；修改與刪除成功提示薪資已重算","src/pages/HelperEntries.jsx: 薪資統計表移除舊待確認與已取消欄位，移除舊待確認 KPI 卡；搜尋／文字輸入沿用 48px／16px 標準"],
+      "data_logic": "薪資仍沿用 V36：正式=商品 qty 加總、虛擬=每筆 1。修改訂單時同步更新 helper_entries.items/payload，管理端 SQL 即時重算；刪除時連同 helper_entries 移除，因此當月登記筆數、正式／虛擬薪資數量與薪資立即依剩餘資料重算。",
+      "data_migration": "無 schema migration、無歷史資料批次改寫。只有小幫手主動確認刪除符合條件的自己未出貨訂單時才永久刪除該 order、其 order_items（FK cascade）與對應 helper_entry。",
+      "rollback": "移除 delete_own_helper、HelperPortalV4 刪除介面與 helper.js deleteMyPendingOrder／強制同步，還原 HelperEntries V40 欄位與 APP_VERSION；已由小幫手確認刪除的訂單為永久刪除，程式 rollback 不會自動復原資料。"
     }
   ]
 }

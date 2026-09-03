@@ -63,18 +63,16 @@ export default function HelperEntries() {
   const totals = useMemo(() => stats.reduce((a,r) => ({
     total:a.total+Number(r.total||0),
     converted:a.converted+Number(r.converted||0),
-    pending:a.pending+Number(r.pending||0),
-    cancelled:a.cancelled+Number(r.cancelled||0),
     virtual:a.virtual+Number(r.virtual||0),
     formal:a.formal+Number(r.formal||0),
     payUnits:a.payUnits+Number(r.pay_units||0),
-  }),{total:0,converted:0,pending:0,cancelled:0,virtual:0,formal:0,payUnits:0}),[stats])
+  }),{total:0,converted:0,virtual:0,formal:0,payUnits:0}),[stats])
 
   return <div className="animate-fade">
     <div style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:18}}>
       <div>
         <h2 style={{fontSize:22,fontWeight:800}}>小幫手登記</h2>
-        <p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>月份統計與紀錄搜尋已改由 Neon SQL 執行；每次只載入目前月份與最多 {PAGE_SIZE} 筆紀錄。</p>
+        <p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>月份統計與紀錄搜尋由 Neon SQL 執行；每次只載入目前月份與最多 {PAGE_SIZE} 筆紀錄。</p>
       </div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <button className="btn btn-ghost" onClick={sync} disabled={working==='sync'}><Database size={14}/>{working==='sync'?'同步中...':'重新同步商品目錄'}</button>
@@ -83,14 +81,14 @@ export default function HelperEntries() {
     </div>
 
     <div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',padding:12,borderRadius:10,marginBottom:14,fontSize:13,color:'#065f46'}}>
-      薪資計算規則：正式訂單依商品數量計算（例如 ×5 就算 5）；虛擬訂單維持每筆登記算 1。舊待確認與已取消不列入薪資。
+      薪資計算規則：正式訂單依目前商品數量計算（例如 ×5 就算 5）；虛擬訂單每筆算 1。小幫手修改數量、切換正式／虛擬或刪除可刪訂單後，薪資統計會依 Neon 最新資料重新計算。
     </div>
 
     <div className="card" style={{marginBottom:14}}>
       <div className="card-body">
         <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
           <label style={{display:'flex',gap:7,alignItems:'center',fontWeight:800}}><CalendarDays size={15}/>統計月份 <input type="month" value={month} onChange={e=>setMonth(e.target.value)} /></label>
-          <div className="search-input-wrap" style={{flex:'1 1 280px'}}><Search size={14}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋小幫手、客戶、末兩碼或商品" style={{paddingLeft:32}}/></div>
+          <div className="search-input-wrap" style={{flex:'1 1 280px'}}><Search size={14}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋小幫手、客戶、末兩碼或商品" style={{height:48,fontSize:16,paddingLeft:38}}/></div>
         </div>
       </div>
     </div>
@@ -101,16 +99,15 @@ export default function HelperEntries() {
       <div style={{background:'#eefbf4',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>正式商品數量</div><strong style={{fontSize:26,color:'#047857'}}>{totals.formal}</strong></div>
       <div style={{background:'#fff1f2',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>虛擬薪資筆數</div><strong style={{fontSize:26,color:'#be123c'}}>{totals.virtual}</strong></div>
       <div style={{background:'#f5f3ff',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>薪資計算數量</div><strong style={{fontSize:26,color:'#6d28d9'}}>{totals.payUnits}</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>目前 1 單位 = NT$1</div></div>
-      <div style={{background:'var(--amber-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,color:'var(--text-secondary)',fontWeight:700}}>舊待確認</div><strong style={{fontSize:26,color:'#b45309'}}>{totals.pending}</strong></div>
     </div>
 
     <div className="card" style={{marginBottom:14}}>
       <div className="card-header"><strong>{month || '全部月份'} 小幫手薪資統計</strong></div>
       <div className="table-container"><table>
-        <thead><tr><th>小幫手</th><th>登記筆數</th><th>已建立訂單</th><th>正式數量</th><th>虛擬筆數</th><th>薪資數量</th><th>薪資</th><th>舊待確認</th><th>已取消</th><th>成功率</th></tr></thead>
+        <thead><tr><th>小幫手</th><th>登記筆數</th><th>已建立訂單</th><th>正式數量</th><th>虛擬筆數</th><th>薪資數量</th><th>薪資</th><th>成功率</th></tr></thead>
         <tbody>
-          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td><strong>{r.formal}</strong></td><td>{r.virtual}</td><td><strong style={{color:'#6d28d9'}}>{r.pay_units}</strong></td><td><strong>{money(r.pay_units)}</strong></td><td>{r.pending}</td><td>{r.cancelled}</td><td>{r.total?`${Math.round(Number(r.converted||0)/Number(r.total||1)*100)}%`:'—'}</td></tr>)}
-          {!loading&&!stats.length&&<tr><td colSpan={10} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>此月份沒有小幫手登記資料</td></tr>}
+          {stats.map(r => <tr key={r.key}><td><strong>{r.name}</strong>{r.uid&&<div style={{fontSize:10,color:'var(--text-muted)'}}>UID {r.uid.slice(0,8)}…</div>}</td><td><strong>{r.total}</strong></td><td><strong style={{color:'var(--emerald)'}}>{r.converted}</strong></td><td><strong>{r.formal}</strong></td><td>{r.virtual}</td><td><strong style={{color:'#6d28d9'}}>{r.pay_units}</strong></td><td><strong>{money(r.pay_units)}</strong></td><td>{r.total?`${Math.round(Number(r.converted||0)/Number(r.total||1)*100)}%`:'—'}</td></tr>)}
+          {!loading&&!stats.length&&<tr><td colSpan={8} style={{textAlign:'center',padding:28,color:'var(--text-muted)'}}>此月份沒有小幫手登記資料</td></tr>}
         </tbody>
       </table></div>
     </div>
