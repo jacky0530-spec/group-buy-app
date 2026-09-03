@@ -237,6 +237,63 @@ async function updateVirtual(sql,ids,isVirtual){
   return {updated:rows.length,ids:rows.map(r=>r.id)}
 }
 
+async function deleteOwnHelperOrder(sql,auth,legacyId){
+  const id=text(legacyId)
+  if(!id) throw new Error('缺少訂單 ID')
+  const rows=await sql`
+    SELECT o.id,o.legacy_id,o.status,o.archived,o.source,o.fulfillment_type,o.created_by_uid,o.helper_entry_id,
+      EXISTS(SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.arrived_qty>0) AS has_arrived,
+      EXISTS(SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND (
+        oi.supplier_paid_amount>0 OR oi.supplier_payment_status IN ('paid','partial') OR
+        jsonb_array_length(COALESCE(oi.supplier_payment_refs,'[]'::jsonb))>0
+      )) AS has_supplier_payment,
+      EXISTS(SELECT 1 FROM supplier_payment_allocations spa WHERE spa.order_id=o.id) AS has_allocation,
+      EXISTS(SELECT 1 FROM inventory_transactions it WHERE it.order_id=o.id) AS has_inventory
+    FROM orders o WHERE o.legacy_id=${id} LIMIT 1
+  `
+  const order=rows[0]
+  if(!order) throw new Error('找不到訂單')
+  if(order.source!=='helper'||order.created_by_uid!==auth.uid) throw new Error('只能刪除自己建立的小幫手訂單')
+  if(order.status!=='pending'||order.archived===true) throw new Error('此訂單已離開未出貨狀態，不能刪除')
+  if(order.fulfillment_type!=='preorder'||order.has_inventory===true) throw new Error('現貨／庫存訂單不能由小幫手刪除')
+  if(order.has_arrived===true) throw new Error('此訂單已有商品到貨，請聯絡管理者刪除')
+  if(order.has_supplier_payment===true||order.has_allocation===true) throw new Error('此訂單已有供應商付款紀錄，請聯絡管理者刪除')
+  if(!order.helper_entry_id) throw new Error('找不到對應的小幫手登記，請聯絡管理者刪除')
+
+  const deleted=await sql`
+    WITH target AS (
+      SELECT o.id,o.legacy_id,o.helper_entry_id
+      FROM orders o
+      WHERE o.id=${order.id}
+        AND o.source='helper'
+        AND o.created_by_uid=${auth.uid}
+        AND o.status='pending'
+        AND o.archived<>true
+        AND o.fulfillment_type='preorder'
+        AND o.helper_entry_id IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.arrived_qty>0)
+        AND NOT EXISTS(SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND (
+          oi.supplier_paid_amount>0 OR oi.supplier_payment_status IN ('paid','partial') OR
+          jsonb_array_length(COALESCE(oi.supplier_payment_refs,'[]'::jsonb))>0
+        ))
+        AND NOT EXISTS(SELECT 1 FROM supplier_payment_allocations spa WHERE spa.order_id=o.id)
+        AND NOT EXISTS(SELECT 1 FROM inventory_transactions it WHERE it.order_id=o.id)
+    ), deleted_order AS (
+      DELETE FROM orders o USING target t
+      WHERE o.id=t.id
+      RETURNING o.legacy_id,t.helper_entry_id
+    ), deleted_entry AS (
+      DELETE FROM helper_entries h USING deleted_order d
+      WHERE h.id=d.helper_entry_id
+      RETURNING h.legacy_id
+    )
+    SELECT d.legacy_id AS id,(SELECT legacy_id FROM deleted_entry LIMIT 1) AS helper_entry_id
+    FROM deleted_order d
+  `
+  if(!deleted[0]) throw new Error('訂單狀態剛剛已變更，請重新整理後再試')
+  return deleted[0]
+}
+
 async function deleteOrders(sql,ids){
   let deleted=0
   for(const legacyId of [...new Set(ids.map(text).filter(Boolean))]){
@@ -265,6 +322,10 @@ export default async function handler(req,res){
       requireOwnHelperOrder(account,auth,row)
       const result=await syncOrder(sql,row)
       return res.status(200).json({ok:true,result})
+    }
+    if(action==='delete_own_helper'){
+      if(account.role!=='helper') throw new Error('此刪除動作僅供小幫手帳號使用')
+      return res.status(200).json({ok:true,result:await deleteOwnHelperOrder(sql,auth,req.body?.id)})
     }
     requireStaff(account)
     if(action==='update_payment') return res.status(200).json({ok:true,result:await updatePayment(sql,req.body?.id,req.body?.payment_status)})
