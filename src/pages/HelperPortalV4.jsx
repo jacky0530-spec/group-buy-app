@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ClipboardList, LogOut, Pencil, RefreshCw, Save, ShoppingCart, Warehouse, X } from 'lucide-react'
+import { ClipboardList, LogOut, Pencil, RefreshCw, Save, ShoppingCart, Trash2, Warehouse, X } from 'lucide-react'
 import { useAuth } from '../components/AuthGuard'
-import { useToast } from '../components/UI'
+import { ConfirmDialog, useToast } from '../components/UI'
 import HelperPortalV3 from './HelperPortalV3'
 import { HelperAPI } from '../lib/helper'
 import QuantityInput from '../components/QuantityInput'
@@ -14,6 +14,8 @@ function productByItem(products,item){
   return products.find(p => p.id === (item.product_id || item.id)) || null
 }
 function hasArrived(order){ return (order.items || []).some(item => Number(item.arrived_qty || 0) > 0) }
+function hasSupplierPayment(order){ return (order.items || []).some(item => Number(item.supplier_paid_amount || 0) > 0 || ['paid','partial'].includes(item.supplier_payment_status) || (item.supplier_payment_refs || []).length > 0) }
+function isStockOrder(order){ return order.fulfillment_type === 'stock' || (order.items || []).some(item => item.fulfillment_type === 'stock') }
 
 function SpecEditor({ product,spec,onChange,disabled }){
   if(!product) return <span style={{fontSize:12,color:'#b45309'}}>商品目錄中找不到此商品</span>
@@ -36,6 +38,8 @@ function MyPendingOrders(){
   const [editing,setEditing]=useState('')
   const [drafts,setDrafts]=useState({})
   const [saving,setSaving]=useState('')
+  const [deleting,setDeleting]=useState('')
+  const [deleteTarget,setDeleteTarget]=useState(null)
   const [search,setSearch]=useState('')
 
   const load=useCallback(async()=>{
@@ -83,35 +87,52 @@ function MyPendingOrders(){
       if(['color_size','size_only'].includes(product.spec_mode)&&!item.spec?.size)return toast(`「${item.product_name}」請選擇尺寸`,'error')
     }
     setSaving(order.id)
-    try{await HelperAPI.updateMyPendingOrder(user.uid,order.id,draft);toast('訂單已更新，後台同步完成 ✓');setEditing('');await load()}
+    try{await HelperAPI.updateMyPendingOrder(user.uid,order.id,draft);toast('訂單已更新，薪資統計已重新計算 ✓');setEditing('');await load()}
     catch(err){toast('修改失敗：'+err.message,'error')}
     finally{setSaving('')}
+  }
+  async function removeOrder(order){
+    setDeleting(order.id)
+    try{
+      await HelperAPI.deleteMyPendingOrder(user.uid,order.id)
+      setOrders(prev=>prev.filter(x=>x.id!==order.id))
+      setDeleteTarget(null)
+      if(editing===order.id)setEditing('')
+      toast('訂單已刪除，薪資統計已重新計算 ✓')
+      await load()
+    }catch(err){toast('刪除失敗：'+err.message,'error')}
+    finally{setDeleting('')}
   }
 
   const qty=filtered.reduce((s,o)=>s+(o.items||[]).reduce((a,i)=>a+Number(i.qty||0),0),0)
   return <div>
-    <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:12}}><div><strong style={{fontSize:18}}>我的未出貨訂單</strong><div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>SQL 只讀你自己尚未出貨的訂單；商品目錄只有按「修改」時才載入。</div></div><button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}><RefreshCw size={13}/>重新整理</button></div>
+    <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:12}}><div><strong style={{fontSize:18}}>我的未出貨訂單</strong><div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>只顯示你自己尚未出貨的 Neon 訂單；未到貨、未付款的預購訂單可修改或刪除，異動後薪資會重新計算。</div></div><button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}><RefreshCw size={13}/>重新整理</button></div>
     <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10,marginBottom:12}}><div className="card" style={{padding:12}}><small>未出貨訂單</small><div style={{fontSize:24,fontWeight:900}}>{filtered.length} 筆</div></div><div className="card" style={{padding:12}}><small>商品總數量</small><div style={{fontSize:24,fontWeight:900}}>{qty} 件</div></div></div>
-    <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋客戶／末兩碼／商品" style={{height:46,marginBottom:12}}/>
+    <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋客戶／末兩碼／商品" style={{height:48,fontSize:16,marginBottom:12}}/>
     {loading&&<div className="card" style={{padding:28,textAlign:'center'}}>讀取中...</div>}
     {!loading&&!filtered.length&&<div className="card" style={{padding:30,textAlign:'center',color:'var(--text-muted)'}}>目前沒有自己建立的未出貨訂單</div>}
     {!loading&&filtered.map(order=>{
-      const locked=hasArrived(order)
+      const arrived=hasArrived(order)
+      const paid=hasSupplierPayment(order)
+      const stock=isStockOrder(order)
+      const locked=arrived||paid||stock
       const isEditing=editing===order.id
       const draft=drafts[order.id]
+      const lockText=arrived?'已到貨，已鎖定':paid?'已有供應商付款，已鎖定':stock?'現貨訂單，已鎖定':''
       return <div className="card" key={order.id} style={{marginBottom:12,border:order.is_virtual?'1.5px solid #fb7185':undefined,background:order.is_virtual?'#fff7f8':undefined}}>
-        <div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap'}}><div><strong>{order.customer_name}</strong> <span style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {order.customer_phone_last2||'—'}</span><div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>訂購：{dateText(order.order_date||order.created_at)}</div></div><div style={{display:'flex',gap:7,alignItems:'center'}}><span className={`badge ${order.is_virtual?'badge-rose':'badge-emerald'}`}>{order.is_virtual?'虛擬':'正式'}</span>{(order.items||[]).some(i=>i.fulfillment_type==='stock')&&<span className="badge badge-violet">現貨</span>}{locked?<span className="badge badge-amber">已到貨，已鎖定</span>:!isEditing?<button className="btn btn-sm btn-ghost" disabled={Boolean(catalogLoading)} onClick={()=>begin(order)}><Pencil size={12}/>{catalogLoading===order.id?'讀取商品...':'修改'}</button>:null}</div></div>
+        <div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap'}}><div><strong>{order.customer_name}</strong> <span style={{fontSize:11,color:'var(--text-muted)'}}>末碼 {order.customer_phone_last2||'—'}</span><div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>訂購：{dateText(order.order_date||order.created_at)}</div></div><div style={{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap'}}><span className={`badge ${order.is_virtual?'badge-rose':'badge-emerald'}`}>{order.is_virtual?'虛擬':'正式'}</span>{stock&&<span className="badge badge-violet">現貨</span>}{locked?<span className="badge badge-amber">{lockText}</span>:!isEditing?<><button className="btn btn-sm btn-ghost" disabled={Boolean(catalogLoading)||deleting===order.id} onClick={()=>begin(order)}><Pencil size={12}/>{catalogLoading===order.id?'讀取商品...':'修改'}</button><button className="btn btn-sm btn-ghost" disabled={deleting===order.id} onClick={()=>setDeleteTarget(order)} style={{color:'var(--rose)'}}><Trash2 size={12}/>{deleting===order.id?'刪除中...':'刪除'}</button></>:null}</div></div>
         <div className="card-body">
           {!isEditing?(order.items||[]).map((item,i)=><div key={i} style={{padding:'8px 0',borderBottom:i<(order.items||[]).length-1?'1px dashed var(--border)':'none'}}><strong>{item.product_name||item.name}</strong> × <strong>{item.qty}</strong><div style={{fontSize:12,color:'var(--indigo)',fontWeight:800,marginTop:3}}>{[item.spec?.package,item.spec?.flavor,item.spec?.color,item.spec?.size].filter(Boolean).join('／')||'無規格'}</div>{item.note&&<div style={{fontSize:11,color:'var(--rose)',fontWeight:800}}>備註：{item.note}</div>}</div>):draft&&<>
-            {draft.items.map((item,i)=>{const product=productByItem(products,item);return <div key={i} style={{padding:'10px 0',borderBottom:'1px dashed var(--border)'}}><strong>{item.product_name}</strong><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}><SpecEditor product={product} spec={item.spec||{}} onChange={(k,v)=>patchSpec(order.id,i,k,v)} disabled={saving===order.id}/><span style={{fontSize:12,color:'var(--text-muted)'}}>數量</span><QuantityInput value={item.qty} min={1} onChange={v=>patchItem(order.id,i,{qty:v})} style={{width:120,height:46,fontSize:19,fontWeight:900,textAlign:'center'}}/><input value={item.note||''} onChange={e=>patchItem(order.id,i,{note:e.target.value})} placeholder="商品備註" style={{flex:1,minWidth:150}}/></div></div>})}
+            {draft.items.map((item,i)=>{const product=productByItem(products,item);return <div key={i} style={{padding:'10px 0',borderBottom:'1px dashed var(--border)'}}><strong>{item.product_name}</strong><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}><SpecEditor product={product} spec={item.spec||{}} onChange={(k,v)=>patchSpec(order.id,i,k,v)} disabled={saving===order.id}/><span style={{fontSize:12,color:'var(--text-muted)'}}>數量</span><QuantityInput value={item.qty} min={1} onChange={v=>patchItem(order.id,i,{qty:v})} style={{width:120,height:48,fontSize:19,fontWeight:900,textAlign:'center'}}/><input value={item.note||''} onChange={e=>patchItem(order.id,i,{note:e.target.value})} placeholder="商品備註" style={{flex:1,minWidth:150,height:48,fontSize:16}}/></div></div>})}
             <label style={{display:'flex',gap:8,alignItems:'center',marginTop:12,fontWeight:800,color:draft.is_virtual?'#be123c':'var(--text-secondary)'}}><input type="checkbox" checked={Boolean(draft.is_virtual)} onChange={e=>setDrafts(p=>({...p,[order.id]:{...p[order.id],is_virtual:e.target.checked}}))}/>虛擬訂單</label>
-            <input value={draft.note||''} onChange={e=>setDrafts(p=>({...p,[order.id]:{...p[order.id],note:e.target.value}}))} placeholder="訂單備註" style={{marginTop:10}}/>
+            <input value={draft.note||''} onChange={e=>setDrafts(p=>({...p,[order.id]:{...p[order.id],note:e.target.value}}))} placeholder="訂單備註" style={{marginTop:10,height:48,fontSize:16}}/>
             <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:12}}><button className="btn btn-ghost" onClick={cancel}><X size={13}/>取消</button><button className="btn btn-primary" disabled={saving===order.id} onClick={()=>save(order)}><Save size={13}/>{saving===order.id?'儲存中...':'儲存修改'}</button></div>
           </>}
           {!isEditing&&<div style={{display:'flex',justifyContent:'space-between',marginTop:10,fontWeight:900}}><span>{(order.items||[]).reduce((s,i)=>s+Number(i.qty||0),0)} 件</span><span>{money(order.total_amount)}</span></div>}
         </div>
       </div>
     })}
+    {deleteTarget&&<ConfirmDialog danger message={`確定要刪除「${deleteTarget.customer_name}」這筆小幫手未出貨訂單？\n\n會永久刪除訂單與對應的小幫手登記，薪資會立即重新計算，且無法復原。`} onConfirm={()=>removeOrder(deleteTarget)} onCancel={()=>deleting?'':setDeleteTarget(null)}/>} 
   </div>
 }
 
