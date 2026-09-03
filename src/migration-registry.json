@@ -334,6 +334,18 @@
       "data_logic": "釋出不是取消訂單、退款或刪除品項；orders.total_amount、order_items.qty/sale_price/subtotal/cost_price/cost_subtotal、銷售報表 report_data、供應商付款與庫存流水均不因釋出而改寫。釋出只改 released_* 欄位與取貨呈現／應收小計。例：qty=2、released_qty=1 時，原銷售仍算 2 件，取貨應收只算剩餘 1 件；同張訂單其他品項正常取貨。released_qty=0 即取消釋出。",
       "data_migration": "以既有 neon-orders-runtime / neon-order-edit 的 idempotent schema bootstrap 新增三個 order_items 欄位；舊資料 released_qty 預設 0、時間與 UID 為 NULL，不批次改寫歷史訂單。order_items 已在既有備份白名單，因此新欄位會隨 schema/data 備份保存。",
       "rollback": "移除 OrderReleaseManager、PendingProductReportFiltered 的 V45 釋出呈現、GroupedReceipt 釋出小計邏輯、set_item_release/release_states 與讀寫 overlay，並將 APP_VERSION 還原為 V44。三個 nullable/default 欄位可保留而不影響舊版；若正式資料已有 released_qty>0，程式 rollback 前應先決定是否保留其業務語意，不自動清除釋出紀錄。"
+    },
+    {
+      "version": "V46",
+      "date": "2026-09-03",
+      "type": "ui",
+      "summary": "釋出操作改為更直覺的 iPad 數量輸入，並將所有『已釋出』標示改為紅色醒目提示。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": ["src/components/OrderReleaseManager.jsx: 未釋出品項數量預設 1，不再以 0 作輸入起點；數量大於 1 時提供 48px 的減號／數量／加號控制、直接輸入自動全選、去除前導 0、全部快捷鍵與獨立取消釋出按鈕","src/components/ReleasedTextStyler.jsx + src/App.jsx: 全站已釋出文字與 badge 統一紅色醒目顯示","src/components/GroupedReceipt.jsx: 出貨／取貨明細的已釋出標示與釋出金額改為紅色"],
+      "data_logic": "不修改 released_qty 的既有資料語意與後端規則；套用釋出仍寫入 1～qty，取消釋出仍由獨立取消操作寫回 0。原始銷售額、毛利、成本、供應商付款、庫存與取貨小計計算口徑完全沿用 V45。",
+      "data_migration": "無。純前端操作與顏色調整，不批次改寫任何 orders、order_items 或釋出紀錄。",
+      "rollback": "移除 ReleasedTextStyler，將 OrderReleaseManager 數量輸入還原 V45 的 0～qty number input，GroupedReceipt 顏色還原，並將 APP_VERSION 還原為 V45；不需資料庫 rollback。"
     }
   ]
 }
