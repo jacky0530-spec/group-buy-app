@@ -346,6 +346,18 @@
       "data_logic": "不修改 released_qty 的既有資料語意與後端規則；套用釋出仍寫入 1～qty，取消釋出仍由獨立取消操作寫回 0。原始銷售額、毛利、成本、供應商付款、庫存與取貨小計計算口徑完全沿用 V45。",
       "data_migration": "無。純前端操作與顏色調整，不批次改寫任何 orders、order_items 或釋出紀錄。",
       "rollback": "移除 ReleasedTextStyler，將 OrderReleaseManager 數量輸入還原 V45 的 0～qty number input，GroupedReceipt 顏色還原，並將 APP_VERSION 還原為 V45；不需資料庫 rollback。"
+    },
+    {
+      "version": "V47",
+      "date": "2026-09-04",
+      "type": "bugfix",
+      "summary": "修正商品數量超過 250 筆後，已成功設定結單日的商品仍可能在商品列表顯示『不限結單』。",
+      "database_changes": [],
+      "api_changes": ["沿用既有 api/neon-helper-runtime.js catalog / set_product_deadline，不新增或修改 Serverless Function"],
+      "ui_changes": ["src/components/ProductDeadlineManager.jsx: 結單日顯示資料改由既有 catalog 一次取得全部啟用商品及 order_deadline，不再受 product_deadlines 250 筆上限影響；儲存成功後立即用 set_product_deadline 回傳值更新本地 badge"],
+      "data_logic": "不改寫結單日規則與資料庫欄位。結單日當天 helper 仍可開單、隔天起限制；owner/staff 不受限制。只修正管理端顯示資料來源與儲存後同步。",
+      "data_migration": "無。不回填、不變更 products.order_deadline，既有已設定日期會直接正確顯示。",
+      "rollback": "將 ProductDeadlineManager load 還原為 V46 product_deadlines limit=250 並移除儲存後本地 merge，同時將 APP_VERSION 還原為 V46；不需資料庫 rollback。"
     }
   ]
 }
