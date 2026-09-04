@@ -358,6 +358,18 @@
       "data_logic": "不改寫結單日規則與資料庫欄位。結單日當天 helper 仍可開單、隔天起限制；owner/staff 不受限制。只修正管理端顯示資料來源與儲存後同步。",
       "data_migration": "無。不回填、不變更 products.order_deadline，既有已設定日期會直接正確顯示。",
       "rollback": "將 ProductDeadlineManager load 還原為 V46 product_deadlines limit=250 並移除儲存後本地 merge，同時將 APP_VERSION 還原為 V46；不需資料庫 rollback。"
+    },
+    {
+      "version": "V48",
+      "date": "2026-09-04",
+      "type": "bugfix",
+      "summary": "修正到貨／供應商付款更正的商品搜尋只在最新 500 筆候選訂單中做前端篩選，造成較舊但仍可更正的訂單搜尋不到。",
+      "database_changes": [],
+      "api_changes": ["沿用既有 api/neon-order-query.js query / OrdersAPI.searchPage，不新增或修改 Serverless Function；有商品關鍵字時由 Neon SQL 搜尋全部訂單，再於前端套用可更正條件"],
+      "ui_changes": ["src/pages/OrdersCorrectable.jsx: 商品搜尋改為 300ms debounce 送 Neon SQL 查詢，分頁取得符合關鍵字的訂單後再篩可更正品項；搜尋時輸入框保持可見並顯示 Neon 搜尋中"],
+      "data_logic": "未輸入商品關鍵字時仍載入最近 500 筆更正候選；輸入關鍵字時不再受該 500 筆上限限制，先由既有訂單 SQL 搜尋符合關鍵字的訂單，再排除取消、封存、現貨及沒有 arrived_qty/supplier_paid_amount 的訂單。到貨／供應商付款更正寫入規則完全不變。",
+      "data_migration": "無。只修改查詢方式與前端顯示，不改寫 orders、order_items、supplier_payments、supplier_payment_allocations 或庫存資料。",
+      "rollback": "將 OrdersCorrectable 商品搜尋恢復 V47 的最近 500 筆候選前端篩選，並將 APP_VERSION 還原為 V47；不需資料庫 rollback。"
     }
   ]
 }
