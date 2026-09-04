@@ -46,14 +46,32 @@ export default function ProductDeadlineManager(){
   const modalHostRef=useRef(null)
   const committingRef=useRef(false)
 
+  const replaceRows=useCallback(next=>{
+    rowsRef.current=next
+    setRows(next)
+  },[])
+
+  const mergeDeadlineRow=useCallback(result=>{
+    if(!result?.id)return
+    const id=String(result.id)
+    const orderDeadline=String(result.order_deadline||'')
+    const current=rowsRef.current
+    const index=current.findIndex(row=>String(row.id||'')===id)
+    const nextRow={...(index>=0?current[index]:{}),...result,id,order_deadline:orderDeadline}
+    const next=index>=0
+      ? current.map((row,i)=>i===index?nextRow:row)
+      : [...current,nextRow]
+    replaceRows(next)
+  },[replaceRows])
+
   const load=useCallback(async()=>{
     try{
-      const data=await neonHelperRuntime('product_deadlines',{q:'',limit:250})
+      // V47：catalog 本身已回傳全部啟用商品與 order_deadline，不受 product_deadlines 250 筆上限影響。
+      const data=await neonHelperRuntime('catalog')
       const next=Array.isArray(data?.rows)?data.rows:[]
-      rowsRef.current=next
-      setRows(next)
+      replaceRows(next)
     }catch(err){toast('結單日資料載入失敗：'+err.message,'error')}
-  },[toast])
+  },[replaceRows,toast])
 
   useEffect(()=>{editorRef.current=editor},[editor])
   useEffect(()=>{rowsRef.current=rows},[rows])
@@ -123,7 +141,8 @@ export default function ProductDeadlineManager(){
                 }
               }
               if(targetId&&(pending.mode==='edit'||pending.deadline)){
-                await neonHelperRuntime('set_product_deadline',{id:targetId,order_deadline:pending.deadline||''})
+                const saved=await neonHelperRuntime('set_product_deadline',{id:targetId,order_deadline:pending.deadline||''})
+                mergeDeadlineRow(saved?.result)
                 toast(pending.deadline?`✅ 結單日已設為 ${pending.deadline}`:'✅ 已改為不限結單')
               }else if(pending.deadline&&!targetId){
                 toast('商品已儲存，但暫時找不到新商品來設定結單日，請重新開啟商品編輯後再設定','warning')
@@ -135,7 +154,7 @@ export default function ProductDeadlineManager(){
         }
       }
     }
-  },[load,today,toast])
+  },[load,mergeDeadlineRow,today,toast])
 
   useEffect(()=>{
     decorate()
