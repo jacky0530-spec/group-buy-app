@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw, Search, WalletCards } from 'lucide-react'
 import { OrdersAPI } from '../lib/db'
 import { useToast } from '../components/UI'
@@ -14,17 +14,36 @@ function CorrectionPanel({ onChanged }) {
   const [open,setOpen]=useState(false)
   const [busy,setBusy]=useState('')
   const [productSearch,setProductSearch]=useState('')
+  const requestRef=useRef(0)
 
-  const load=useCallback(async()=>{
+  const load=useCallback(async(searchTerm='')=>{
+    const requestId=++requestRef.current
+    const q=String(searchTerm||'').trim()
     setLoading(true)
     try{
-      const rows=typeof OrdersAPI.listCorrectionCandidates==='function'
-        ? await OrdersAPI.listCorrectionCandidates({pageSize:500})
-        : await OrdersAPI.list()
-      setOrders(rows)
+      let rows=[]
+      if(q&&typeof OrdersAPI.searchPage==='function'){
+        // V48：有商品關鍵字時直接走 Neon SQL 搜尋全部訂單，再由下方候選規則篩出可更正品項；
+        // 不再先受「最新 500 筆更正候選」上限截斷。
+        let cursor=null
+        let hasMore=true
+        let page=0
+        while(hasMore&&page<8){
+          const result=await OrdersAPI.searchPage({search:q,includeArchived:false,pageSize:250,cursor})
+          rows.push(...(Array.isArray(result?.rows)?result.rows:[]))
+          cursor=result?.nextCursor||null
+          hasMore=result?.hasMore===true&&Boolean(cursor)
+          page+=1
+        }
+      }else{
+        rows=typeof OrdersAPI.listCorrectionCandidates==='function'
+          ? await OrdersAPI.listCorrectionCandidates({pageSize:500})
+          : await OrdersAPI.list()
+      }
+      if(requestId===requestRef.current)setOrders(rows)
     }
-    catch(err){toast('更正資料載入失敗：'+err.message,'error')}
-    finally{setLoading(false)}
+    catch(err){if(requestId===requestRef.current)toast('更正資料載入失敗：'+err.message,'error')}
+    finally{if(requestId===requestRef.current)setLoading(false)}
   },[toast])
 
   const candidates=useMemo(()=>orders.filter(order=>
@@ -41,10 +60,14 @@ function CorrectionPanel({ onChanged }) {
     ))
   },[candidates,productSearch])
 
-  async function toggleOpen(){
-    if(open){setOpen(false);return}
-    setOpen(true)
-    await load()
+  useEffect(()=>{
+    if(!open)return undefined
+    const timer=setTimeout(()=>load(productSearch.trim()),productSearch.trim()?300:0)
+    return()=>clearTimeout(timer)
+  },[load,open,productSearch])
+
+  function toggleOpen(){
+    setOpen(value=>!value)
   }
 
   async function correctItem(order,itemIndex,resetArrival){
@@ -62,7 +85,7 @@ function CorrectionPanel({ onChanged }) {
       toast(resetArrival
         ? `↩️ 已改為未到貨，並撤銷相關供應商付款 ${money(result?.removed_payment||0)}`
         : `↩️ 已改為供應商未付款，撤銷 ${money(result?.removed_payment||0)}`,'warning')
-      await load(); onChanged()
+      await load(productSearch.trim()); onChanged()
     }catch(err){toast('更正失敗：'+err.message,'error')}
     finally{setBusy('')}
   }
@@ -74,20 +97,20 @@ function CorrectionPanel({ onChanged }) {
     try{
       const result=await OrdersAPI.correctSupplierState(order.id,{reset_arrival:false})
       toast(`↩️ 整張訂單已改為供應商未付款，撤銷 ${money(result?.removed_payment||0)}`,'warning')
-      await load(); onChanged()
+      await load(productSearch.trim()); onChanged()
     }catch(err){toast('更正失敗：'+err.message,'error')}
     finally{setBusy('')}
   }
 
   return <div className="card" style={{marginBottom:14,border:'1px solid #fed7aa'}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',padding:'11px 14px'}}>
-      <div><strong style={{display:'flex',alignItems:'center',gap:7}}><RotateCcw size={15}/>到貨／供應商付款更正</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>只提供預購訂單更正；現貨訂單仍由庫存流程處理。</div></div>
+      <div><strong style={{display:'flex',alignItems:'center',gap:7}}><RotateCcw size={15}/>到貨／供應商付款更正</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>只提供預購訂單更正；輸入商品名稱時直接查 Neon 全部符合訂單，不受最近 500 筆限制。</div></div>
       <button className="btn btn-sm btn-ghost" disabled={loading&&!open} onClick={toggleOpen}>{loading&&!open?'載入中...':open?'收合':'開啟更正'} {!loading&&candidates.length>0&&`(${candidates.length})`}</button>
     </div>
     {open&&<div style={{borderTop:'1px solid var(--border)',padding:'10px 14px 14px'}}>
-      {!loading&&candidates.length>0&&<div className="search-input-wrap" style={{marginBottom:12,height:48,padding:'0 14px',display:'flex',alignItems:'center',gap:10,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)'}}><Search size={20}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="搜尋商品名稱..." style={{flex:1,minWidth:0,height:'100%',border:0,outline:'none',background:'transparent',fontSize:16,padding:'0 4px'}}/><span style={{fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{visibleCandidates.length}/{candidates.length} 筆</span></div>}
+      <div className="search-input-wrap" style={{marginBottom:12,height:48,padding:'0 14px',display:'flex',alignItems:'center',gap:10,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)'}}><Search size={20}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="搜尋商品名稱..." style={{flex:1,minWidth:0,height:'100%',border:0,outline:'none',background:'transparent',fontSize:16,padding:'0 4px'}}/><span style={{fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{loading?'Neon 搜尋中...':`${visibleCandidates.length} 筆`}</span></div>
       {loading&&<div style={{padding:12,color:'var(--text-muted)'}}>載入中...</div>}
-      {!loading&&candidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>目前沒有需要更正的預購訂單。</div>}
+      {!loading&&candidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>{productSearch.trim()?'查無符合此商品名稱的可更正訂單。':'目前沒有需要更正的預購訂單。'}</div>}
       {!loading&&candidates.length>0&&visibleCandidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>查無符合此商品名稱的更正訂單。</div>}
       {!loading&&visibleCandidates.map(order=>{
         const paid=(order.items||[]).reduce((sum,item)=>sum+qty(item.supplier_paid_amount),0)
