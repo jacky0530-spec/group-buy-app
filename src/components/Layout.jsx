@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第48版：供應商付款更正的商品搜尋改直接查 Neon 全部符合訂單，不再受最近 500 筆候選上限影響，V48 Registry 已同步。
-const APP_VERSION = '第48版｜2026/09/04'
+// 第49版：Excel 匯入先完成 Neon 商品／客戶載入再開放選檔，並自動重新配對尚未配對客戶，V49 Registry 已同步。
+const APP_VERSION = '第49版｜2026/09/05'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
