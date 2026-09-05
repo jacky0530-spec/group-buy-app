@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第49版：Excel 匯入先完成 Neon 商品／客戶載入再開放選檔，並自動重新配對尚未配對客戶，V49 Registry 已同步。
-const APP_VERSION = '第49版｜2026/09/05'
+// 第50版：小幫手刪除自己未出貨訂單改直接走 Neon 權限驗證，不再先讀 Firestore 而遭 permission-denied。
+const APP_VERSION = '第50版｜2026/09/05'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
