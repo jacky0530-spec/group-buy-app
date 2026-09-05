@@ -382,6 +382,17 @@
       "data_logic": "Excel 客戶自動配對仍要求標準化姓名唯一相符；同名多位仍不自動選擇，需人工確認末碼。訂單重複判斷規則與正式建立訂單資料不變。",
       "data_migration": "無。純前端載入時序與自動重配修正，不改寫 customers、products、orders 或 order_items。",
       "rollback": "將 ExcelOrderImport 載入流程恢復 V48 的單一 Promise.all 並移除 catalogReady / duplicateReady / 自動重配 effect，同時將 APP_VERSION 還原為 V48；不需資料庫 rollback。"
+    },
+    {
+      "version": "V50",
+      "date": "2026-09-05",
+      "type": "bugfix",
+      "summary": "修正小幫手刪除自己未出貨訂單時先讀 Firestore orders 而被權限規則擋下，出現 Missing or insufficient permissions；刪除改直接使用 Neon 正式資料與後端權限驗證。",
+      "database_changes": [],
+      "api_changes": ["src/lib/enableNeonPrimaryHelperWrites.js: 新增 HelperAPI.deleteMyPendingOrder Neon primary override，直接呼叫既有 api/neon-orders-runtime.js delete_own_helper，不再先讀／刪 Firestore 備份；不新增 Serverless Function"],
+      "data_logic": "刪除資格仍完全沿用 V41 後端規則：只允許 helper 刪除自己建立、pending、未封存、preorder、尚未到貨、無供應商付款／allocation、無庫存流水且有對應 helper_entry 的訂單。成功後 Neon 同時刪除 order 與 helper_entry，薪資統計依剩餘 Neon helper_entries 即時重算。",
+      "data_migration": "無 schema migration、無歷史資料批次改寫。本版只修正前端刪除呼叫來源；使用者實際按下確認刪除且通過後端檢查時才永久刪除該筆 Neon 訂單與對應小幫手登記。",
+      "rollback": "移除 enableNeonPrimaryHelperWrites 的 deleteMyPendingOrder override 並將 APP_VERSION 還原為 V49；資料庫不需 rollback，但已由使用者確認刪除的訂單不會自動復原。"
     }
   ]
 }

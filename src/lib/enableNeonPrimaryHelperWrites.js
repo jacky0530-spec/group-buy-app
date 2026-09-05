@@ -1,5 +1,5 @@
 import { HelperAPI } from './helper'
-import { neonHelperAdminRuntime, neonHelperRuntime } from './neonRuntime'
+import { neonHelperAdminRuntime, neonHelperRuntime, neonOrdersRuntime } from './neonRuntime'
 
 const INSTALLED=Symbol.for('group-buy.neon-primary-helper-writes-installed')
 
@@ -59,6 +59,12 @@ if(!globalThis[INSTALLED]){
     }
     await neonHelperRuntime('update_pending',payload)
     return true
+  }
+
+  HelperAPI.deleteMyPendingOrder=async function(uid,orderId){
+    if(!orderId) throw new Error('缺少訂單 ID')
+    const response=await neonOrdersRuntime('delete_own_helper',{id:orderId})
+    return response?.result||true
   }
 
   HelperAPI.updateEntry=async function(id,data={}){
