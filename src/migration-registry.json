@@ -370,6 +370,18 @@
       "data_logic": "未輸入商品關鍵字時仍載入最近 500 筆更正候選；輸入關鍵字時不再受該 500 筆上限限制，先由既有訂單 SQL 搜尋符合關鍵字的訂單，再排除取消、封存、現貨及沒有 arrived_qty/supplier_paid_amount 的訂單。到貨／供應商付款更正寫入規則完全不變。",
       "data_migration": "無。只修改查詢方式與前端顯示，不改寫 orders、order_items、supplier_payments、supplier_payment_allocations 或庫存資料。",
       "rollback": "將 OrdersCorrectable 商品搜尋恢復 V47 的最近 500 筆候選前端篩選，並將 APP_VERSION 還原為 V47；不需資料庫 rollback。"
+    },
+    {
+      "version": "V49",
+      "date": "2026-09-05",
+      "type": "bugfix",
+      "summary": "修正 Excel 匯入頁在 Neon 客戶／商品尚未載入完成時即可選檔，導致 Excel 客戶被判定未配對；客戶資料載入後會自動重新配對未配對姓名。",
+      "database_changes": [],
+      "api_changes": ["沿用既有 ProductsAPI.list / CustomersAPI.list / OrdersAPI.list，不新增或修改 Serverless Function"],
+      "ui_changes": ["src/pages/ExcelOrderImport.jsx: 商品與客戶先完成載入即開放 Excel 解析；載入前禁用選檔；既有已解析但未配對客戶在 Neon 客戶清單更新後自動依標準化姓名重配；重複訂單檢查完成前禁止正式匯入並顯示載入狀態"],
+      "data_logic": "Excel 客戶自動配對仍要求標準化姓名唯一相符；同名多位仍不自動選擇，需人工確認末碼。訂單重複判斷規則與正式建立訂單資料不變。",
+      "data_migration": "無。純前端載入時序與自動重配修正，不改寫 customers、products、orders 或 order_items。",
+      "rollback": "將 ExcelOrderImport 載入流程恢復 V48 的單一 Promise.all 並移除 catalogReady / duplicateReady / 自動重配 effect，同時將 APP_VERSION 還原為 V48；不需資料庫 rollback。"
     }
   ]
 }
