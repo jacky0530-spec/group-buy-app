@@ -14,9 +14,38 @@
       "date": "2026-08-30",
       "type": "baseline",
       "summary": "建立目前正式系統可移轉基準。",
-      "database_objects": ["accounts","customers","products","orders","order_items","helper_entries","stock_inventory","inventory_transactions","stock_purchase_extras","supplier_payments","supplier_payment_allocations","expenses","incoming_batches","incoming_batch_items"],
-      "critical_fields": ["order_items.qty","order_items.original_qty","order_items.arrived_qty","order_items.arrived_at","order_items.cost_price","order_items.supplier_paid_amount","stock_inventory.average_cost"],
-      "important_logic": ["訂單到貨數量以 order_items.arrived_qty 為主","供應商付款需保留 supplier_payment_allocations","庫存需同時保留 stock_inventory 與 inventory_transactions","即將到貨使用 incoming_batches / incoming_batch_items","Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"],
+      "database_objects": [
+        "accounts",
+        "customers",
+        "products",
+        "orders",
+        "order_items",
+        "helper_entries",
+        "stock_inventory",
+        "inventory_transactions",
+        "stock_purchase_extras",
+        "supplier_payments",
+        "supplier_payment_allocations",
+        "expenses",
+        "incoming_batches",
+        "incoming_batch_items"
+      ],
+      "critical_fields": [
+        "order_items.qty",
+        "order_items.original_qty",
+        "order_items.arrived_qty",
+        "order_items.arrived_at",
+        "order_items.cost_price",
+        "order_items.supplier_paid_amount",
+        "stock_inventory.average_cost"
+      ],
+      "important_logic": [
+        "訂單到貨數量以 order_items.arrived_qty 為主",
+        "供應商付款需保留 supplier_payment_allocations",
+        "庫存需同時保留 stock_inventory 與 inventory_transactions",
+        "即將到貨使用 incoming_batches / incoming_batch_items",
+        "Firebase 僅負責 Authentication，正式營運資料以 Neon PostgreSQL 為主"
+      ],
       "rollback": "此筆為基準文件，無資料庫變更。"
     },
     {
@@ -25,7 +54,9 @@
       "type": "governance",
       "summary": "新增僅指定 owner 可見的系統備份／移轉中心、schema metadata、白名單資料匯出與 CI Registry 防漏規則。",
       "database_changes": [],
-      "api_changes": ["api/neon-accounts-runtime.js: backup_overview / backup_export_table"],
+      "api_changes": [
+        "api/neon-accounts-runtime.js: backup_overview / backup_export_table"
+      ],
       "security": "後端要求 Firebase token UID 對應 Neon owner 帳號，且 token email 與 accounts.email 都必須為 jacky0530@gmail.com。",
       "rollback": "移除 backup actions、/backup-center 路由與 Migration Registry CI 檢查；不需資料庫 rollback。"
     },
@@ -35,7 +66,9 @@
       "type": "bugfix",
       "summary": "修正完整移轉 JSON 匯出假設所有資料表都有 created_at，造成 customers 等舊表匯出失敗。備份資料列不再強制依時間欄排序。",
       "database_changes": [],
-      "api_changes": ["api/neon-accounts-runtime.js: backup_export_table 移除各表 ORDER BY created_at"],
+      "api_changes": [
+        "api/neon-accounts-runtime.js: backup_export_table 移除各表 ORDER BY created_at"
+      ],
       "data_migration": "無。只修改只讀備份查詢，不修改正式資料。",
       "rollback": "可還原 V19 backup_export_table；不需資料庫 rollback。"
     },
@@ -45,8 +78,14 @@
       "type": "backup",
       "summary": "備份中心新增 PostgreSQL 完整 SQL、Schema-only SQL、Data-only SQL 邏輯備份下載，並補充 enum、sequence、identity/generated 欄位 metadata。",
       "database_changes": [],
-      "api_changes": ["api/neon-accounts-runtime.js: backup_overview 增加 enums/sequences/sequence owners 與進階 column metadata"],
-      "backup_changes": ["group-buy-postgresql-full-YYYY-MM-DD.sql","group-buy-postgresql-schema-YYYY-MM-DD.sql","group-buy-postgresql-data-YYYY-MM-DD.sql"],
+      "api_changes": [
+        "api/neon-accounts-runtime.js: backup_overview 增加 enums/sequences/sequence owners 與進階 column metadata"
+      ],
+      "backup_changes": [
+        "group-buy-postgresql-full-YYYY-MM-DD.sql",
+        "group-buy-postgresql-schema-YYYY-MM-DD.sql",
+        "group-buy-postgresql-data-YYYY-MM-DD.sql"
+      ],
       "restore_note": "Full SQL 可用 psql 匯入新的 PostgreSQL。此為應用層 logical SQL backup，不等同 pg_dump custom-format binary .dump。Secrets 仍不匯出。",
       "data_migration": "無。只增加只讀 metadata 與瀏覽器端 SQL 檔案產生。",
       "rollback": "移除 V21 SQL 產生按鈕與新增 metadata 查詢；不需資料庫 rollback。"
@@ -57,9 +96,14 @@
       "type": "feature",
       "summary": "即將到貨頁新增已完成批次商品封存中心，可單筆封存或勾選多筆批次封存，同商品多規格合併後只封存一次。",
       "database_changes": [],
-      "api_changes": ["沿用 api/neon-runtime.js write_product op=archive，不新增 Serverless Function"],
+      "api_changes": [
+        "沿用 api/neon-runtime.js write_product op=archive，不新增 Serverless Function"
+      ],
       "data_logic": "封存只將 products.active 設為 false 並寫 archived_at，不刪除商品、歷史訂單、order_items、到貨批次、付款或報表資料。",
-      "ui_changes": ["src/components/IncomingArchivePanel.jsx","/incoming 頁面顯示已完成批次商品封存卡片"],
+      "ui_changes": [
+        "src/components/IncomingArchivePanel.jsx",
+        "/incoming 頁面顯示已完成批次商品封存卡片"
+      ],
       "rollback": "移除 IncomingArchivePanel 與 Layout 掛載；已封存商品可由商品管理的還原功能恢復。"
     },
     {
@@ -68,7 +112,9 @@
       "type": "bugfix",
       "summary": "修正正式現貨訂單已扣庫存但銷售與財務報表仍只等 shipped 才認列營收與成本的時點不一致。現貨正式開單後即納入營收、毛利與趨勢；預購仍維持已出貨才認列。",
       "database_changes": [],
-      "api_changes": ["api/neon-order-query.js: report_data 現貨營收／成本認列條件"],
+      "api_changes": [
+        "api/neon-order-query.js: report_data 現貨營收／成本認列條件"
+      ],
       "data_migration": "無。只修改 Neon SQL 唯讀報表聚合，不改寫既有 orders、order_items、付款或庫存資料。既有非取消現貨正式訂單會依新規則直接反映在報表。",
       "rollback": "將 report_data 的營收、退款、商品成本、趨勢與月損益條件還原為只計 status='shipped'；不需資料庫 rollback。"
     },
@@ -78,9 +124,14 @@
       "type": "feature",
       "summary": "銷售報表新增獨立現貨庫存資產區塊，顯示現貨庫存成本價值、本月現貨進貨、本月現貨銷售、現貨銷貨成本與現貨毛利。",
       "database_changes": [],
-      "api_changes": ["api/neon-helper-admin.js: stock_support 增加 stockAsset SQL 聚合，不新增 Serverless Function"],
+      "api_changes": [
+        "api/neon-helper-admin.js: stock_support 增加 stockAsset SQL 聚合，不新增 Serverless Function"
+      ],
       "data_logic": "庫存成本價值以目前 available_qty 乘庫存平均成本計算，缺值時回退到規格成本／商品成本；本月現貨進貨只計 extra_receive；本月現貨銷售只計非取消、非虛擬 stock 正式訂單；現貨毛利=現貨銷售-現貨銷貨成本。",
-      "ui_changes": ["src/components/StockAssetPanel.jsx","src/App.jsx: /reports 掛載現貨庫存資產區塊"],
+      "ui_changes": [
+        "src/components/StockAssetPanel.jsx",
+        "src/App.jsx: /reports 掛載現貨庫存資產區塊"
+      ],
       "data_migration": "無。全部為 Neon 唯讀 SQL 聚合與前端顯示，不改寫庫存、訂單或付款資料。",
       "rollback": "移除 StockAssetPanel 與 /reports 掛載，並將 stock_support 還原為原本只回傳待入庫與庫存流水；不需資料庫 rollback。"
     },
@@ -91,7 +142,9 @@
       "summary": "未出貨報表的組合小計將訂貨件數移到品名旁，並改為橘色訂貨標示，方便管理者快速辨識各組合訂貨量。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合小計訂貨件數近距離顯示與訂貨 badge"],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 組合小計訂貨件數近距離顯示與訂貨 badge"
+      ],
       "data_logic": "不改變原有組合小計數量計算，只調整正式未出貨報表的呈現方式。",
       "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "移除 V25 組合小計 DOM 樣式增強並將 APP_VERSION 還原；不需資料庫 rollback。"
@@ -103,7 +156,9 @@
       "summary": "修正 V25 組合小計訂貨 badge 的 MutationObserver 反覆重寫同一文字節點，造成未出貨報表前端卡在 Neon SQL 查詢中的問題。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 訂貨 badge 增加一次性 DOM 處理標記，避免 observer 自我觸發"],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 訂貨 badge 增加一次性 DOM 處理標記，避免 observer 自我觸發"
+      ],
       "data_logic": "保留 V25 的訂貨件數計算與橘色標示，只阻止同一 badge DOM 節點被重複改寫。",
       "data_migration": "無。純前端 hotfix，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "移除 V26 的 data-pending-order-badge 一次性判斷即可；不需資料庫 rollback。"
@@ -115,7 +170,9 @@
       "summary": "未出貨報表組合小計恢復單純件數呈現，只將件數左移靠近品名，不再顯示訂貨文字或 badge。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合小計只調整左右間距，保留原本 X 件文字"],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 組合小計只調整左右間距，保留原本 X 件文字"
+      ],
       "data_logic": "不改變組合小計數量計算，不重寫件數文字，不新增其他訂貨資訊。",
       "data_migration": "無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "將組合小計列恢復 justify-content: space-between 並移除 V27 版面調整即可；不需資料庫 rollback。"
@@ -127,7 +184,9 @@
       "summary": "未出貨報表所有規格小計的件數統一左移靠近規格名稱，包含組合、口味、顏色與尺寸小計。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 組合／口味／顏色／尺寸小計統一左對齊件數"],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 組合／口味／顏色／尺寸小計統一左對齊件數"
+      ],
       "data_logic": "不改變任何小計數量計算，只調整顯示位置並保留原本 X 件文字。",
       "data_migration": "無。純前端版面調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "將各規格小計列恢復 justify-content: space-between；不需資料庫 rollback。"
@@ -138,8 +197,13 @@
       "type": "ui",
       "summary": "銷售與財務報表上方統計卡新增現貨庫存金額，數值與現貨庫存資產區塊的現貨庫存成本價值使用同一 stockAsset.inventoryCostValue 計算結果。",
       "database_changes": [],
-      "api_changes": ["沿用 api/neon-helper-admin.js stock_support，不新增 Serverless Function"],
-      "ui_changes": ["src/components/StockValueTopCard.jsx","src/App.jsx: /reports 掛載上方現貨庫存金額卡片"],
+      "api_changes": [
+        "沿用 api/neon-helper-admin.js stock_support，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/components/StockValueTopCard.jsx",
+        "src/App.jsx: /reports 掛載上方現貨庫存金額卡片"
+      ],
       "data_logic": "現貨庫存金額=現貨庫存成本價值；沿用 available_qty × 庫存成本的既有 V24 計算口徑，不新增另一套公式。",
       "data_migration": "無。純前端顯示並讀取既有唯讀 stock_support 統計，不改寫庫存、訂單或付款資料。",
       "rollback": "移除 StockValueTopCard 與 /reports 掛載即可；不需資料庫 rollback。"
@@ -151,7 +215,9 @@
       "summary": "出貨查詢報表兩組查詢按鈕只做左右對調，並將預設查詢改為已出貨查詢＋依買家查詢。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportSql.jsx: 第一排左已出貨／右待出貨，第二排左買家／右商品，預設 shipped + buyer"],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 第一排左已出貨／右待出貨，第二排左買家／右商品，預設 shipped + buyer"
+      ],
       "data_logic": "不修改訂單篩選、出貨狀態、商品／買家 SQL 查詢條件，只調整按鈕排列與初始前端狀態。",
       "data_migration": "無。純前端 UI 與預設狀態調整，不改寫訂單、到貨、庫存或付款資料。",
       "rollback": "將按鈕左右順序與初始 mode/shipmentView 還原為 V29；不需資料庫 rollback。"
@@ -163,7 +229,9 @@
       "summary": "到貨／供應商付款更正畫面新增商品名稱即時搜尋，可快速篩出包含指定商品的預購更正訂單。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/OrdersCorrectable.jsx: 更正清單新增商品名稱搜尋框與篩選後筆數"],
+      "ui_changes": [
+        "src/pages/OrdersCorrectable.jsx: 更正清單新增商品名稱搜尋框與篩選後筆數"
+      ],
       "data_logic": "沿用既有最多 500 筆更正候選訂單，在前端依可更正品項的 product_name/name 做包含式、不分大小寫篩選；不改變到貨或供應商付款更正邏輯。",
       "data_migration": "無。純前端查詢輔助，不改寫訂單、到貨、供應商付款或庫存資料。",
       "rollback": "移除 OrdersCorrectable 的 productSearch/visibleCandidates 與搜尋框，並將 APP_VERSION 還原為 V30；不需資料庫 rollback。"
@@ -175,7 +243,9 @@
       "summary": "放大到貨／供應商付款更正的商品名稱搜尋框，提升桌機與 iPad 點選及輸入易用性。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/OrdersCorrectable.jsx: 搜尋區高度調整為 48px、字體 16px、放大搜尋圖示與內距"],
+      "ui_changes": [
+        "src/pages/OrdersCorrectable.jsx: 搜尋區高度調整為 48px、字體 16px、放大搜尋圖示與內距"
+      ],
       "data_logic": "不修改 V31 商品名稱搜尋篩選條件與更正候選資料，只調整搜尋框視覺尺寸。",
       "data_migration": "無。純前端 UI 調整，不改寫訂單、到貨、供應商付款或庫存資料。",
       "rollback": "將 OrdersCorrectable 搜尋框樣式還原為 V31 並將 APP_VERSION 還原為 V31；不需資料庫 rollback。"
@@ -186,8 +256,13 @@
       "type": "finance",
       "summary": "供應商延後請款改以訂單商品成本在原銷售月份認列，付款中心新增成本待確認與單位成本補正；實際匯款日期只影響應付款與現金流。",
       "database_changes": [],
-      "api_changes": ["api/neon-order-edit.js: 建立／編輯預購訂單時，cost_price 缺值或為 0 會回退規格成本／商品成本作為訂單成本快照","api/neon-payments-runtime.js: dashboard / supplier_payables 納入成本待確認品項，新增 update_cost 修正訂單品項單位成本，不新增 Serverless Function"],
-      "ui_changes": ["src/pages/SupplierPayments.jsx: 新增成本待確認統計、單位成本輸入與儲存功能，輸入框沿用 48px／16px 標準"],
+      "api_changes": [
+        "api/neon-order-edit.js: 建立／編輯預購訂單時，cost_price 缺值或為 0 會回退規格成本／商品成本作為訂單成本快照",
+        "api/neon-payments-runtime.js: dashboard / supplier_payables 納入成本待確認品項，新增 update_cost 修正訂單品項單位成本，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/pages/SupplierPayments.jsx: 新增成本待確認統計、單位成本輸入與儲存功能，輸入框沿用 48px／16px 標準"
+      ],
       "data_logic": "損益仍依訂單銷售／出貨月份與 order_items.cost_price 計算；供應商實際付款不重複列為當月銷貨成本。帳單到達後更新 cost_price/cost_subtotal，報表依原 order_date/shipped 認列期間重新計算毛利。成本未知的品項不可付款，必須先確認單位成本。",
       "data_migration": "無自動歷史資料回填、無 schema migration。既有 cost_price=0 品項會在供應商付款中心顯示成本待確認，可參考目前商品成本後人工確認；不直接改寫既有歷史成本。",
       "rollback": "還原 V33 的 neon-order-edit 成本回退、neon-payments-runtime update_cost/成本待確認查詢與 SupplierPayments UI；不需資料庫 rollback。"
@@ -199,7 +274,9 @@
       "summary": "修正即將到貨頁開啟批次後列印到貨表單時，瀏覽器列印預覽整頁空白。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["index.html: /incoming 列印時保留包含 print-only 到貨表單的直接 card，其他 no-print 操作區維持隱藏"],
+      "ui_changes": [
+        "index.html: /incoming 列印時保留包含 print-only 到貨表單的直接 card，其他 no-print 操作區維持隱藏"
+      ],
       "data_logic": "不修改 incoming_batches、incoming_batch_items、到貨數量、供應商付款或任何資料查詢；只修正列印 CSS 可見性。",
       "data_migration": "無。純前端列印樣式修正。",
       "rollback": "移除 index.html 第34版 /incoming @media print 規則並將 APP_VERSION 還原為 V33；不需資料庫 rollback。"
@@ -210,8 +287,12 @@
       "type": "ui",
       "summary": "即將到貨的到貨表單新增實際售價欄，方便點貨後依商品／規格標示售價。",
       "database_changes": [],
-      "api_changes": ["沿用既有 api/neon-runtime.js list_products 讀取商品與價格，不新增 Serverless Function"],
-      "ui_changes": ["src/pages/IncomingBatches.jsx: 到貨表單在實收後新增實際售價欄，規格組合優先使用 price_options 售價，否則使用商品售價；畫面與列印皆顯示"],
+      "api_changes": [
+        "沿用既有 api/neon-runtime.js list_products 讀取商品與價格，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/pages/IncomingBatches.jsx: 到貨表單在實收後新增實際售價欄，規格組合優先使用 price_options 售價，否則使用商品售價；畫面與列印皆顯示"
+      ],
       "data_logic": "實際售價為唯讀參考欄位，不寫回 incoming_batch_items、orders 或 order_items，不影響到貨數量、成本、供應商付款與損益。",
       "data_migration": "無。舊到貨批次亦可由目前商品資料顯示售價。",
       "rollback": "移除 IncomingBatches 的商品價格載入、salePriceOf 與實際售價欄，並將 APP_VERSION 還原為 V34；不需資料庫 rollback。"
@@ -222,8 +303,12 @@
       "type": "finance",
       "summary": "修正小幫手薪資統計：正式訂單改依商品數量計算，虛擬訂單維持依登記筆數計算。",
       "database_changes": [],
-      "api_changes": ["api/neon-helper-admin.js: dashboard 新增 formal_units / virtual_units / pay_units 聚合；正式已建立訂單依 helper_entries items.qty 加總，虛擬已建立訂單每筆算 1，不新增 Serverless Function"],
-      "ui_changes": ["src/pages/HelperEntries.jsx: 分開顯示登記筆數、正式商品數量、虛擬薪資筆數、薪資計算數量與薪資金額"],
+      "api_changes": [
+        "api/neon-helper-admin.js: dashboard 新增 formal_units / virtual_units / pay_units 聚合；正式已建立訂單依 helper_entries items.qty 加總，虛擬已建立訂單每筆算 1，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/pages/HelperEntries.jsx: 分開顯示登記筆數、正式商品數量、虛擬薪資筆數、薪資計算數量與薪資金額"
+      ],
       "data_logic": "登記筆數與轉單成功率仍維持 COUNT(*) 作流程 KPI；薪資數量獨立計算：status='converted' 且非虛擬時加總每個 item.qty，status='converted' 且虛擬時每筆計 1；舊待確認與已取消不列入薪資。薪資目前 1 單位=NT$1。",
       "data_migration": "無。只修改 Neon 唯讀統計 SQL 與前端顯示，既有歷史 helper_entries 會依新公式即時重算，不回寫資料。",
       "rollback": "將 helperDashboard 恢復 V35 的 COUNT(*) formal/virtual 統計，移除 HelperEntries 的薪資數量欄位並將 APP_VERSION 還原為 V35；不需資料庫 rollback。"
@@ -234,8 +319,12 @@
       "type": "workflow",
       "summary": "即將到貨批次完成後，全額支付本批供應商款項時自動批次出貨已全數到齊的正式預購訂單。",
       "database_changes": [],
-      "api_changes": ["api/neon-order-status.js: 新增 incoming_ship_ready 動作，以單次 SQL 將付款明細對應且整張訂單所有商品均已到齊的 pending 預購訂單更新為 shipped；不新增 Serverless Function"],
-      "ui_changes": ["src/pages/IncomingBatches.jsx: 本批全額付款成功後自動呼叫 incoming_ship_ready；部分付款不自動出貨，畫面明示規則並回報已出貨／仍待到貨張數"],
+      "api_changes": [
+        "api/neon-order-status.js: 新增 incoming_ship_ready 動作，以單次 SQL 將付款明細對應且整張訂單所有商品均已到齊的 pending 預購訂單更新為 shipped；不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/pages/IncomingBatches.jsx: 本批全額付款成功後自動呼叫 incoming_ship_ready；部分付款不自動出貨，畫面明示規則並回報已出貨／仍待到貨張數"
+      ],
       "data_logic": "自動出貨只針對本次付款實際 allocation 對應的正式、非虛擬、preorder 訂單；訂單必須 status='pending' 且所有 order_items 的 arrived_qty>=qty 才能出貨。同張訂單仍有任何商品未到齊時保留待出貨。出貨沿用既有 shipped 狀態規則，寫 shipped_at、status_history，且非退款狀態的客戶 payment_status 更新為 paid。",
       "data_migration": "無。沒有 schema migration，也不批次改寫歷史訂單；只在使用者於即將到貨區完成本批全額付款後觸發。",
       "rollback": "移除 IncomingBatches 付款後 incoming_ship_ready 呼叫與 neon-order-status 的 incomingShipReady/action，並將 APP_VERSION 還原為 V36；不需資料庫 rollback。"
@@ -245,9 +334,16 @@
       "date": "2026-09-02",
       "type": "workflow",
       "summary": "商品新增選填結單日；超過結單日後小幫手搜尋不到且不可新開單，管理者仍可自行開單。",
-      "database_changes": ["products.order_deadline: 新增可空白的結單日期欄位；NULL 代表不限結單"],
-      "api_changes": ["api/neon-helper-runtime.js: 新增 product_deadlines / set_product_deadline 管理動作；helper search_catalog 依台灣日期排除已過結單日商品；create_direct / create_direct_many 新增後端結單日防繞過驗證；沿用既有 Serverless Function"],
-      "ui_changes": ["src/components/ProductDeadlineManager.jsx: 商品管理頁新增結單日搜尋、日期設定與不限結單操作，搜尋框／日期輸入沿用 48px／16px 標準","src/App.jsx: /products 掛載商品結單日設定區"],
+      "database_changes": [
+        "products.order_deadline: 新增可空白的結單日期欄位；NULL 代表不限結單"
+      ],
+      "api_changes": [
+        "api/neon-helper-runtime.js: 新增 product_deadlines / set_product_deadline 管理動作；helper search_catalog 依台灣日期排除已過結單日商品；create_direct / create_direct_many 新增後端結單日防繞過驗證；沿用既有 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/components/ProductDeadlineManager.jsx: 商品管理頁新增結單日搜尋、日期設定與不限結單操作，搜尋框／日期輸入沿用 48px／16px 標準",
+        "src/App.jsx: /products 掛載商品結單日設定區"
+      ],
       "data_logic": "結單日當天仍可由小幫手開單，僅 order_deadline 小於 Asia/Taipei 當日才視為已結單。限制只套用 helper 的新開單；owner/staff 管理者不受限制。小幫手修改既有未出貨訂單不因後來超過結單日被鎖住。",
       "data_migration": "以 idempotent schema bootstrap 新增 nullable products.order_deadline，不回填既有商品；既有商品全部維持 NULL＝不限結單，不修改既有 orders、order_items 或 helper_entries。",
       "rollback": "還原 V38 的 ProductDeadlineManager、helper deadline actions／篩選／驗證並將 APP_VERSION 還原為 V37；order_deadline 欄位可保留不影響舊版，若確認無需保留再另行移除。"
@@ -258,7 +354,9 @@
       "type": "bugfix",
       "summary": "強化 V38 商品結單日：統一日期輸出格式，並避免每次商品搜尋都重複執行 schema DDL。",
       "database_changes": [],
-      "api_changes": ["api/neon-helper-runtime.js: order_deadline 支援 Date／ISO 字串統一輸出 YYYY-MM-DD；ensureProductDeadlineSchema 改為先查 information_schema，僅缺欄位時 ALTER，並於同一 Serverless instance 快取完成狀態"],
+      "api_changes": [
+        "api/neon-helper-runtime.js: order_deadline 支援 Date／ISO 字串統一輸出 YYYY-MM-DD；ensureProductDeadlineSchema 改為先查 information_schema，僅缺欄位時 ALTER，並於同一 Serverless instance 快取完成狀態"
+      ],
       "data_logic": "不改變 V38 結單規則：結單日當天仍可開單，只有超過 Asia/Taipei 結單日才限制 helper 新開單；owner/staff 與既有 helper pending 訂單修改仍不受限制。",
       "data_migration": "無。products.order_deadline 欄位定義與既有資料不變，只改善日期序列化與 schema bootstrap 執行方式。",
       "rollback": "還原 V39 的 deadlineText 與 ensureProductDeadlineSchema 實作並將 APP_VERSION 還原為 V38；不需資料庫 rollback。"
@@ -269,8 +367,12 @@
       "type": "ui",
       "summary": "修正商品結單日入口不易發現：結單日直接整合到商品列表與新增／編輯商品視窗。",
       "database_changes": [],
-      "api_changes": ["沿用 V38/V39 api/neon-helper-runtime.js product_deadlines / set_product_deadline，不新增 Serverless Function"],
-      "ui_changes": ["src/components/ProductDeadlineManager.jsx: 移除商品列表最下方獨立結單日卡片；商品名稱下方直接顯示不限結單／結單日／今日結單／已結單 badge；新增與編輯商品 Modal 在商品名稱下方直接加入 48px／16px 結單日期輸入"],
+      "api_changes": [
+        "沿用 V38/V39 api/neon-helper-runtime.js product_deadlines / set_product_deadline，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/components/ProductDeadlineManager.jsx: 移除商品列表最下方獨立結單日卡片；商品名稱下方直接顯示不限結單／結單日／今日結單／已結單 badge；新增與編輯商品 Modal 在商品名稱下方直接加入 48px／16px 結單日期輸入"
+      ],
       "data_logic": "商品表單成功關閉後才同步結單日；取消、關閉或表單驗證失敗不改寫 order_deadline。新增商品有設定日期時會依商品名稱解析新商品 ID 後寫入；編輯商品直接沿用既有 product legacy_id。V38 小幫手結單限制規則不變。",
       "data_migration": "無。不修改既有 products.order_deadline 資料，不回填商品，不改 orders/order_items/helper_entries。",
       "rollback": "將 ProductDeadlineManager 還原 V39 的獨立結單日設定卡片，並將 APP_VERSION 還原為 V39；不需資料庫 rollback。"
@@ -281,8 +383,14 @@
       "type": "workflow",
       "summary": "小幫手可刪除自己尚未到貨、尚未支付供應商款項的未出貨預購訂單；修改或刪除後薪資依 Neon 最新資料重新計算，管理薪資表移除待確認與已取消欄位。",
       "database_changes": [],
-      "api_changes": ["api/neon-orders-runtime.js: 新增 delete_own_helper；只允許 helper 刪除自己建立的 pending preorder，後端阻擋已到貨、現貨／庫存、供應商已付款或已有付款 allocation 的訂單；以單一 CTE SQL 同時刪除 orders 與對應 helper_entries，不新增 Serverless Function","src/lib/helper.js: 我的未出貨改讀 Neon my_pending_orders；小幫手修改訂單改要求 Neon 訂單／helper entry 同步成功；新增 deleteMyPendingOrder 並在 Neon 成功後清理 Firestore 備份"],
-      "ui_changes": ["src/pages/HelperPortalV4.jsx: 我的未出貨新增刪除按鈕、不可逆確認與到貨／付款／現貨鎖定提示；修改與刪除成功提示薪資已重算","src/pages/HelperEntries.jsx: 薪資統計表移除舊待確認與已取消欄位，移除舊待確認 KPI 卡；搜尋／文字輸入沿用 48px／16px 標準"],
+      "api_changes": [
+        "api/neon-orders-runtime.js: 新增 delete_own_helper；只允許 helper 刪除自己建立的 pending preorder，後端阻擋已到貨、現貨／庫存、供應商已付款或已有付款 allocation 的訂單；以單一 CTE SQL 同時刪除 orders 與對應 helper_entries，不新增 Serverless Function",
+        "src/lib/helper.js: 我的未出貨改讀 Neon my_pending_orders；小幫手修改訂單改要求 Neon 訂單／helper entry 同步成功；新增 deleteMyPendingOrder 並在 Neon 成功後清理 Firestore 備份"
+      ],
+      "ui_changes": [
+        "src/pages/HelperPortalV4.jsx: 我的未出貨新增刪除按鈕、不可逆確認與到貨／付款／現貨鎖定提示；修改與刪除成功提示薪資已重算",
+        "src/pages/HelperEntries.jsx: 薪資統計表移除舊待確認與已取消欄位，移除舊待確認 KPI 卡；搜尋／文字輸入沿用 48px／16px 標準"
+      ],
       "data_logic": "薪資仍沿用 V36：正式=商品 qty 加總、虛擬=每筆 1。修改訂單時同步更新 helper_entries.items/payload，管理端 SQL 即時重算；刪除時連同 helper_entries 移除，因此當月登記筆數、正式／虛擬薪資數量與薪資立即依剩餘資料重算。",
       "data_migration": "無 schema migration、無歷史資料批次改寫。只有小幫手主動確認刪除符合條件的自己未出貨訂單時才永久刪除該 order、其 order_items（FK cascade）與對應 helper_entry。",
       "rollback": "移除 delete_own_helper、HelperPortalV4 刪除介面與 helper.js deleteMyPendingOrder／強制同步，還原 HelperEntries V40 欄位與 APP_VERSION；已由小幫手確認刪除的訂單為永久刪除，程式 rollback 不會自動復原資料。"
@@ -294,7 +402,9 @@
       "summary": "已出貨查詢的封存訂單改用系統 ConfirmDialog，避免 iPad／Safari 原生 window.confirm 偶發未顯示而造成封存操作看似直接執行。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportSql.jsx: 封存按鈕先開啟系統確認視窗，顯示買家與封存訂單筆數；只有按下確認後才呼叫既有 OrdersAPI.archive，並提示封存後可從顯示封存解除"],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 封存按鈕先開啟系統確認視窗，顯示買家與封存訂單筆數；只有按下確認後才呼叫既有 OrdersAPI.archive，並提示封存後可從顯示封存解除"
+      ],
       "data_logic": "不修改封存 API、orders.archived 欄位、已出貨查詢 SQL 或解除封存流程。封存操作由原生同步 window.confirm 改為 React ConfirmDialog 狀態流程，取消／點背景關閉都不會送出封存 API。",
       "data_migration": "無。純前端確認流程修正，不回寫任何既有訂單資料。",
       "rollback": "將 PendingProductReportSql 封存確認改回 V41 window.confirm，並將 APP_VERSION 還原為 V41；不需資料庫 rollback。"
@@ -306,7 +416,9 @@
       "summary": "已出貨查詢的商品候選清單改依最近一次實際出貨日期由新到舊排列，並用日期分隔線分組。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 攔截既有 shipped 商品目錄查詢，依各商品最近 shipped_at 建立日期索引；商品候選按日期分組，顯示出貨日期 YYYY/MM/DD 水平分隔線，同日商品依名稱排序"],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 攔截既有 shipped 商品目錄查詢，依各商品最近 shipped_at 建立日期索引；商品候選按日期分組，顯示出貨日期 YYYY/MM/DD 水平分隔線，同日商品依名稱排序"
+      ],
       "data_logic": "只使用既有 OrdersAPI.searchPage 回傳的 shipped_at；同商品有多次已出貨訂單時以最近一次出貨日歸組。舊訂單若 shipped_at 缺失，依 updated_at、order_date、created_at 依序回退。待出貨清單、商品搜尋、出貨／封存、訂單 SQL 與資料寫入邏輯不變。",
       "data_migration": "無。純前端排序與分組顯示，不改寫 orders、order_items、products、到貨、付款或庫存資料。",
       "rollback": "移除 PendingProductReportFiltered 的 shippedProductDatesRef、已出貨目錄日期攔截與日期分隔線 DOM 增強，並將 APP_VERSION 還原為 V42；不需資料庫 rollback。"
@@ -318,7 +430,9 @@
       "summary": "已出貨商品日期分組排序改為較早出貨日優先，讓距今天較遠的已出貨商品先顯示。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/pages/PendingProductReportFiltered.jsx: 已出貨日期群組排序由新到舊改為舊到新；保留日期分隔線、同日商品名稱排序與日期未記錄固定最後"],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 已出貨日期群組排序由新到舊改為舊到新；保留日期分隔線、同日商品名稱排序與日期未記錄固定最後"
+      ],
       "data_logic": "沿用 V43 各商品最近一次實際出貨日作為分組日期，只反轉日期群組顯示順序；不改 shipped_at、訂單狀態、出貨／封存、商品搜尋或任何資料寫入邏輯。",
       "data_migration": "無。純前端排序方向調整，不改寫 orders、order_items、products、到貨、付款或庫存資料。",
       "rollback": "將 PendingProductReportFiltered 日期群組排序恢復 V43 的由新到舊，並將 APP_VERSION 還原為 V43；不需資料庫 rollback。"
@@ -328,9 +442,22 @@
       "date": "2026-09-03",
       "type": "workflow",
       "summary": "預購訂單新增品項層級「已釋出」數量；久未取貨可只釋出同張訂單中的指定商品，且同一品項可部分釋出，例如訂購 2 件只釋出 1 件。原銷售紀錄保留，但釋出數量從客戶取貨應收小計排除。",
-      "database_changes": ["order_items.released_qty: integer NOT NULL DEFAULT 0，記錄此訂單品項已釋出數量，可介於 0～qty","order_items.released_at: timestamptz nullable，記錄最近設定釋出數量的時間","order_items.released_by_uid: text nullable，記錄執行釋出的管理帳號 UID"],
-      "api_changes": ["api/neon-orders-runtime.js: idempotent 建立釋出欄位；新增 set_item_release / release_states；owner/staff 可對已全數到貨的預購品項設定 released_qty 0～qty，支援部分釋出；訂單 sync / 到貨 / 數量更新保留釋出狀態，不新增 Serverless Function","api/neon-order-edit.js: 建立／編輯預購訂單時保留相同商品規格的 released_qty/released_at/released_by_uid，避免一般編輯清掉釋出紀錄","src/lib/enableNeonOrderRead.js: Neon 訂單讀取疊加品項釋出狀態","src/lib/enableNeonPrimaryOrderWrites.js: OrdersAPI.setItemRelease 改傳 released_qty"],
-      "ui_changes": ["src/components/OrderReleaseManager.jsx + src/App.jsx: 訂單管理新增已到貨商品釋出中心，提供 48px/16px 搜尋與釋出數量輸入；數量大於 1 時可輸入部分釋出件數並以 ConfirmDialog 確認","src/pages/PendingProductReportFiltered.jsx: 已到貨／已出貨報表保留已釋出品項並顯示『已釋出』；已出貨部分釋出會拆成正常應取數量與已釋出數量顯示，釋出部分不計入本檢視取貨小計","src/components/GroupedReceipt.jsx: 出貨／取貨明細仍顯示已釋出商品，但 released_qty 不計入取貨應收小計與應取件數"],
+      "database_changes": [
+        "order_items.released_qty: integer NOT NULL DEFAULT 0，記錄此訂單品項已釋出數量，可介於 0～qty",
+        "order_items.released_at: timestamptz nullable，記錄最近設定釋出數量的時間",
+        "order_items.released_by_uid: text nullable，記錄執行釋出的管理帳號 UID"
+      ],
+      "api_changes": [
+        "api/neon-orders-runtime.js: idempotent 建立釋出欄位；新增 set_item_release / release_states；owner/staff 可對已全數到貨的預購品項設定 released_qty 0～qty，支援部分釋出；訂單 sync / 到貨 / 數量更新保留釋出狀態，不新增 Serverless Function",
+        "api/neon-order-edit.js: 建立／編輯預購訂單時保留相同商品規格的 released_qty/released_at/released_by_uid，避免一般編輯清掉釋出紀錄",
+        "src/lib/enableNeonOrderRead.js: Neon 訂單讀取疊加品項釋出狀態",
+        "src/lib/enableNeonPrimaryOrderWrites.js: OrdersAPI.setItemRelease 改傳 released_qty"
+      ],
+      "ui_changes": [
+        "src/components/OrderReleaseManager.jsx + src/App.jsx: 訂單管理新增已到貨商品釋出中心，提供 48px/16px 搜尋與釋出數量輸入；數量大於 1 時可輸入部分釋出件數並以 ConfirmDialog 確認",
+        "src/pages/PendingProductReportFiltered.jsx: 已到貨／已出貨報表保留已釋出品項並顯示『已釋出』；已出貨部分釋出會拆成正常應取數量與已釋出數量顯示，釋出部分不計入本檢視取貨小計",
+        "src/components/GroupedReceipt.jsx: 出貨／取貨明細仍顯示已釋出商品，但 released_qty 不計入取貨應收小計與應取件數"
+      ],
       "data_logic": "釋出不是取消訂單、退款或刪除品項；orders.total_amount、order_items.qty/sale_price/subtotal/cost_price/cost_subtotal、銷售報表 report_data、供應商付款與庫存流水均不因釋出而改寫。釋出只改 released_* 欄位與取貨呈現／應收小計。例：qty=2、released_qty=1 時，原銷售仍算 2 件，取貨應收只算剩餘 1 件；同張訂單其他品項正常取貨。released_qty=0 即取消釋出。",
       "data_migration": "以既有 neon-orders-runtime / neon-order-edit 的 idempotent schema bootstrap 新增三個 order_items 欄位；舊資料 released_qty 預設 0、時間與 UID 為 NULL，不批次改寫歷史訂單。order_items 已在既有備份白名單，因此新欄位會隨 schema/data 備份保存。",
       "rollback": "移除 OrderReleaseManager、PendingProductReportFiltered 的 V45 釋出呈現、GroupedReceipt 釋出小計邏輯、set_item_release/release_states 與讀寫 overlay，並將 APP_VERSION 還原為 V44。三個 nullable/default 欄位可保留而不影響舊版；若正式資料已有 released_qty>0，程式 rollback 前應先決定是否保留其業務語意，不自動清除釋出紀錄。"
@@ -342,7 +469,11 @@
       "summary": "釋出操作改為更直覺的 iPad 數量輸入，並將所有『已釋出』標示改為紅色醒目提示。",
       "database_changes": [],
       "api_changes": [],
-      "ui_changes": ["src/components/OrderReleaseManager.jsx: 未釋出品項數量預設 1，不再以 0 作輸入起點；數量大於 1 時提供 48px 的減號／數量／加號控制、直接輸入自動全選、去除前導 0、全部快捷鍵與獨立取消釋出按鈕","src/components/ReleasedTextStyler.jsx + src/App.jsx: 全站已釋出文字與 badge 統一紅色醒目顯示","src/components/GroupedReceipt.jsx: 出貨／取貨明細的已釋出標示與釋出金額改為紅色"],
+      "ui_changes": [
+        "src/components/OrderReleaseManager.jsx: 未釋出品項數量預設 1，不再以 0 作輸入起點；數量大於 1 時提供 48px 的減號／數量／加號控制、直接輸入自動全選、去除前導 0、全部快捷鍵與獨立取消釋出按鈕",
+        "src/components/ReleasedTextStyler.jsx + src/App.jsx: 全站已釋出文字與 badge 統一紅色醒目顯示",
+        "src/components/GroupedReceipt.jsx: 出貨／取貨明細的已釋出標示與釋出金額改為紅色"
+      ],
       "data_logic": "不修改 released_qty 的既有資料語意與後端規則；套用釋出仍寫入 1～qty，取消釋出仍由獨立取消操作寫回 0。原始銷售額、毛利、成本、供應商付款、庫存與取貨小計計算口徑完全沿用 V45。",
       "data_migration": "無。純前端操作與顏色調整，不批次改寫任何 orders、order_items 或釋出紀錄。",
       "rollback": "移除 ReleasedTextStyler，將 OrderReleaseManager 數量輸入還原 V45 的 0～qty number input，GroupedReceipt 顏色還原，並將 APP_VERSION 還原為 V45；不需資料庫 rollback。"
@@ -353,8 +484,12 @@
       "type": "bugfix",
       "summary": "修正商品數量超過 250 筆後，已成功設定結單日的商品仍可能在商品列表顯示『不限結單』。",
       "database_changes": [],
-      "api_changes": ["沿用既有 api/neon-helper-runtime.js catalog / set_product_deadline，不新增或修改 Serverless Function"],
-      "ui_changes": ["src/components/ProductDeadlineManager.jsx: 結單日顯示資料改由既有 catalog 一次取得全部啟用商品及 order_deadline，不再受 product_deadlines 250 筆上限影響；儲存成功後立即用 set_product_deadline 回傳值更新本地 badge"],
+      "api_changes": [
+        "沿用既有 api/neon-helper-runtime.js catalog / set_product_deadline，不新增或修改 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/components/ProductDeadlineManager.jsx: 結單日顯示資料改由既有 catalog 一次取得全部啟用商品及 order_deadline，不再受 product_deadlines 250 筆上限影響；儲存成功後立即用 set_product_deadline 回傳值更新本地 badge"
+      ],
       "data_logic": "不改寫結單日規則與資料庫欄位。結單日當天 helper 仍可開單、隔天起限制；owner/staff 不受限制。只修正管理端顯示資料來源與儲存後同步。",
       "data_migration": "無。不回填、不變更 products.order_deadline，既有已設定日期會直接正確顯示。",
       "rollback": "將 ProductDeadlineManager load 還原為 V46 product_deadlines limit=250 並移除儲存後本地 merge，同時將 APP_VERSION 還原為 V46；不需資料庫 rollback。"
@@ -365,8 +500,12 @@
       "type": "bugfix",
       "summary": "修正到貨／供應商付款更正的商品搜尋只在最新 500 筆候選訂單中做前端篩選，造成較舊但仍可更正的訂單搜尋不到。",
       "database_changes": [],
-      "api_changes": ["沿用既有 api/neon-order-query.js query / OrdersAPI.searchPage，不新增或修改 Serverless Function；有商品關鍵字時由 Neon SQL 搜尋全部訂單，再於前端套用可更正條件"],
-      "ui_changes": ["src/pages/OrdersCorrectable.jsx: 商品搜尋改為 300ms debounce 送 Neon SQL 查詢，分頁取得符合關鍵字的訂單後再篩可更正品項；搜尋時輸入框保持可見並顯示 Neon 搜尋中"],
+      "api_changes": [
+        "沿用既有 api/neon-order-query.js query / OrdersAPI.searchPage，不新增或修改 Serverless Function；有商品關鍵字時由 Neon SQL 搜尋全部訂單，再於前端套用可更正條件"
+      ],
+      "ui_changes": [
+        "src/pages/OrdersCorrectable.jsx: 商品搜尋改為 300ms debounce 送 Neon SQL 查詢，分頁取得符合關鍵字的訂單後再篩可更正品項；搜尋時輸入框保持可見並顯示 Neon 搜尋中"
+      ],
       "data_logic": "未輸入商品關鍵字時仍載入最近 500 筆更正候選；輸入關鍵字時不再受該 500 筆上限限制，先由既有訂單 SQL 搜尋符合關鍵字的訂單，再排除取消、封存、現貨及沒有 arrived_qty/supplier_paid_amount 的訂單。到貨／供應商付款更正寫入規則完全不變。",
       "data_migration": "無。只修改查詢方式與前端顯示，不改寫 orders、order_items、supplier_payments、supplier_payment_allocations 或庫存資料。",
       "rollback": "將 OrdersCorrectable 商品搜尋恢復 V47 的最近 500 筆候選前端篩選，並將 APP_VERSION 還原為 V47；不需資料庫 rollback。"
@@ -377,8 +516,12 @@
       "type": "bugfix",
       "summary": "修正 Excel 匯入頁在 Neon 客戶／商品尚未載入完成時即可選檔，導致 Excel 客戶被判定未配對；客戶資料載入後會自動重新配對未配對姓名。",
       "database_changes": [],
-      "api_changes": ["沿用既有 ProductsAPI.list / CustomersAPI.list / OrdersAPI.list，不新增或修改 Serverless Function"],
-      "ui_changes": ["src/pages/ExcelOrderImport.jsx: 商品與客戶先完成載入即開放 Excel 解析；載入前禁用選檔；既有已解析但未配對客戶在 Neon 客戶清單更新後自動依標準化姓名重配；重複訂單檢查完成前禁止正式匯入並顯示載入狀態"],
+      "api_changes": [
+        "沿用既有 ProductsAPI.list / CustomersAPI.list / OrdersAPI.list，不新增或修改 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/pages/ExcelOrderImport.jsx: 商品與客戶先完成載入即開放 Excel 解析；載入前禁用選檔；既有已解析但未配對客戶在 Neon 客戶清單更新後自動依標準化姓名重配；重複訂單檢查完成前禁止正式匯入並顯示載入狀態"
+      ],
       "data_logic": "Excel 客戶自動配對仍要求標準化姓名唯一相符；同名多位仍不自動選擇，需人工確認末碼。訂單重複判斷規則與正式建立訂單資料不變。",
       "data_migration": "無。純前端載入時序與自動重配修正，不改寫 customers、products、orders 或 order_items。",
       "rollback": "將 ExcelOrderImport 載入流程恢復 V48 的單一 Promise.all 並移除 catalogReady / duplicateReady / 自動重配 effect，同時將 APP_VERSION 還原為 V48；不需資料庫 rollback。"
@@ -389,10 +532,26 @@
       "type": "bugfix",
       "summary": "修正小幫手刪除自己未出貨訂單時先讀 Firestore orders 而被權限規則擋下，出現 Missing or insufficient permissions；刪除改直接使用 Neon 正式資料與後端權限驗證。",
       "database_changes": [],
-      "api_changes": ["src/lib/enableNeonPrimaryHelperWrites.js: 新增 HelperAPI.deleteMyPendingOrder Neon primary override，直接呼叫既有 api/neon-orders-runtime.js delete_own_helper，不再先讀／刪 Firestore 備份；不新增 Serverless Function"],
+      "api_changes": [
+        "src/lib/enableNeonPrimaryHelperWrites.js: 新增 HelperAPI.deleteMyPendingOrder Neon primary override，直接呼叫既有 api/neon-orders-runtime.js delete_own_helper，不再先讀／刪 Firestore 備份；不新增 Serverless Function"
+      ],
       "data_logic": "刪除資格仍完全沿用 V41 後端規則：只允許 helper 刪除自己建立、pending、未封存、preorder、尚未到貨、無供應商付款／allocation、無庫存流水且有對應 helper_entry 的訂單。成功後 Neon 同時刪除 order 與 helper_entry，薪資統計依剩餘 Neon helper_entries 即時重算。",
       "data_migration": "無 schema migration、無歷史資料批次改寫。本版只修正前端刪除呼叫來源；使用者實際按下確認刪除且通過後端檢查時才永久刪除該筆 Neon 訂單與對應小幫手登記。",
       "rollback": "移除 enableNeonPrimaryHelperWrites 的 deleteMyPendingOrder override 並將 APP_VERSION 還原為 V49；資料庫不需 rollback，但已由使用者確認刪除的訂單不會自動復原。"
+    },
+    {
+      "version": "V51",
+      "date": "2026-09-09",
+      "type": "bugfix",
+      "summary": "修正 iPad／Safari 商品新增／編輯視窗的結單日期選擇器會停在當日、無法穩定選擇其他日期。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/components/ProductDeadlineManager.jsx: 結單日期輸入由 React controlled value 改為原生 uncontrolled date input，並以 onInput / onChange 同步 editorRef；加入 iOS WebKit 相容 role=textbox，避免 Safari 原生日期選擇器被 React 回寫值卡住。"
+      ],
+      "data_logic": "結單日資料語意、Asia/Taipei 判定、小幫手隔天起禁止新開單、管理者不受限制等 V38～V47 規則全部不變；只修正日期輸入互動。",
+      "data_migration": "無。純前端 iPad／Safari 相容性修正，不改寫 products.order_deadline、orders、order_items 或 helper_entries。",
+      "rollback": "將 ProductDeadlineManager 日期輸入恢復 V50 的 controlled value/onChange 寫法並將 APP_VERSION 還原為 V50；不需資料庫 rollback。"
     }
   ]
 }
