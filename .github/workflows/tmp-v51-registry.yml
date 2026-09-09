@@ -1,0 +1,53 @@
+name: Temporary V51 Registry Writer
+
+on:
+  push:
+    branches: [fix-ipad-product-deadline-date-v51]
+
+permissions:
+  contents: write
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-ipad-product-deadline-date-v51
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Append V51 registry entry
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path=Path('src/migration-registry.json')
+          data=json.loads(path.read_text(encoding='utf-8'))
+          if not any(e.get('version')=='V51' for e in data.get('entries',[])):
+              data['entries'].append({
+                  'version':'V51',
+                  'date':'2026-09-09',
+                  'type':'bugfix',
+                  'summary':'修正 iPad／Safari 商品新增／編輯視窗的結單日期選擇器會停在當日、無法穩定選擇其他日期。',
+                  'database_changes':[],
+                  'api_changes':[],
+                  'ui_changes':['src/components/ProductDeadlineManager.jsx: 結單日期輸入由 React controlled value 改為原生 uncontrolled date input，並以 onInput / onChange 同步 editorRef；加入 iOS WebKit 相容 role=textbox，避免 Safari 原生日期選擇器被 React 回寫值卡住。'],
+                  'data_logic':'結單日資料語意、Asia/Taipei 判定、小幫手隔天起禁止新開單、管理者不受限制等 V38～V47 規則全部不變；只修正日期輸入互動。',
+                  'data_migration':'無。純前端 iPad／Safari 相容性修正，不改寫 products.order_deadline、orders、order_items 或 helper_entries。',
+                  'rollback':'將 ProductDeadlineManager 日期輸入恢復 V50 的 controlled value/onChange 寫法並將 APP_VERSION 還原為 V50；不需資料庫 rollback。'
+              })
+              path.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+      - name: Commit registry
+        shell: bash
+        run: |
+          if git diff --quiet -- src/migration-registry.json; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/migration-registry.json
+          git commit -m "docs: register V51 iPad deadline picker fix [skip ci]"
+          git push origin HEAD:fix-ipad-product-deadline-date-v51
