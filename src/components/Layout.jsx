@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第50版：小幫手刪除自己未出貨訂單改直接走 Neon 權限驗證，不再先讀 Firestore 而遭 permission-denied。
-const APP_VERSION = '第50版｜2026/09/05'
+// 第51版：修正 iPad／Safari 商品結單日期選擇器被當日值卡住，改為不受 React controlled value 回寫影響的日期輸入。
+const APP_VERSION = '第51版｜2026/09/09'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
