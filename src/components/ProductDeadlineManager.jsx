@@ -73,6 +73,12 @@ export default function ProductDeadlineManager(){
     }catch(err){toast('結單日資料載入失敗：'+err.message,'error')}
   },[replaceRows,toast])
 
+  const captureDeadline=useCallback(event=>{
+    const deadline=String(event.currentTarget?.value||'')
+    editorRef.current={...editorRef.current,deadline}
+    setEditor(prev=>prev.deadline===deadline?prev:{...prev,deadline})
+  },[])
+
   useEffect(()=>{editorRef.current=editor},[editor])
   useEffect(()=>{rowsRef.current=rows},[rows])
   useEffect(()=>{load()},[load])
@@ -210,9 +216,13 @@ export default function ProductDeadlineManager(){
     <div className="form-group" style={{marginBottom:14,padding:'12px 14px',border:'1.5px solid var(--border)',borderRadius:10,background:'var(--surface)'}}>
       <label style={{fontWeight:800}}>📅 結單日（選填）</label>
       <input
+        key={`${editor.mode}:${editor.id}:${editor.name}`}
         type="date"
-        value={editor.deadline||''}
-        onChange={e=>setEditor(prev=>({...prev,deadline:e.target.value}))}
+        role="textbox"
+        aria-label="結單日"
+        defaultValue={editor.deadline||''}
+        onInput={captureDeadline}
+        onChange={captureDeadline}
         style={{height:48,fontSize:16,width:'100%',padding:'0 12px'}}
       />
       <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,lineHeight:1.5}}>
