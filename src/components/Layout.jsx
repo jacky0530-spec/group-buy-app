@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第51版：修正 iPad／Safari 商品結單日期選擇器被當日值卡住，改為不受 React controlled value 回寫影響的日期輸入。
-const APP_VERSION = '第51版｜2026/09/09'
+// 第52版：iPad／Safari 結單日改用年／月／日三欄選擇，完全避開原生 date picker 卡在當日的問題。
+const APP_VERSION = '第52版｜2026/09/11'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
