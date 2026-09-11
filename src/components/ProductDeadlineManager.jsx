@@ -8,81 +8,114 @@ const taipeiToday=()=>new Intl.DateTimeFormat('en-CA',{
 }).format(new Date())
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 const pad2=value=>String(value).padStart(2,'0')
+const dateText=(year,month,day)=>`${year}-${pad2(month)}-${pad2(day)}`
 
-function parseDateParts(value){
+function parseDate(value){
   const match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  return match?{year:match[1],month:match[2],day:match[3]}:{year:'',month:'',day:''}
+  if(!match)return null
+  return{year:Number(match[1]),month:Number(match[2]),day:Number(match[3])}
 }
-function daysInMonth(year,month){
-  const y=Number(year),m=Number(month)
-  if(!y||!m)return 31
-  return new Date(y,m,0).getDate()
+function monthDays(year,month){return new Date(Date.UTC(year,month,0)).getUTCDate()}
+function monthWeekday(year,month){return new Date(Date.UTC(year,month-1,1)).getUTCDay()}
+function shiftMonth(year,month,delta){
+  const date=new Date(Date.UTC(year,month-1+delta,1,12))
+  return{year:date.getUTCFullYear(),month:date.getUTCMonth()+1}
 }
-function DeadlineDatePicker({value,today,onChange}){
-  const initial=parseDateParts(value)
-  const[parts,setParts]=useState(initial)
-  const todayParts=parseDateParts(today)
-  const selectedYear=Number(parts.year||todayParts.year||new Date().getFullYear())
-  const baseYear=Number(todayParts.year||new Date().getFullYear())
-  const yearOptions=useMemo(()=>{
-    const years=[]
-    for(let year=baseYear-1;year<=baseYear+5;year++)years.push(year)
-    if(selectedYear&&!years.includes(selectedYear))years.push(selectedYear)
-    return years.sort((a,b)=>a-b)
-  },[baseYear,selectedYear])
-  const maxDay=daysInMonth(parts.year,parts.month)
+function addTaipeiDays(today,offset){
+  const parsed=parseDate(today)
+  if(!parsed)return today
+  const date=new Date(Date.UTC(parsed.year,parsed.month-1,parsed.day+offset,12))
+  return dateText(date.getUTCFullYear(),date.getUTCMonth()+1,date.getUTCDate())
+}
+
+function DeadlineCalendar({value,today,onChange}){
+  const wrapperRef=useRef(null)
+  const[open,setOpen]=useState(false)
+  const initial=parseDate(value)||parseDate(today)
+  const[view,setView]=useState({year:initial?.year||new Date().getFullYear(),month:initial?.month||1})
 
   useEffect(()=>{
-    setParts(parseDateParts(value))
-  },[value])
+    if(!open)return
+    const target=parseDate(value)||parseDate(today)
+    if(target)setView({year:target.year,month:target.month})
+  },[open,value,today])
 
-  function patch(key,raw){
-    const next={...parts,[key]:String(raw||'')}
-    if(next.year&&next.month&&next.day){
-      const max=daysInMonth(next.year,next.month)
-      if(Number(next.day)>max)next.day=pad2(max)
+  useEffect(()=>{
+    if(!open)return undefined
+    const close=event=>{
+      if(wrapperRef.current&&!wrapperRef.current.contains(event.target))setOpen(false)
     }
-    setParts(next)
-    if(next.year&&next.month&&next.day){
-      onChange(`${next.year}-${next.month}-${next.day}`)
-    }
+    document.addEventListener('pointerdown',close,true)
+    return()=>document.removeEventListener('pointerdown',close,true)
+  },[open])
+
+  const days=monthDays(view.year,view.month)
+  const offset=monthWeekday(view.year,view.month)
+  const cells=Array.from({length:offset+days},(_,index)=>index<offset?null:index-offset+1)
+  const changeMonth=delta=>setView(current=>shiftMonth(current.year,current.month,delta))
+  const choose=day=>{
+    onChange(dateText(view.year,view.month,day))
+    setOpen(false)
   }
-
-  function quickDate(offsetDays){
-    const [year,month,day]=today.split('-').map(Number)
-    const date=new Date(Date.UTC(year,month-1,day+offsetDays,12))
-    const next=`${date.getUTCFullYear()}-${pad2(date.getUTCMonth()+1)}-${pad2(date.getUTCDate())}`
-    setParts(parseDateParts(next))
+  const quickToday=()=>{
+    const target=parseDate(today)
+    if(target)setView({year:target.year,month:target.month})
+    onChange(today)
+    setOpen(false)
+  }
+  const quickTomorrow=()=>{
+    const next=addTaipeiDays(today,1)
+    const target=parseDate(next)
+    if(target)setView({year:target.year,month:target.month})
     onChange(next)
+    setOpen(false)
   }
+  const clear=()=>{onChange('');setOpen(false)}
+  const display=value?value.replace(/-/g,' / '):'請選擇結單日期'
+  const weekday=['週日','週一','週二','週三','週四','週五','週六']
 
-  function clear(){
-    setParts({year:'',month:'',day:''})
-    onChange('')
-  }
-
-  const selectStyle={height:48,fontSize:16,minWidth:0,padding:'0 10px',border:'1.5px solid var(--border)',borderRadius:9,background:'var(--surface)',color:'var(--text-primary)'}
-  return <div>
-    <div style={{display:'grid',gridTemplateColumns:'1.15fr 1fr 1fr',gap:8}}>
-      <select aria-label="結單年份" value={parts.year} onChange={event=>patch('year',event.target.value)} style={selectStyle}>
-        <option value="">年份</option>
-        {yearOptions.map(year=><option key={year} value={year}>{year} 年</option>)}
-      </select>
-      <select aria-label="結單月份" value={parts.month} onChange={event=>patch('month',event.target.value)} style={selectStyle}>
-        <option value="">月份</option>
-        {Array.from({length:12},(_,index)=>index+1).map(month=><option key={month} value={pad2(month)}>{month} 月</option>)}
-      </select>
-      <select aria-label="結單日期" value={parts.day} onChange={event=>patch('day',event.target.value)} style={selectStyle}>
-        <option value="">日期</option>
-        {Array.from({length:maxDay},(_,index)=>index+1).map(day=><option key={day} value={pad2(day)}>{day} 日</option>)}
-      </select>
-    </div>
-    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:8}}>
-      <button type="button" className="btn btn-sm btn-ghost" onClick={()=>quickDate(0)}>今天</button>
-      <button type="button" className="btn btn-sm btn-ghost" onClick={()=>quickDate(1)}>明天</button>
-      <button type="button" className="btn btn-sm btn-ghost" onClick={clear}>不限結單</button>
-      <span style={{fontSize:12,color:'var(--text-muted)',display:'inline-flex',alignItems:'center',marginLeft:'auto'}}>{value?`目前：${value}`:'目前：不限結單'}</span>
-    </div>
+  return <div ref={wrapperRef} style={{position:'relative'}}>
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={()=>setOpen(current=>!current)}
+      style={{height:52,width:'100%',padding:'0 14px',border:'1.5px solid var(--border)',borderRadius:10,background:'var(--surface)',color:value?'var(--text-primary)':'var(--text-muted)',fontSize:17,fontWeight:value?700:500,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,textAlign:'left'}}
+    >
+      <span>📅 {display}</span><span aria-hidden="true" style={{fontSize:18}}>▾</span>
+    </button>
+    {open&&<div role="dialog" aria-label="結單日曆" style={{position:'absolute',zIndex:1200,top:58,left:0,width:'min(390px, 100%)',padding:14,border:'1.5px solid var(--border)',borderRadius:14,background:'var(--surface)',boxShadow:'0 18px 50px rgba(15,23,42,.20)'}}>
+      <div style={{display:'grid',gridTemplateColumns:'48px 1fr 48px',alignItems:'center',gap:8,marginBottom:10}}>
+        <button type="button" aria-label="上個月" onClick={()=>changeMonth(-1)} style={{height:48,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)',fontSize:24}}>‹</button>
+        <div style={{textAlign:'center',fontSize:20,fontWeight:800}}>{view.year} 年 {view.month} 月</div>
+        <button type="button" aria-label="下個月" onClick={()=>changeMonth(1)} style={{height:48,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)',fontSize:24}}>›</button>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4,marginBottom:4}}>
+        {weekday.map(item=><div key={item} style={{height:30,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'var(--text-muted)'}}>{item}</div>)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>
+        {cells.map((day,index)=>{
+          if(!day)return <span key={`blank-${index}`} style={{height:44}}/>
+          const iso=dateText(view.year,view.month,day)
+          const isSelected=iso===value
+          const isToday=iso===today
+          return <button
+            key={iso}
+            type="button"
+            aria-label={iso}
+            aria-pressed={isSelected}
+            onClick={()=>choose(day)}
+            style={{height:44,minWidth:0,border:isToday?'2px solid var(--primary)':'1px solid transparent',borderRadius:999,background:isSelected?'var(--primary)':'transparent',color:isSelected?'white':'var(--text-primary)',fontSize:17,fontWeight:isSelected||isToday?800:600}}
+          >{day}</button>
+        })}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={quickToday} style={{height:44}}>今天</button>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={quickTomorrow} style={{height:44}}>明天</button>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={clear} style={{height:44}}>不限結單</button>
+      </div>
+      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:8,textAlign:'center'}}>目前：{value||'不限結單'}</div>
+    </div>}
   </div>
 }
 
@@ -293,14 +326,14 @@ export default function ProductDeadlineManager(){
   return modalHost?createPortal(
     <div className="form-group" style={{marginBottom:14,padding:'12px 14px',border:'1.5px solid var(--border)',borderRadius:10,background:'var(--surface)'}}>
       <label style={{fontWeight:800}}>📅 結單日（選填）</label>
-      <DeadlineDatePicker
+      <DeadlineCalendar
         key={`${editor.mode}:${editor.id}:${editor.name}`}
         value={editor.deadline||''}
         today={today}
         onChange={setDeadlineValue}
       />
       <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,lineHeight:1.5}}>
-        iPad／Safari 改用年、月、日三欄選擇，不再使用會卡住的原生日期日曆。留空＝不限結單；結單日當天小幫手仍可開單，隔天起小幫手搜尋不到且不能新開單，管理者不受限制。
+        點日期欄直接開啟日曆，可用左右箭頭切換月份後選日期。此日曆由系統自行控制，不使用 iPad／Safari 原生日期選擇器，因此不會再被當日值卡住。留空＝不限結單；結單日當天小幫手仍可開單，隔天起才限制，管理者不受限制。
       </div>
     </div>,
     modalHost
