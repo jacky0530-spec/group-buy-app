@@ -33,8 +33,6 @@ function DeadlineCalendar({value,today,onChange}){
   const[open,setOpen]=useState(false)
   const initial=parseDate(value)||parseDate(today)
   const[view,setView]=useState({year:initial?.year||new Date().getFullYear(),month:initial?.month||1})
-  const selected=parseDate(value)
-  const todayParts=parseDate(today)
 
   useEffect(()=>{
     if(!open)return
