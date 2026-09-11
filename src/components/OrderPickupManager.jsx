@@ -135,7 +135,7 @@ export default function OrderPickupManager({onChanged}){
           const raw=draftValue(row)
           const done=row.picked>=row.maxPickup
           const price=Number(row.item.sale_price??row.item.price??0)
-          return <div key={key} style={{display:'grid',gridTemplateColumns:'minmax(140px,1fr) minmax(280px,2fr) minmax(210px,auto) minmax(130px,auto)',gap:10,alignItems:'center',padding:'11px 0',borderTop:'1px solid var(--border)',opacity:done?.72:1}}>
+          return <div key={key} style={{display:'grid',gridTemplateColumns:'minmax(140px,1fr) minmax(280px,2fr) minmax(210px,auto) minmax(130px,auto)',gap:10,alignItems:'center',padding:'11px 0',borderTop:'1px solid var(--border)',opacity:done ? .72 : 1}}>
             <div><strong>{row.order.customer_name||'未命名客戶'}</strong>{row.order.customer_phone_last2&&<span className="badge badge-violet" style={{marginLeft:6}}>末碼 {row.order.customer_phone_last2}</span>}<div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>待出貨正式訂單</div></div>
             <div><strong>{row.item.product_name||row.item.name}</strong> ×{row.ordered}<div style={{fontSize:12,color:'#2563eb',fontWeight:800,marginTop:3}}>{specText(row.item)}</div><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>已到 {row.arrived}/{row.ordered}　已釋出 {row.released}　已取貨 {row.picked}　未取貨 {Math.max(0,row.ordered-row.released-row.picked)}　{money(price)}/件</div></div>
             <div style={{display:'flex',alignItems:'center',gap:5,justifyContent:'flex-end',flexWrap:'wrap'}}>
