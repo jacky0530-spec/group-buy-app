@@ -7,6 +7,84 @@ const taipeiToday=()=>new Intl.DateTimeFormat('en-CA',{
   timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit',
 }).format(new Date())
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
+const pad2=value=>String(value).padStart(2,'0')
+
+function parseDateParts(value){
+  const match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return match?{year:match[1],month:match[2],day:match[3]}:{year:'',month:'',day:''}
+}
+function daysInMonth(year,month){
+  const y=Number(year),m=Number(month)
+  if(!y||!m)return 31
+  return new Date(y,m,0).getDate()
+}
+function DeadlineDatePicker({value,today,onChange}){
+  const initial=parseDateParts(value)
+  const[parts,setParts]=useState(initial)
+  const todayParts=parseDateParts(today)
+  const selectedYear=Number(parts.year||todayParts.year||new Date().getFullYear())
+  const baseYear=Number(todayParts.year||new Date().getFullYear())
+  const yearOptions=useMemo(()=>{
+    const years=[]
+    for(let year=baseYear-1;year<=baseYear+5;year++)years.push(year)
+    if(selectedYear&&!years.includes(selectedYear))years.push(selectedYear)
+    return years.sort((a,b)=>a-b)
+  },[baseYear,selectedYear])
+  const maxDay=daysInMonth(parts.year,parts.month)
+
+  useEffect(()=>{
+    setParts(parseDateParts(value))
+  },[value])
+
+  function patch(key,raw){
+    const next={...parts,[key]:String(raw||'')}
+    if(next.year&&next.month&&next.day){
+      const max=daysInMonth(next.year,next.month)
+      if(Number(next.day)>max)next.day=pad2(max)
+    }
+    setParts(next)
+    if(next.year&&next.month&&next.day){
+      onChange(`${next.year}-${next.month}-${next.day}`)
+    }
+  }
+
+  function quickDate(offsetDays){
+    const [year,month,day]=today.split('-').map(Number)
+    const date=new Date(Date.UTC(year,month-1,day+offsetDays,12))
+    const next=`${date.getUTCFullYear()}-${pad2(date.getUTCMonth()+1)}-${pad2(date.getUTCDate())}`
+    setParts(parseDateParts(next))
+    onChange(next)
+  }
+
+  function clear(){
+    setParts({year:'',month:'',day:''})
+    onChange('')
+  }
+
+  const selectStyle={height:48,fontSize:16,minWidth:0,padding:'0 10px',border:'1.5px solid var(--border)',borderRadius:9,background:'var(--surface)',color:'var(--text-primary)'}
+  return <div>
+    <div style={{display:'grid',gridTemplateColumns:'1.15fr 1fr 1fr',gap:8}}>
+      <select aria-label="結單年份" value={parts.year} onChange={event=>patch('year',event.target.value)} style={selectStyle}>
+        <option value="">年份</option>
+        {yearOptions.map(year=><option key={year} value={year}>{year} 年</option>)}
+      </select>
+      <select aria-label="結單月份" value={parts.month} onChange={event=>patch('month',event.target.value)} style={selectStyle}>
+        <option value="">月份</option>
+        {Array.from({length:12},(_,index)=>index+1).map(month=><option key={month} value={pad2(month)}>{month} 月</option>)}
+      </select>
+      <select aria-label="結單日期" value={parts.day} onChange={event=>patch('day',event.target.value)} style={selectStyle}>
+        <option value="">日期</option>
+        {Array.from({length:maxDay},(_,index)=>index+1).map(day=><option key={day} value={pad2(day)}>{day} 日</option>)}
+      </select>
+    </div>
+    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:8}}>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={()=>quickDate(0)}>今天</button>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={()=>quickDate(1)}>明天</button>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={clear}>不限結單</button>
+      <span style={{fontSize:12,color:'var(--text-muted)',display:'inline-flex',alignItems:'center',marginLeft:'auto'}}>{value?`目前：${value}`:'目前：不限結單'}</span>
+    </div>
+  </div>
+}
 
 function deadlineStatus(row,today){
   const deadline=String(row?.order_deadline||'')
@@ -73,8 +151,8 @@ export default function ProductDeadlineManager(){
     }catch(err){toast('結單日資料載入失敗：'+err.message,'error')}
   },[replaceRows,toast])
 
-  const captureDeadline=useCallback(event=>{
-    const deadline=String(event.currentTarget?.value||'')
+  const setDeadlineValue=useCallback(deadlineInput=>{
+    const deadline=String(deadlineInput||'')
     editorRef.current={...editorRef.current,deadline}
     setEditor(prev=>prev.deadline===deadline?prev:{...prev,deadline})
   },[])
@@ -215,18 +293,14 @@ export default function ProductDeadlineManager(){
   return modalHost?createPortal(
     <div className="form-group" style={{marginBottom:14,padding:'12px 14px',border:'1.5px solid var(--border)',borderRadius:10,background:'var(--surface)'}}>
       <label style={{fontWeight:800}}>📅 結單日（選填）</label>
-      <input
+      <DeadlineDatePicker
         key={`${editor.mode}:${editor.id}:${editor.name}`}
-        type="date"
-        role="textbox"
-        aria-label="結單日"
-        defaultValue={editor.deadline||''}
-        onInput={captureDeadline}
-        onChange={captureDeadline}
-        style={{height:48,fontSize:16,width:'100%',padding:'0 12px'}}
+        value={editor.deadline||''}
+        today={today}
+        onChange={setDeadlineValue}
       />
       <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6,lineHeight:1.5}}>
-        留空＝不限結單。結單日當天小幫手仍可開單；隔天起小幫手搜尋不到且不能新開單，管理者不受限制。
+        iPad／Safari 改用年、月、日三欄選擇，不再使用會卡住的原生日期日曆。留空＝不限結單；結單日當天小幫手仍可開單，隔天起小幫手搜尋不到且不能新開單，管理者不受限制。
       </div>
     </div>,
     modalHost
