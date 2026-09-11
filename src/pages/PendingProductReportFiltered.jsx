@@ -101,16 +101,18 @@ function pickedUpPendingPage(page,status=''){
   return {
     ...page,
     rows:(page?.rows||[]).map(order=>{
-      const items=(order.items||[]).map(item=>{
+      const items=(order.items||[]).map((item,sourceIndex)=>{
+        const sourceItemIndex=Number.isInteger(Number(item?._source_item_index))?Number(item._source_item_index):sourceIndex
         const qty=Math.max(0,Number(item?.qty||0))
         const picked=Math.min(qty,Math.max(0,Number(item?.picked_up_qty||0)))
-        if(!(qty>0&&picked>0))return item
+        if(!(qty>0&&picked>0))return {...item,_source_item_index:sourceItemIndex}
         const remaining=Math.max(0,qty-picked)
         if(!remaining)return null
         const arrived=Math.min(qty,Math.max(0,Number(item?.arrived_qty||0)))
         const price=Number(item.sale_price??item.price??0)
         return {
           ...item,
+          _source_item_index:sourceItemIndex,
           qty:remaining,
           arrived_qty:Math.min(remaining,Math.max(0,arrived-picked)),
           subtotal:price*remaining,
