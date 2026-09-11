@@ -96,6 +96,34 @@ function releasedPickupPage(page,status=''){
   }
 }
 
+function pickedUpPendingPage(page,status=''){
+  if(status!=='pending')return page
+  return {
+    ...page,
+    rows:(page?.rows||[]).map(order=>{
+      const items=(order.items||[]).map(item=>{
+        const qty=Math.max(0,Number(item?.qty||0))
+        const picked=Math.min(qty,Math.max(0,Number(item?.picked_up_qty||0)))
+        if(!(qty>0&&picked>0))return item
+        const remaining=Math.max(0,qty-picked)
+        if(!remaining)return null
+        const arrived=Math.min(qty,Math.max(0,Number(item?.arrived_qty||0)))
+        const price=Number(item.sale_price??item.price??0)
+        return {
+          ...item,
+          qty:remaining,
+          arrived_qty:Math.min(remaining,Math.max(0,arrived-picked)),
+          subtotal:price*remaining,
+          pickup_original_qty:qty,
+          pickup_picked_up_qty:picked,
+          picked_up_qty:0,
+        }
+      }).filter(Boolean)
+      return items.length?{...order,items}:null
+    }).filter(Boolean),
+  }
+}
+
 function taipeiDateLabel(value) {
   const date = new Date(value || '')
   if (!Number.isFinite(date.getTime())) return '日期未記錄'
@@ -131,7 +159,7 @@ export default function PendingProductReportFiltered() {
 
   // 報表內部固定以 includeArchived:true 載入商品目錄。
   // 同時讓「全部待出貨 / 已到貨可取貨 / 尚未到貨」各自重建真正有數量的商品目錄。
-  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示，但排除取貨應收小計。
+  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示；V54：待出貨只顯示尚未取貨數量。
   useEffect(() => {
     const originalList = originalListRef.current
     const originalSearchPage = originalSearchPageRef.current
@@ -142,7 +170,7 @@ export default function PendingProductReportFiltered() {
     }
 
     OrdersAPI.searchPage = async (params = {}) => {
-      const page = releasedPickupPage(await originalSearchPage(params),params?.status)
+      const page = releasedPickupPage(pickedUpPendingPage(await originalSearchPage(params),params?.status),params?.status)
       const isPendingCatalogQuery = params?.status === 'pending'
         && !params?.productId
         && !String(params?.search || '').trim()

@@ -580,6 +580,28 @@
       "data_logic": "不使用 input[type=date] 或 Safari 原生日期元件；日期點選由 React 自製日曆直接更新 editorRef/editor，避免原生 picker 被 controlled value 回寫卡住。仍以 YYYY-MM-DD 傳給既有 set_product_deadline；V38～V52 結單日與 Neon 規則完全不變。",
       "data_migration": "無。純前端日期選擇 UI 調整，不修改 products.order_deadline schema，不改寫既有商品、orders、order_items 或 helper_entries。",
       "rollback": "將 ProductDeadlineManager 日期選擇還原 V52 年／月／日三欄 select，並將 APP_VERSION 還原為 V52；不需資料庫 rollback。"
+    },
+    {
+      "version": "V54",
+      "date": "2026-09-11",
+      "type": "feature",
+      "summary": "新增預購 order_items 品項層級已取貨數量；同一訂單可將已到貨且已交付的規格標記取貨，未出貨報表只保留尚未取貨或尚未到貨項目。",
+      "database_changes": [
+        "order_items.picked_up_qty integer NOT NULL DEFAULT 0",
+        "order_items.picked_up_at timestamptz",
+        "order_items.picked_up_by_uid text"
+      ],
+      "api_changes": [
+        "api/neon-orders-runtime.js: pickup_states / set_item_pickup；沿用既有 Function，不新增 Serverless Function"
+      ],
+      "ui_changes": [
+        "src/components/OrderPickupManager.jsx",
+        "src/pages/PendingProductReportFiltered.jsx",
+        "/pending-report 掛載品項取貨管理"
+      ],
+      "data_logic": "已取貨數量不得超過已到貨且未釋出數量；取貨不修改原始銷售額、成本、供應商付款或庫存流水。未出貨報表只扣除 picked_up_qty 的顯示量；原訂單與 order_items 仍保留完整歷史。",
+      "data_migration": "新增欄位皆有安全預設值；既有資料 picked_up_qty=0，不自動改寫既有訂單。",
+      "rollback": "停用 V54 UI/讀取包裝與 set_item_pickup action；保留新增欄位亦不影響舊版本。若確定無資料才可另行移除欄位。"
     }
   ]
 }
