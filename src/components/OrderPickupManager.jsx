@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Minus, PackageCheck, Plus, Search } from 'lucide-react'
 import { OrdersAPI } from '../lib/db'
 import { ConfirmDialog, useToast } from './UI'
@@ -11,12 +11,12 @@ function specText(item){
   return [s.package&&`組合：${s.package}`,s.flavor&&`口味：${s.flavor}`,s.color&&`顏色：${s.color}`,s.size&&`尺寸：${s.size}`].filter(Boolean).join('／')||'一般規格'
 }
 
-async function fetchMatchingPending(search){
+async function fetchMatchingPending(searchPage,search){
   const rows=[]
   let cursor=null
   let guard=0
   do{
-    const page=await OrdersAPI.searchPage({status:'pending',includeArchived:false,search,pageSize:250,cursor})
+    const page=await searchPage({status:'pending',includeArchived:false,search,pageSize:250,cursor})
     rows.push(...(page.rows||[]))
     cursor=page.hasMore?page.nextCursor:null
     guard+=1
@@ -26,6 +26,7 @@ async function fetchMatchingPending(search){
 
 export default function OrderPickupManager({onChanged}){
   const toast=useToast()
+  const searchPageRef=useRef(OrdersAPI.searchPage)
   const [open,setOpen]=useState(true)
   const [search,setSearch]=useState('')
   const [orders,setOrders]=useState([])
@@ -39,7 +40,7 @@ export default function OrderPickupManager({onChanged}){
     if(!q){setOrders([]);toast('請先輸入客戶姓名、末碼或商品名稱','warning');return}
     setLoading(true)
     try{
-      setOrders(await fetchMatchingPending(q))
+      setOrders(await fetchMatchingPending(searchPageRef.current,q))
       setDrafts({})
     }catch(err){toast('取貨資料載入失敗：'+err.message,'error')}
     finally{setLoading(false)}
@@ -96,8 +97,8 @@ export default function OrderPickupManager({onChanged}){
     const key=keyOf(row.order,row.itemIndex)
     setConfirm(null);setBusy(key)
     try{
-      await OrdersAPI.setItemPickup(row.order.id,row.itemIndex,row.nextPicked)
-      toast(row.nextPicked>0?`✅ 已取貨 ${row.nextPicked}/${row.ordered} 件`:'↩️ 已取消此品項取貨標記')
+      const result=await OrdersAPI.setItemPickup(row.order.id,row.itemIndex,row.nextPicked)
+      toast(result?.order_completed?'✅ 本張訂單所有有效品項已完成，已自動標記已出貨':row.nextPicked>0?`✅ 已取貨 ${row.nextPicked}/${row.ordered} 件`:'↩️ 已取消此品項取貨標記')
       await load()
       onChanged?.()
     }catch(err){toast('更新已取貨狀態失敗：'+err.message,'error')}

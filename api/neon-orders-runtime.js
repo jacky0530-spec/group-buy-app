@@ -316,8 +316,24 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
       updated_at=now()
     WHERE order_id=${row.order_id} AND line_no=${lineNo}
     RETURNING line_no,product_name,qty,arrived_qty,released_qty,picked_up_qty,picked_up_at,picked_up_by_uid`
-  await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
-  return updated[0]
+  const state=await sql`
+    SELECT COUNT(*)::int AS item_count,
+      COUNT(*) FILTER (WHERE COALESCE(released_qty,0)+COALESCE(picked_up_qty,0)<qty)::int AS open_items
+    FROM order_items WHERE order_id=${row.order_id}`
+  const completed=Number(state[0]?.item_count||0)>0&&Number(state[0]?.open_items||0)===0
+  let orderCompleted=false
+  if(completed&&row.status==='pending'){
+    const completedAt=new Date().toISOString()
+    const historyEntry=[{status:'shipped',at:completedAt,note:'所有有效品項已取貨／釋出，自動完成訂單'}]
+    await sql`
+      UPDATE orders SET status='shipped',shipped_at=COALESCE(shipped_at,${completedAt}),
+        status_history=COALESCE(status_history,'[]'::jsonb) || ${JSON.stringify(historyEntry)}::jsonb,updated_at=now()
+      WHERE id=${row.order_id}`
+    orderCompleted=true
+  }else{
+    await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
+  }
+  return {...updated[0],order_completed:orderCompleted}
 }
 
 async function pickupStates(sql,ids){
