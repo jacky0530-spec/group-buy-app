@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第53版：商品結單日改回日曆式選擇，但使用自製 React 日曆避免 iPad／Safari 原生日期選擇器卡住。
-const APP_VERSION = '第53版｜2026/09/11'
+// 第54版：新增預購品項層級已取貨數量，未出貨報表只保留尚待取貨／未到貨項目。
+const APP_VERSION = '第54版｜2026/09/11'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
