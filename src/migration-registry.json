@@ -620,6 +620,21 @@
       "data_logic": "部分取貨不改整張訂單狀態；仍有未到貨/未取貨項目時維持 pending。僅當每一 order_item 都滿足 released_qty + picked_up_qty >= qty 時，pending 預購訂單才自動轉 shipped。",
       "data_migration": "無新增欄位；沿用 V54 picked_up_* 欄位。",
       "rollback": "還原 V55 前端索引/編輯保護與 set_item_pickup 自動完成段落；不需 schema rollback。"
+    },
+    {
+      "version": "V56",
+      "date": "2026-09-12",
+      "type": "bugfix",
+      "summary": "混合到貨的待出貨訂單可在買家明細中逐規格直接標記「已取貨並隱藏」；已到貨規格可先完成取貨，未到貨規格繼續保留在未出貨報表。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 正式預購品項若已到貨且尚未取貨，在訂購量旁新增「已取貨並隱藏」按鈕；寫入既有 OrdersAPI.setItemPickup 後立即重新查詢，該規格從未出貨明細移除。",
+        "同張訂單若仍有未到貨或未取貨規格，訂單維持 pending 並只顯示剩餘規格；全部有效規格完成取貨／釋出後仍沿用 V55 後端自動轉 shipped。"
+      ],
+      "data_logic": "只對正式、預購、已到貨且尚未取貨的規格提供快捷取貨；取貨數量使用原訂購量扣除已釋出數量後的可取貨量。未到貨規格不顯示此按鈕，避免誤標取貨。沿用既有 picked_up_* 欄位與 set_item_pickup，不修改原銷售額、成本、供應商付款或庫存流水。",
+      "data_migration": "無。沿用 V54/V55 已存在的 picked_up_qty / picked_up_at / picked_up_by_uid。",
+      "rollback": "移除 PendingProductReportSql 的逐規格「已取貨並隱藏」快捷按鈕與 pickupKey 狀態，APP_VERSION 還原 V55；既有取貨資料不自動清除。"
     }
   ]
 }
