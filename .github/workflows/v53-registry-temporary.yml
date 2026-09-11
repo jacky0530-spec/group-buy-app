@@ -1,0 +1,43 @@
+name: V53 registry temporary writer
+on:
+  push:
+    branches: [fix-calendar-deadline-v53]
+permissions:
+  contents: write
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-calendar-deadline-v53
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Append V53 migration registry entry
+        run: |
+          node <<'NODE'
+          const fs=require('fs')
+          const path='src/migration-registry.json'
+          const data=JSON.parse(fs.readFileSync(path,'utf8'))
+          if(data.entries.some(entry=>entry.version==='V53')) process.exit(0)
+          data.entries.push({
+            version:'V53',
+            date:'2026-09-11',
+            type:'ui',
+            summary:'商品結單日恢復日曆式選擇，但改用系統自製 React 日曆，避免 iPad／Safari 原生 date picker 固定停在當日而無法修改日期。',
+            database_changes:[],
+            api_changes:[],
+            ui_changes:['src/components/ProductDeadlineManager.jsx: 年／月／日三欄選擇改為可展開的月曆；提供上／下月切換、日期格、今天、明天、不限結單快捷操作，觸控尺寸適合 iPad。'],
+            data_logic:'不使用 input[type=date] 或 Safari 原生日期元件；日期點選由 React 自製日曆直接更新 editorRef/editor，避免原生 picker 被 controlled value 回寫卡住。仍以 YYYY-MM-DD 傳給既有 set_product_deadline；V38～V52 結單日與 Neon 規則完全不變。',
+            data_migration:'無。純前端日期選擇 UI 調整，不修改 products.order_deadline schema，不改寫既有商品、orders、order_items 或 helper_entries。',
+            rollback:'將 ProductDeadlineManager 日期選擇還原 V52 年／月／日三欄 select，並將 APP_VERSION 還原為 V52；不需資料庫 rollback。'
+          })
+          fs.writeFileSync(path,JSON.stringify(data,null,2)+'\n')
+          NODE
+          if git diff --quiet -- src/migration-registry.json; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/migration-registry.json
+          git commit -m 'docs: register V53 calendar deadline picker'
+          git push origin HEAD:fix-calendar-deadline-v53
