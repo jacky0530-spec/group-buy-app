@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第56版：混合到貨訂單可逐規格直接標記已取貨並隱藏，未到貨規格繼續保留。
-const APP_VERSION = '第56版｜2026/09/12'
+// 第57版：小幫手登記時只針對同客戶、同商品且同規格的既有待出貨訂單顯示紅色重複提示。
+const APP_VERSION = '第57版｜2026/09/12'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

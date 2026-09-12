@@ -33,6 +33,28 @@ function hasSelectableSpec(product) {
   )
 }
 
+function normalizedSpec(spec = {}) {
+  return {
+    package:String(spec.package || '').trim(),
+    flavor:String(spec.flavor || '').trim(),
+    color:String(spec.color || '').trim(),
+    size:String(spec.size || '').trim(),
+  }
+}
+function duplicateKey(customerId,productId,spec = {}) {
+  const s=normalizedSpec(spec)
+  return JSON.stringify([String(customerId || ''),String(productId || ''),s.package,s.flavor,s.color,s.size])
+}
+function duplicateRequest(customer,product,spec = {}) {
+  if (!customer?.id || !product?.id || specError(product,spec)) return null
+  return {key:duplicateKey(customer.id,product.id,spec),customer_id:customer.id,product_id:product.id,spec:normalizedSpec(spec)}
+}
+function shortDate(value) {
+  if (!value) return ''
+  const d=new Date(value)
+  return Number.isNaN(d.getTime()) ? String(value).slice(0,10) : d.toLocaleDateString('zh-TW')
+}
+
 function SpecFields({ product, spec, onChange }) {
   if (!product) return null
   const style = { height: 40, minWidth: 120 }
@@ -96,6 +118,8 @@ export default function HelperPortalV3() {
   const [batchCustomerOpen, setBatchCustomerOpen] = useState(false)
   const [batchRows, setBatchRows] = useState([])
   const [batchNote, setBatchNote] = useState('')
+  const [duplicateMap, setDuplicateMap] = useState({})
+  const [duplicateChecking, setDuplicateChecking] = useState(false)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -148,10 +172,60 @@ export default function HelperPortalV3() {
     return () => { active=false; window.clearTimeout(timer) }
   }, [mode, productOpen, batchProductOpen, productSearch, batchProductSearch, toast])
 
+  const duplicateRequests = useMemo(() => {
+    const unique=new Map()
+    if (mode === 'customer' && customer) {
+      items.forEach(item => {
+        const req=duplicateRequest(customer,item.product,item.spec)
+        if (req) unique.set(req.key,req)
+      })
+    } else if (mode === 'product' && batchProduct) {
+      batchRows.forEach(row => row.items.forEach(line => {
+        const req=duplicateRequest(row.customer,batchProduct,line.spec)
+        if (req) unique.set(req.key,req)
+      }))
+    }
+    return Array.from(unique.values())
+  }, [mode,customer,items,batchProduct,batchRows])
+
+  useEffect(() => {
+    if (!duplicateRequests.length) {
+      setDuplicateMap({})
+      setDuplicateChecking(false)
+      return undefined
+    }
+    let active=true
+    setDuplicateChecking(true)
+    const timer=window.setTimeout(async()=>{
+      try {
+        const rows=await HelperAPI.checkPendingDuplicates(duplicateRequests)
+        if (active) setDuplicateMap(Object.fromEntries(rows.map(row=>[row.key,row])))
+      } catch (err) {
+        if (active) {
+          setDuplicateMap({})
+          toast('重複訂單檢查失敗：'+err.message,'error')
+        }
+      } finally {
+        if (active) setDuplicateChecking(false)
+      }
+    },220)
+    return () => { active=false; window.clearTimeout(timer) }
+  }, [duplicateRequests,toast])
+
   const custs = useMemo(() => customers.slice(0,20), [customers])
   const batchCusts = useMemo(() => customers.slice(0,30), [customers])
   const prods = useMemo(() => products.slice(0,30), [products])
   const batchProds = useMemo(() => products.slice(0,30), [products])
+
+  function renderDuplicateWarning(customerRow,product,spec) {
+    const req=duplicateRequest(customerRow,product,spec)
+    if (!req) return null
+    const hit=duplicateMap[req.key]
+    if (!hit?.duplicate) return null
+    const count=Number(hit.match_count||0)
+    const qty=Number(hit.remaining_qty||0)
+    return <div style={{marginTop:8,padding:'9px 11px',border:'2px solid #ef4444',borderRadius:9,background:'#fef2f2',color:'#b91c1c',fontSize:13,fontWeight:900}}>⚠ 重複下單：這位客戶已有相同商品＋相同規格的待出貨訂單{count?` ${count} 筆`:''}{qty?`，尚有 ${qty} 件`:''}{hit.latest_order_date?`（最近 ${shortDate(hit.latest_order_date)}）`:''}</div>
+  }
 
   function renderProductList(list, search, onPick) {
     if (productSearching) return <div style={{ padding: 14, color: 'var(--text-muted)' }}>SQL 搜尋中...</div>
@@ -269,17 +343,17 @@ export default function HelperPortalV3() {
   return <div style={{ minHeight:'100vh', background:'#f8fafc' }}>
     <header style={{ position:'sticky', top:0, zIndex:20, background:'#0f172a', color:'#fff', padding:'12px 16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}><div><strong style={{fontSize:18}}>📝 小幫手團購登記</strong><div style={{fontSize:11,opacity:.6}}>{account?.display_name||user?.email}</div></div><button onClick={logout} style={{border:'1px solid rgba(255,255,255,.2)',background:'transparent',color:'#fff',borderRadius:8,padding:'8px 10px'}}><LogOut size={14}/> 登出</button></header>
     <main style={{ maxWidth:980, margin:'0 auto', padding:16 }}>
-      <div style={{ background:'#ecfdf5', border:'1px solid #a7f3d0', padding:'10px 12px', borderRadius:10, marginBottom:14, fontSize:13, color:'#065f46' }}>送出後會直接建立訂單；客戶與商品改為即時 SQL 搜尋，不需先下載全部資料。</div>
+      <div style={{ background:'#ecfdf5', border:'1px solid #a7f3d0', padding:'10px 12px', borderRadius:10, marginBottom:14, fontSize:13, color:'#065f46' }}>送出後會直接建立訂單；客戶與商品改為即時 SQL 搜尋，不需先下載全部資料。相同客戶若已有「同商品＋同規格」待出貨訂單，登記時會以紅色提示；同商品但不同規格不提示。{duplicateChecking&&<span style={{marginLeft:8,color:'#475569'}}>重複檢查中…</span>}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10,marginBottom:14}}><button onClick={()=>setMode('customer')} style={{padding:14,borderRadius:12,border:`2px solid ${mode==='customer'?'var(--indigo)':'var(--border)'}`,background:mode==='customer'?'var(--indigo-light)':'#fff',fontWeight:900}}><UserRound size={16}/> 依客戶打單<div style={{fontSize:11,fontWeight:500}}>一位客戶可加入多項商品、多個規格</div></button><button onClick={()=>setMode('product')} style={{padding:14,borderRadius:12,border:`2px solid ${mode==='product'?'var(--emerald)':'var(--border)'}`,background:mode==='product'?'var(--emerald-light)':'#fff',fontWeight:900}}><Users size={16}/> 依商品連續打單<div style={{fontSize:11,fontWeight:500}}>同商品、多客戶、多規格</div></button></div>
 
       {mode==='customer'?<>
         <div className="card" style={{marginBottom:14}}><div className="card-header"><strong>① 選擇客戶</strong></div><div className="card-body"><div className="search-input-wrap"><Search size={16}/><input value={customerSearch} onChange={e=>setCustomerSearch(e.target.value)} placeholder="姓名／手機末兩碼／Line／FB" style={{paddingLeft:36,height:48,fontSize:16}}/></div>{customerSearch&&<div style={{marginTop:8,border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>{customerSearching?<div style={{padding:14,color:'var(--text-muted)'}}>SQL 搜尋中...</div>:custs.length?custs.map(c=><button key={c.id} onClick={()=>{setCustomer(c);setCustomerSearch('')}} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:0,borderBottom:'1px solid var(--border)',background:'#fff'}}><strong>{c.name}</strong><div style={{fontSize:11,color:'var(--text-muted)'}}>{customerSecondaryLabel(c)||'無其他辨識資料'}</div></button>):<div style={{padding:14,color:'var(--text-muted)'}}>找不到符合客戶</div>}</div>}{customer&&<div style={{marginTop:10,padding:12,borderRadius:10,background:'var(--indigo-light)',display:'flex',justifyContent:'space-between'}}><strong>{customer.name}（末碼 {getCustomerPhoneLast2(customer)||'—'}）</strong><button onClick={()=>setCustomer(null)} style={{border:0,background:'transparent'}}><X size={16}/></button></div>}</div></div>
-        <div className="card" style={{marginBottom:14}}><div className="card-header"><strong>② 加入商品與規格</strong></div><div className="card-body"><div className="search-input-wrap"><Search size={16}/><input value={productSearch} onFocus={()=>setProductOpen(true)} onChange={e=>{setProductSearch(e.target.value);setProductOpen(true)}} placeholder="點選或輸入商品名稱" style={{paddingLeft:36,height:48,fontSize:16}}/></div>{productOpen&&<div style={{marginTop:8,border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',background:'#fff',maxHeight:320,overflowY:'auto'}}>{renderProductList(prods,productSearch,addProduct)}</div>}{items.map((x,i)=><div key={x.line_id||i} style={{marginTop:10,padding:12,border:'1px solid var(--border)',borderRadius:10,background:'#fff'}}><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><strong style={{flex:1}}>{x.product.name}</strong><span style={{fontSize:14,color:'var(--text-muted)',fontWeight:800}}>數量</span><QuantityInput value={x.qty} min={1} onChange={v=>patchItem(i,{qty:v})} style={{width:130,height:48,fontSize:20,padding:'8px 12px',textAlign:'center',fontWeight:800}}/><button onClick={()=>setItems(v=>v.filter((_,n)=>n!==i))} style={{border:0,background:'transparent',color:'var(--rose)'}}><X size={16}/></button></div><div style={{marginTop:8}}><SpecFields product={x.product} spec={x.spec} onChange={(k,v)=>patchItemSpec(i,k,v)}/></div><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}><input value={x.note} onChange={e=>patchItem(i,{note:e.target.value})} placeholder="商品備註" style={{flex:1,minWidth:150,maxWidth:260}}/>{hasSelectableSpec(x.product)&&<button type="button" className="btn btn-sm btn-ghost" onClick={()=>addSameProductLine(i)} style={{color:'var(--indigo)',fontWeight:900,border:'1px solid var(--indigo)'}}><Plus size={14}/> 再加一個規格／數量</button>}</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:7}}>單價 NT${itemPrice(x.product,x.spec).toLocaleString()}　小計 NT${(itemPrice(x.product,x.spec)*Number(x.qty||0)).toLocaleString()}</div></div>)}</div></div>
+        <div className="card" style={{marginBottom:14}}><div className="card-header"><strong>② 加入商品與規格</strong></div><div className="card-body"><div className="search-input-wrap"><Search size={16}/><input value={productSearch} onFocus={()=>setProductOpen(true)} onChange={e=>{setProductSearch(e.target.value);setProductOpen(true)}} placeholder="點選或輸入商品名稱" style={{paddingLeft:36,height:48,fontSize:16}}/></div>{productOpen&&<div style={{marginTop:8,border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',background:'#fff',maxHeight:320,overflowY:'auto'}}>{renderProductList(prods,productSearch,addProduct)}</div>}{items.map((x,i)=><div key={x.line_id||i} style={{marginTop:10,padding:12,border:'1px solid var(--border)',borderRadius:10,background:'#fff'}}><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><strong style={{flex:1}}>{x.product.name}</strong><span style={{fontSize:14,color:'var(--text-muted)',fontWeight:800}}>數量</span><QuantityInput value={x.qty} min={1} onChange={v=>patchItem(i,{qty:v})} style={{width:130,height:48,fontSize:20,padding:'8px 12px',textAlign:'center',fontWeight:800}}/><button onClick={()=>setItems(v=>v.filter((_,n)=>n!==i))} style={{border:0,background:'transparent',color:'var(--rose)'}}><X size={16}/></button></div><div style={{marginTop:8}}><SpecFields product={x.product} spec={x.spec} onChange={(k,v)=>patchItemSpec(i,k,v)}/>{customer&&renderDuplicateWarning(customer,x.product,x.spec)}</div><div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}><input value={x.note} onChange={e=>patchItem(i,{note:e.target.value})} placeholder="商品備註" style={{flex:1,minWidth:150,maxWidth:260}}/>{hasSelectableSpec(x.product)&&<button type="button" className="btn btn-sm btn-ghost" onClick={()=>addSameProductLine(i)} style={{color:'var(--indigo)',fontWeight:900,border:'1px solid var(--indigo)'}}><Plus size={14}/> 再加一個規格／數量</button>}</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:7}}>單價 NT${itemPrice(x.product,x.spec).toLocaleString()}　小計 NT${(itemPrice(x.product,x.spec)*Number(x.qty||0)).toLocaleString()}</div></div>)}</div></div>
         <div className="card" style={{marginBottom:14}}><div className="card-body"><label style={{display:'flex',gap:10,padding:12,border:'2px solid #fb7185',borderRadius:10,background:isVirtual?'#fff1f2':'#fff'}}><input type="checkbox" checked={isVirtual} onChange={e=>setIsVirtual(e.target.checked)}/><strong style={{color:'#be123c'}}>⚠ 設為虛擬訂單</strong></label><input value={note} onChange={e=>setNote(e.target.value)} placeholder="訂單備註" style={{marginTop:10}}/><div style={{textAlign:'right',fontSize:20,fontWeight:900,margin:'10px 0'}}>合計 NT${total.toLocaleString()}</div><button className="btn btn-primary" onClick={saveCustomerMode} disabled={saving} style={{width:'100%',justifyContent:'center',height:50}}><Save size={16}/>{saving?'建立中...':'直接建立訂單'}</button></div></div>
       </>:<>
         <div className="card" style={{marginBottom:14}}><div className="card-header"><strong>① 先選商品</strong></div><div className="card-body"><div className="search-input-wrap"><Search size={16}/><input value={batchProductSearch} onFocus={()=>setBatchProductOpen(true)} onChange={e=>{setBatchProductSearch(e.target.value);setBatchProductOpen(true)}} placeholder="點選或輸入商品名稱" style={{paddingLeft:36,height:48,fontSize:16}}/></div>{batchProductOpen&&<div style={{marginTop:8,border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',background:'#fff',maxHeight:320,overflowY:'auto'}}>{renderProductList(batchProds,batchProductSearch,chooseBatchProduct)}</div>}{batchProduct&&<div style={{marginTop:12,padding:14,border:'2px solid var(--emerald)',background:'var(--emerald-light)',borderRadius:12,display:'flex',justifyContent:'space-between',gap:10}}><div><strong>📦 {batchProduct.name}</strong><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>每位客戶可加入多個規格，並可個別設定正式／虛擬訂單</div></div><button onClick={()=>{setBatchProduct(null);setBatchRows([])}} style={{border:0,background:'transparent',color:'var(--rose)'}}><X size={18}/></button></div>}</div></div>
         <div className="card" style={{marginBottom:14}}><div className="card-header"><strong>② 連續加入客戶與數量 <span style={{fontSize:12,color:'var(--text-muted)'}}>已加入 {batchRows.length} 位</span></strong></div><div className="card-body"><div className="search-input-wrap"><Search size={16}/><input value={batchCustomerSearch} onFocus={()=>setBatchCustomerOpen(true)} onChange={e=>{setBatchCustomerSearch(e.target.value);setBatchCustomerOpen(true)}} placeholder="姓名／手機末兩碼／Line／FB" style={{paddingLeft:36,height:48,fontSize:16}}/></div>{batchCustomerOpen&&batchCustomerSearch&&<div style={{marginTop:8,border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',background:'#fff',maxHeight:300,overflowY:'auto'}}>{customerSearching?<div style={{padding:14,color:'var(--text-muted)'}}>SQL 搜尋中...</div>:batchCusts.length?batchCusts.map(c=><button key={c.id} onClick={()=>addBatchCustomer(c)} style={{display:'block',width:'100%',textAlign:'left',padding:'10px 12px',border:0,borderBottom:'1px solid var(--border)',background:'#fff'}}><strong>{c.name}</strong><div style={{fontSize:11,color:'var(--text-muted)'}}>{customerSecondaryLabel(c)}</div></button>):<div style={{padding:14,color:'var(--text-muted)'}}>找不到符合客戶</div>}</div>}
-        {batchRows.map((r,i)=><div key={r.customer.id} style={{marginTop:12,padding:12,border:`1px solid ${r.is_virtual?'#fb7185':'var(--border)'}`,borderRadius:12,background:r.is_virtual?'#fff1f2':'#fff'}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:8,flexWrap:'wrap'}}><div><strong>{i+1}. {r.customer.name}</strong><div style={{fontSize:11,color:'var(--text-muted)'}}>{customerSecondaryLabel(r.customer)}</div></div><div style={{display:'flex',gap:10,alignItems:'center'}}><label style={{display:'flex',gap:6,alignItems:'center',fontWeight:800,color:r.is_virtual?'#be123c':'var(--text-secondary)',cursor:'pointer'}}><input type="checkbox" checked={Boolean(r.is_virtual)} onChange={()=>toggleBatchVirtual(r.customer.id)}/> 虛擬訂單</label><button onClick={()=>setBatchRows(v=>v.filter(x=>x.customer.id!==r.customer.id))} style={{border:0,background:'transparent',color:'var(--rose)'}}><X size={17}/></button></div></div>{r.items.map((line,lineIndex)=><div key={line.line_id||lineIndex} style={{padding:'10px 0',borderTop:'1px dashed var(--border)'}}><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><SpecFields product={batchProduct} spec={line.spec} onChange={(k,v)=>patchBatchSpec(r.customer.id,lineIndex,k,v)}/><span style={{fontSize:14,color:'var(--text-muted)',fontWeight:800}}>數量</span><QuantityInput value={line.qty} min={1} onChange={v=>patchBatchLine(r.customer.id,lineIndex,{qty:v})} style={{width:130,height:48,fontSize:20,padding:'8px 12px',textAlign:'center',fontWeight:800}}/><input value={line.note} onChange={e=>patchBatchLine(r.customer.id,lineIndex,{note:e.target.value})} placeholder="備註" style={{flex:1,minWidth:130}}/>{r.items.length>1&&<button onClick={()=>removeBatchLine(r.customer.id,lineIndex)} className="btn btn-sm btn-ghost" style={{color:'var(--rose)'}}><X size={13}/>移除</button>}</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:6}}>單價 NT${itemPrice(batchProduct,line.spec).toLocaleString()}　小計 NT${(itemPrice(batchProduct,line.spec)*Number(line.qty||0)).toLocaleString()}</div></div>)}<button type="button" className="btn btn-sm btn-ghost" onClick={()=>addBatchLine(r.customer.id)} style={{marginTop:8,color:'var(--indigo)',fontWeight:900,border:'1px solid var(--indigo)'}}><Plus size={14}/> 再加一個規格／數量</button></div>)}</div></div>
+        {batchRows.map((r,i)=><div key={r.customer.id} style={{marginTop:12,padding:12,border:`1px solid ${r.is_virtual?'#fb7185':'var(--border)'}`,borderRadius:12,background:r.is_virtual?'#fff1f2':'#fff'}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:8,flexWrap:'wrap'}}><div><strong>{i+1}. {r.customer.name}</strong><div style={{fontSize:11,color:'var(--text-muted)'}}>{customerSecondaryLabel(r.customer)}</div></div><div style={{display:'flex',gap:10,alignItems:'center'}}><label style={{display:'flex',gap:6,alignItems:'center',fontWeight:800,color:r.is_virtual?'#be123c':'var(--text-secondary)',cursor:'pointer'}}><input type="checkbox" checked={Boolean(r.is_virtual)} onChange={()=>toggleBatchVirtual(r.customer.id)}/> 虛擬訂單</label><button onClick={()=>setBatchRows(v=>v.filter(x=>x.customer.id!==r.customer.id))} style={{border:0,background:'transparent',color:'var(--rose)'}}><X size={17}/></button></div></div>{r.items.map((line,lineIndex)=><div key={line.line_id||lineIndex} style={{padding:'10px 0',borderTop:'1px dashed var(--border)'}}><div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><div><SpecFields product={batchProduct} spec={line.spec} onChange={(k,v)=>patchBatchSpec(r.customer.id,lineIndex,k,v)}/>{renderDuplicateWarning(r.customer,batchProduct,line.spec)}</div><span style={{fontSize:14,color:'var(--text-muted)',fontWeight:800}}>數量</span><QuantityInput value={line.qty} min={1} onChange={v=>patchBatchLine(r.customer.id,lineIndex,{qty:v})} style={{width:130,height:48,fontSize:20,padding:'8px 12px',textAlign:'center',fontWeight:800}}/><input value={line.note} onChange={e=>patchBatchLine(r.customer.id,lineIndex,{note:e.target.value})} placeholder="備註" style={{flex:1,minWidth:130}}/>{r.items.length>1&&<button onClick={()=>removeBatchLine(r.customer.id,lineIndex)} className="btn btn-sm btn-ghost" style={{color:'var(--rose)'}}><X size={13}/>移除</button>}</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:6}}>單價 NT${itemPrice(batchProduct,line.spec).toLocaleString()}　小計 NT${(itemPrice(batchProduct,line.spec)*Number(line.qty||0)).toLocaleString()}</div></div>)}<button type="button" className="btn btn-sm btn-ghost" onClick={()=>addBatchLine(r.customer.id)} style={{marginTop:8,color:'var(--indigo)',fontWeight:900,border:'1px solid var(--indigo)'}}><Plus size={14}/> 再加一個規格／數量</button></div>)}</div></div>
         <div className="card" style={{marginBottom:14}}><div className="card-body"><input value={batchNote} onChange={e=>setBatchNote(e.target.value)} placeholder="本批共用備註"/><div style={{display:'flex',justifyContent:'space-between',margin:'12px 0',fontWeight:900}}><span>共 {batchRows.length} 位客戶</span><span>合計 NT${batchTotal.toLocaleString()}</span></div><button className="btn btn-primary" onClick={saveBatch} disabled={saving||!batchRows.length} style={{width:'100%',justifyContent:'center',height:52,fontSize:16}}><Save size={16}/>{saving?'建立中...':`直接建立 ${batchRows.length} 位客戶訂單`}</button></div></div>
       </>}
 
