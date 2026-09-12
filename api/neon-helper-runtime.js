@@ -271,6 +271,63 @@ async function listMyPendingOrders(sql,auth){
   return orders.map(({neon_id,...row})=>({...row,total_amount:Number(row.total_amount||0),refund_amount:Number(row.refund_amount||0),items:byOrder.get(neon_id)||[]}))
 }
 
+
+function pendingDuplicateKey(customerId,productId,spec={}){
+  return JSON.stringify([
+    text(customerId),text(productId),text(spec.package),text(spec.flavor),text(spec.color),text(spec.size),
+  ])
+}
+async function checkPendingDuplicates(sql,rows=[]){
+  const source=Array.isArray(rows)?rows:[]
+  if(source.length>120) throw new Error('單次最多檢查 120 筆重複訂單')
+  const unique=new Map()
+  for(const row of source){
+    const customerId=text(row?.customer_id),productId=text(row?.product_id||row?.id)
+    if(!customerId||!productId)continue
+    const spec={
+      package:text(row?.spec?.package),flavor:text(row?.spec?.flavor),color:text(row?.spec?.color),size:text(row?.spec?.size),
+    }
+    const key=pendingDuplicateKey(customerId,productId,spec)
+    unique.set(key,{key,customer_id:customerId,product_id:productId,spec})
+  }
+  const prepared=[...unique.values()]
+  if(!prepared.length)return[]
+  const customerIds=[...new Set(prepared.map(row=>row.customer_id))]
+  const productIds=[...new Set(prepared.map(row=>row.product_id))]
+  const matches=await sql`
+    SELECT c.legacy_id AS customer_id,p.legacy_id AS product_id,
+      COALESCE(oi.spec_package,'') AS spec_package,
+      COALESCE(oi.spec_flavor,'') AS spec_flavor,
+      COALESCE(oi.spec_color,'') AS spec_color,
+      COALESCE(oi.spec_size,'') AS spec_size,
+      COUNT(*)::int AS match_count,
+      SUM(GREATEST(0,oi.qty-COALESCE(oi.released_qty,0)-COALESCE(oi.picked_up_qty,0)))::int AS remaining_qty,
+      MAX(o.order_date) AS latest_order_date
+    FROM orders o
+    JOIN customers c ON c.id=o.customer_id
+    JOIN order_items oi ON oi.order_id=o.id
+    JOIN products p ON p.id=oi.product_id
+    WHERE c.legacy_id=ANY(${customerIds}::text[])
+      AND p.legacy_id=ANY(${productIds}::text[])
+      AND o.status='pending'
+      AND COALESCE(o.archived,false)=false
+      AND COALESCE(o.is_virtual,false)=false
+      AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      AND GREATEST(0,oi.qty-COALESCE(oi.released_qty,0)-COALESCE(oi.picked_up_qty,0))>0
+    GROUP BY c.legacy_id,p.legacy_id,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size`
+  const found=new Map()
+  for(const row of matches){
+    const spec={package:text(row.spec_package),flavor:text(row.spec_flavor),color:text(row.spec_color),size:text(row.spec_size)}
+    found.set(pendingDuplicateKey(row.customer_id,row.product_id,spec),{
+      match_count:Number(row.match_count||0),remaining_qty:Number(row.remaining_qty||0),latest_order_date:row.latest_order_date||null,
+    })
+  }
+  return prepared.map(row=>{
+    const hit=found.get(row.key)
+    return {...row,duplicate:Boolean(hit),match_count:hit?.match_count||0,remaining_qty:hit?.remaining_qty||0,latest_order_date:hit?.latest_order_date||null}
+  })
+}
+
 export default async function handler(req,res){
   if(req.method!=='POST')return res.status(405).json({ok:false,error:'Method Not Allowed'})
   try{
@@ -287,6 +344,7 @@ export default async function handler(req,res){
     if(action==='search_customers')return res.status(200).json({ok:true,rows:await searchCustomers(sql,req.body?.q,req.body?.limit)})
     if(action==='my_entries')return res.status(200).json({ok:true,rows:await listMyEntries(sql,auth,req.body?.limit)})
     if(action==='my_pending_orders')return res.status(200).json({ok:true,rows:await listMyPendingOrders(sql,auth)})
+    if(action==='duplicate_pending')return res.status(200).json({ok:true,rows:await checkPendingDuplicates(sql,req.body?.rows||[])})
     if(action==='create_direct'){
       await assertHelperNewOrderProductsOpen(sql,account,req.body?.items||[])
       return res.status(200).json({ok:true,result:await upsertHelperPreorder(sql,auth,account,req.body||{})})

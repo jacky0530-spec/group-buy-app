@@ -635,6 +635,24 @@
       "data_logic": "只對正式、預購、已到貨且尚未取貨的規格提供快捷取貨；取貨數量使用原訂購量扣除已釋出數量後的可取貨量。未到貨規格不顯示此按鈕，避免誤標取貨。沿用既有 picked_up_* 欄位與 set_item_pickup，不修改原銷售額、成本、供應商付款或庫存流水。",
       "data_migration": "無。沿用 V54/V55 已存在的 picked_up_qty / picked_up_at / picked_up_by_uid。",
       "rollback": "移除 PendingProductReportSql 的逐規格「已取貨並隱藏」快捷按鈕與 pickupKey 狀態，APP_VERSION 還原 V55；既有取貨資料不自動清除。"
+    },
+    {
+      "version": "V57",
+      "date": "2026-09-12",
+      "type": "feature/ui",
+      "summary": "小幫手登記新增精準重複下單提示：只有同一客戶已存在同商品且 package/flavor/color/size 四項規格完全相同的有效待出貨正式預購時顯示紅色警示；同商品但不同規格不提示。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-helper-runtime.js: 既有 Function 新增 duplicate_pending 唯讀 action，批次比對客戶＋商品＋完整規格；不新增 Serverless Function。",
+        "src/lib/enableNeonHelperReads.js: 新增 HelperAPI.checkPendingDuplicates，僅走 Neon。"
+      ],
+      "ui_changes": [
+        "src/pages/HelperPortalV3.jsx: 依客戶打單與依商品連續打單都會在規格完整後自動查詢；若存在完全相同規格的待出貨正式預購，以紅色框顯示「重複下單」與既有筆數／剩餘件數。",
+        "同商品但 package/flavor/color/size 任一不同時不顯示警示；警示不阻擋小幫手仍可確認後繼續建立訂單。"
+      ],
+      "data_logic": "duplicate_pending 僅讀取 status=pending、未封存、非虛擬、preorder 且 qty-released_qty-picked_up_qty 仍大於 0 的 Neon 訂單品項；以 customer legacy id、product legacy id、spec_package/spec_flavor/spec_color/spec_size 全部完全相同才判定重複。已出貨、已取貨完、已釋出完、虛擬訂單及不同規格都不提示。",
+      "data_migration": "無。只新增既有 Neon helper runtime 的唯讀查詢與前端警示，不修改 orders、order_items、helper_entries 或任何正式資料。",
+      "rollback": "移除 duplicate_pending action、HelperAPI.checkPendingDuplicates 與 HelperPortalV3 紅色重複提示，APP_VERSION 還原 V56；不需資料庫 rollback。"
     }
   ]
 }

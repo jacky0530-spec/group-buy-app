@@ -37,5 +37,15 @@ if(!globalThis[INSTALLED]){
     return rows.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
   }
 
+  HelperAPI.checkPendingDuplicates=async function(rows=[]){
+    const list=Array.isArray(rows)?rows:[]
+    if(!list.length)return[]
+    const output=[]
+    for(let i=0;i<list.length;i+=100){
+      output.push(...rowsOf(await neonHelperRuntime('duplicate_pending',{rows:list.slice(i,i+100)})))
+    }
+    return output
+  }
+
   installNeonOnly('myPendingOrders','my_pending_orders',(a,b)=>String(b.order_date||b.created_at||'').localeCompare(String(a.order_date||a.created_at||'')))
 }
