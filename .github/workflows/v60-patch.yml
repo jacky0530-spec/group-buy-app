@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Prepare V60 patch
+        run: sed -i 's/registry\.versions/registry.entries/g' scripts/patch-v60.mjs
       - name: Apply V60 patch
         run: node scripts/patch-v60.mjs
       - name: Install dependencies
