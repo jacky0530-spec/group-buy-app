@@ -39,11 +39,16 @@ async function fetchAllOrders(params){
   }while(cursor&&guard<100)
   return rows
 }
-function buildRows(orderRows,customerMap,product,arrivalView,shippedView){
+function buildRows(orderRows,customerMap,product,arrivalView,shippedView,pickupManageMode=false){
   const groups=new Map()
   orderRows.forEach(order=>{
     const scopedItems=(order.items||[]).filter(item=>!product||matchesProduct(item,product))
-    const items=scopedItems.filter(item=>shippedView?itemQty(item)>0:displayQty(item,arrivalView)>0)
+    const activeScopedItems=scopedItems.filter(item=>!item?._pickup_completed)
+    const items=scopedItems.filter(item=>{
+      if(shippedView)return itemQty(item)>0
+      if(item?._pickup_completed)return pickupManageMode
+      return displayQty(item,arrivalView)>0
+    })
     if(!items.length)return
     const customer=customerMap[order.customer_id]||{}
     const phone=String(order.customer_phone||customer.phone||'').trim()
@@ -57,8 +62,8 @@ function buildRows(orderRows,customerMap,product,arrivalView,shippedView){
     group.order_ids.add(order.id)
     if(order.is_virtual){group.virtual_order_ids.add(order.id);group.has_virtual=true}else{group.real_order_ids.add(order.id);group.all_virtual=false}
     if(order.archived!==true)group.archived=false
-    group.overall_arrived_qty+=scopedItems.reduce((sum,item)=>sum+arrivedQty(item),0)
-    group.overall_missing_qty+=scopedItems.reduce((sum,item)=>sum+missingQty(item),0)
+    group.overall_arrived_qty+=activeScopedItems.reduce((sum,item)=>sum+arrivedQty(item),0)
+    group.overall_missing_qty+=activeScopedItems.reduce((sum,item)=>sum+missingQty(item),0)
     items.forEach(item=>{
       const ordered=itemQty(item),arrived=arrivedQty(item),missing=missingQty(item),shown=shippedView?ordered:displayQty(item,arrivalView)
       const price=Number(item.sale_price??item.price??0),name=item.product_name||item.name||'未命名商品',note=String(item.note||'').trim(),spec=specText(item),status=arrivalStatus(item)
@@ -66,14 +71,17 @@ function buildRows(orderRows,customerMap,product,arrivalView,shippedView){
       if(!group.items.has(detailKey))group.items.set(detailKey,{product_name:name,spec,note,price,qty:0,ordered_qty:0,arrived_qty:0,missing_qty:0,amount:0,dates:new Set(),arrival_key:status.key,arrival_label:status.label,arrival_color:status.color,sources:[]})
       const detail=group.items.get(detailKey)
       const sourceItemIndex=Number.isInteger(Number(item?._source_item_index))?Number(item._source_item_index):(order.items||[]).indexOf(item)
-      const originalQty=Math.max(ordered,Number(item?.pickup_original_qty||ordered))
-      const pickedQty=Math.max(0,Number(item?.pickup_picked_up_qty||0))
+      const originalQty=Math.max(ordered,Number(item?.pickup_original_qty??item?.original_qty??ordered))
+      const pickedQty=Math.max(0,Number(item?.pickup_picked_up_qty??item?.picked_up_qty??0))
       const releasedQty=Math.max(0,Number(item?.pickup_released_qty??item?.released_qty??0))
+      const transformedPickup=item?.pickup_original_qty!==undefined||item?.pickup_picked_up_qty!==undefined
+      const totalArrived=transformedPickup?Math.min(originalQty,Math.max(0,arrived+pickedQty)):Math.min(originalQty,Math.max(0,arrived))
+      const maxPickup=Math.min(totalArrived,Math.max(0,originalQty-releasedQty))
       const remainingTarget=Math.max(0,originalQty-releasedQty-pickedQty)
       const shipNowQty=Math.min(arrived,Math.max(0,ordered),remainingTarget)
       const nextPickedQty=Math.min(Math.max(0,originalQty-releasedQty),pickedQty+shipNowQty)
       const canPickup=!order.is_virtual&&remainingTarget>0&&shipNowQty>0
-      detail.qty+=shown;detail.ordered_qty+=ordered;detail.arrived_qty+=arrived;detail.missing_qty+=missing;detail.amount+=price*shown;detail.dates.add(dateText(order.order_date));detail.sources.push({order_id:order.id,item_index:sourceItemIndex,qty:originalQty,arrived_qty:arrived,released_qty:releasedQty,pickup_target:remainingTarget,ship_now_qty:shipNowQty,next_picked_up_qty:nextPickedQty,can_pickup:canPickup,picked_up_qty:pickedQty,locked_after_pickup:pickedQty>0,date:dateText(order.order_date),is_virtual:Boolean(order.is_virtual)})
+      detail.qty+=shown;detail.ordered_qty+=ordered;detail.arrived_qty+=arrived;detail.missing_qty+=missing;detail.amount+=price*shown;detail.dates.add(dateText(order.order_date));detail.sources.push({order_id:order.id,item_index:sourceItemIndex,qty:originalQty,arrived_qty:totalArrived,released_qty:releasedQty,pickup_target:remainingTarget,ship_now_qty:shipNowQty,next_picked_up_qty:nextPickedQty,max_pickup:maxPickup,can_pickup:canPickup,picked_up_qty:pickedQty,pickup_completed:Boolean(item?._pickup_completed),locked_after_pickup:pickedQty>0,date:dateText(order.order_date),is_virtual:Boolean(order.is_virtual),order_status:order.status})
       group.total_qty+=shown;group.total_amount+=price*shown;group.total_ordered_qty+=ordered;group.total_arrived_qty+=arrived;group.total_missing_qty+=missing
     })
   })
@@ -101,7 +109,7 @@ function DimensionSummary({title,rows}){if(!rows.length)return null;const combo=
 export default function PendingProductReportSql(){
   const toast=useToast()
   const [products,setProducts]=useState([]),[customers,setCustomers]=useState([]),[orders,setOrders]=useState([]),[catalogLoading,setCatalogLoading]=useState(true),[loading,setLoading]=useState(false),[error,setError]=useState('')
-  const [mode,setMode]=useState('buyer'),[shipmentView,setShipmentView]=useState('shipped'),[arrivalView,setArrivalView]=useState('all'),[productSearch,setProductSearch]=useState(''),[selectedProduct,setSelectedProduct]=useState(null),[productBuyerSearch,setProductBuyerSearch]=useState(''),[buyerSearch,setBuyerSearch]=useState(''),[selectedBuyerKey,setSelectedBuyerKey]=useState(''),[showArchived,setShowArchived]=useState(false),[marking,setMarking]=useState(false),[shippingKey,setShippingKey]=useState(''),[archivingKey,setArchivingKey]=useState(''),[pickupKey,setPickupKey]=useState('')
+  const [mode,setMode]=useState('buyer'),[shipmentView,setShipmentView]=useState('shipped'),[arrivalView,setArrivalView]=useState('all'),[productSearch,setProductSearch]=useState(''),[selectedProduct,setSelectedProduct]=useState(null),[productBuyerSearch,setProductBuyerSearch]=useState(''),[buyerSearch,setBuyerSearch]=useState(''),[selectedBuyerKey,setSelectedBuyerKey]=useState(''),[showArchived,setShowArchived]=useState(false),[marking,setMarking]=useState(false),[shippingKey,setShippingKey]=useState(''),[archivingKey,setArchivingKey]=useState(''),[pickupKey,setPickupKey]=useState(''),[pickupManageMode,setPickupManageMode]=useState(false),[pickupDrafts,setPickupDrafts]=useState({})
   const [archiveConfirmRow,setArchiveConfirmRow]=useState(null)
   const [shipmentProductKeys,setShipmentProductKeys]=useState(null)
   const [shipmentCatalogLoading,setShipmentCatalogLoading]=useState(false)
@@ -162,9 +170,9 @@ export default function PendingProductReportSql(){
   },[products,productSearch,shipmentProductKeys])
   const effectiveArrivalView=shipmentView==='shipped'?'all':arrivalView
   const sourceOrders=useMemo(()=>orders.filter(order=>order.status===shipmentView&&(shipmentView!=='shipped'||showArchived||order.archived!==true)),[orders,shipmentView,showArchived])
-  const productRows=useMemo(()=>selectedProduct?buildRows(sourceOrders,customerMap,selectedProduct,effectiveArrivalView,shipmentView==='shipped'):[],[sourceOrders,customerMap,selectedProduct,effectiveArrivalView,shipmentView])
+  const productRows=useMemo(()=>selectedProduct?buildRows(sourceOrders,customerMap,selectedProduct,effectiveArrivalView,shipmentView==='shipped',pickupManageMode):[],[sourceOrders,customerMap,selectedProduct,effectiveArrivalView,shipmentView,pickupManageMode])
   const filteredProductRows=useMemo(()=>productRows.filter(row=>matchesBuyer(row,productBuyerSearch)),[productRows,productBuyerSearch])
-  const buyerRows=useMemo(()=>buildRows(sourceOrders,customerMap,null,effectiveArrivalView,shipmentView==='shipped'),[sourceOrders,customerMap,effectiveArrivalView,shipmentView])
+  const buyerRows=useMemo(()=>buildRows(sourceOrders,customerMap,null,effectiveArrivalView,shipmentView==='shipped',pickupManageMode),[sourceOrders,customerMap,effectiveArrivalView,shipmentView,pickupManageMode])
   const buyerCandidates=useMemo(()=>buyerRows.filter(row=>matchesBuyer(row,buyerSearch)),[buyerRows,buyerSearch])
   const currentRows=mode==='product'?filteredProductRows:(selectedBuyerKey?buyerCandidates.filter(row=>row.key===selectedBuyerKey):buyerCandidates)
   const selectedBuyer=useMemo(()=>buyerRows.find(row=>row.key===selectedBuyerKey)||null,[buyerRows,selectedBuyerKey])
@@ -198,9 +206,46 @@ export default function PendingProductReportSql(){
       await refresh()
     }catch(err){toast('品項先出貨失敗：'+err.message,'error')}finally{setPickupKey('')}
   }
+  function pickupSourceKey(source){return `${source.order_id}-${source.item_index}`}
+  function pickupDraftValue(source){
+    const key=pickupSourceKey(source)
+    if(Object.prototype.hasOwnProperty.call(pickupDrafts,key))return String(pickupDrafts[key]??'')
+    return String(Math.max(0,Number(source.picked_up_qty||0)))
+  }
+  function changePickupDraft(source,value){
+    const key=pickupSourceKey(source)
+    const digits=String(value??'').replace(/\D/g,'')
+    setPickupDrafts(prev=>({...prev,[key]:digits}))
+  }
+  async function applySourcePickup(source,nextInput){
+    if(!source||source.is_virtual||pickupKey)return
+    const key=pickupSourceKey(source),max=Math.max(0,Math.trunc(Number(source.max_pickup||0)))
+    const parsed=Math.trunc(Number(nextInput))
+    const next=Math.max(0,Math.min(max,Number.isFinite(parsed)?parsed:0))
+    const current=Math.max(0,Math.trunc(Number(source.picked_up_qty||0)))
+    if(next===current){toast('已出貨／取貨數量沒有變更','warning');return}
+    setPickupKey(key)
+    try{
+      const result=await OrdersAPI.setItemPickup(source.order_id,source.item_index,next)
+      if(result?.order_reopened)toast('↩️ 已調整品項完成數量；訂單仍有待處理品項，已自動恢復待出貨')
+      else if(result?.order_completed)toast('✅ 本張訂單所有有效品項已完成，已自動標記已出貨')
+      else if(next===0)toast('↩️ 已取消此品項出貨／取貨標記')
+      else toast(`✅ 已完成出貨／取貨 ${next}/${source.qty} 件`)
+      setPickupDrafts(prev=>{const copy={...prev};delete copy[key];return copy})
+      await refresh()
+    }catch(err){toast('更新品項出貨／取貨狀態失敗：'+err.message,'error')}finally{setPickupKey('')}
+  }
   function exportCurrent(){if(!canOutput)return;const rows=[['出貨狀態','客戶','手機','末兩碼','Line','FB','商品','規格','到貨狀態','訂購量','已到貨','未到貨','本檢視數量','單價','小計']];currentRows.forEach(c=>c.items.forEach(item=>rows.push([statusLabel,c.name,c.phone,c.phone_last2,c.line_nick,c.fb_name,item.product_name,item.spec,item.arrival_label,item.ordered_qty,item.arrived_qty,item.missing_qty,item.qty,item.price,item.amount])));downloadCsv(rows,`${statusLabel}-${mode==='product'?(selectedProduct?.name||'商品'):'買家'}-${viewLabel}.csv`)}
   function renderContact(c){return <>{c.phone?<div>{c.phone}</div>:c.phone_last2?<div>末碼 {c.phone_last2}</div>:<div>—</div>}{c.line_nick&&<div style={{color:'var(--text-muted)'}}>Line：{c.line_nick}</div>}{c.fb_name&&<div style={{color:'var(--text-muted)'}}>FB：{c.fb_name}</div>}</>}
-  function renderDetails(c,showProduct){return c.items.map((item,index)=><div key={`${c.key}-${index}`} style={{padding:'7px 0',borderBottom:index<c.items.length-1?'1px dashed var(--border)':'none'}}>{showProduct&&<strong style={{color:'var(--indigo)'}}>{item.product_name}　</strong>}<span style={SPEC_STYLE}>{item.spec}</span> ×<strong>{item.qty}</strong>{shipmentView==='pending'?<>　<span style={{fontWeight:800,color:item.arrival_color}}>{item.arrival_label}</span></>:<span style={{fontWeight:800,color:'var(--emerald)'}}>　✅ 已出貨</span>}　{money(item.price)}／件{item.note&&<span style={{color:'var(--rose)',fontWeight:900}}>　備註：{item.note}</span>}<div style={{color:'var(--text-muted)',fontSize:11}}>訂購：{item.dates.join('、')}</div>{shipmentView==='pending'&&item.sources.map(source=><div key={`${source.order_id}-${source.item_index}`} style={{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap',marginTop:5,padding:'5px 7px',borderRadius:7,background:source.is_virtual?'#fff1f2':'#f8fafc'}}><span className={`badge ${source.is_virtual?'badge-rose':'badge-gray'}`}>{source.is_virtual?'⚠ 虛擬':'正式'}</span>{source.locked_after_pickup?<><span className="badge badge-emerald">已先出貨 {source.picked_up_qty}</span><span style={{fontSize:11}}>原訂購量 {source.qty}（已有部分出貨紀錄，請勿直接改量）</span></>:<><span style={{fontSize:11}}>訂購量</span><input type="number" min="1" defaultValue={source.qty} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}} onBlur={e=>changeSourceQty(source,e.target.value)} style={{width:72,padding:'6px',fontWeight:900,textAlign:'center'}}/></>}{source.can_pickup&&<button type="button" className="btn btn-sm btn-primary" disabled={Boolean(pickupKey)} onClick={()=>markSourcePickedUp(source)}><PackageCheck size={13}/>{pickupKey===`${source.order_id}-${source.item_index}`?'處理中...':`先出貨 ${source.ship_now_qty} 件`}</button>}</div>)}</div>)}
+  function renderPickupControls(source){
+    if(!pickupManageMode||source.is_virtual)return null
+    const key=pickupSourceKey(source),picked=Math.max(0,Number(source.picked_up_qty||0)),max=Math.max(0,Number(source.max_pickup||0))
+    if(shipmentView==='shipped'&&picked<=0)return <span style={{fontSize:11,color:'var(--text-muted)'}}>整單出貨紀錄（無品項取貨數量）</span>
+    if(max<=0)return <span style={{fontSize:11,color:'var(--text-muted)'}}>目前無可調整的已到貨數量</span>
+    const raw=pickupDraftValue(source),parsed=Math.trunc(Number(raw)),draft=Math.max(0,Math.min(max,Number.isFinite(parsed)?parsed:0))
+    return <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginTop:6,padding:'7px',border:'1px solid #86efac',borderRadius:9,background:'#f0fdf4'}}><span className="badge badge-emerald">已出貨／取貨 {picked}/{source.qty}</span><input type="text" inputMode="numeric" value={raw} onFocus={e=>e.currentTarget.select()} onChange={e=>changePickupDraft(source,e.target.value)} aria-label={`已出貨／取貨數量，最多 ${max} 件`} style={{width:78,height:48,fontSize:16,fontWeight:900,textAlign:'center',padding:'0 8px',border:'2px solid #16a34a',borderRadius:10,background:'var(--surface)'}}/><span style={{fontSize:12,fontWeight:800}}>最多 {max}</span><button type="button" className="btn btn-sm btn-primary" disabled={Boolean(pickupKey)||draft===picked} onClick={()=>applySourcePickup(source,draft)}>{pickupKey===key?'處理中...':picked>0?'修改取貨':'標記已取貨'}</button>{picked>0&&<button type="button" className="btn btn-sm btn-ghost" disabled={Boolean(pickupKey)} onClick={()=>applySourcePickup(source,0)}>取消取貨</button>}</div>
+  }
+  function renderDetails(c,showProduct){return c.items.map((item,index)=><div key={`${c.key}-${index}`} style={{padding:'7px 0',borderBottom:index<c.items.length-1?'1px dashed var(--border)':'none'}}>{showProduct&&<strong style={{color:'var(--indigo)'}}>{item.product_name}　</strong>}<span style={SPEC_STYLE}>{item.spec}</span> ×<strong>{item.qty}</strong>{shipmentView==='pending'?<>　<span style={{fontWeight:800,color:item.arrival_color}}>{item.arrival_label}</span></>:<span style={{fontWeight:800,color:'var(--emerald)'}}>　✅ 已出貨</span>}　{money(item.price)}／件{item.note&&<span style={{color:'var(--rose)',fontWeight:900}}>　備註：{item.note}</span>}<div style={{color:'var(--text-muted)',fontSize:11}}>訂購：{item.dates.join('、')}</div>{(shipmentView==='pending'||pickupManageMode)&&item.sources.map(source=><div key={`${source.order_id}-${source.item_index}`} style={{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap',marginTop:5,padding:'5px 7px',borderRadius:7,background:source.is_virtual?'#fff1f2':'#f8fafc'}}><span className={`badge ${source.is_virtual?'badge-rose':'badge-gray'}`}>{source.is_virtual?'⚠ 虛擬':'正式'}</span>{shipmentView==='pending'&&<>{source.locked_after_pickup?<><span className="badge badge-emerald">已先出貨 {source.picked_up_qty}</span><span style={{fontSize:11}}>原訂購量 {source.qty}（已有部分出貨紀錄，請勿直接改量）</span></>:<><span style={{fontSize:11}}>訂購量</span><input type="number" min="1" defaultValue={source.qty} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}} onBlur={e=>changeSourceQty(source,e.target.value)} style={{width:72,padding:'6px',fontWeight:900,textAlign:'center'}}/></>}{!pickupManageMode&&source.can_pickup&&<button type="button" className="btn btn-sm btn-primary" disabled={Boolean(pickupKey)} onClick={()=>markSourcePickedUp(source)}><PackageCheck size={13}/>{pickupKey===`${source.order_id}-${source.item_index}`?'處理中...':`先出貨 ${source.ship_now_qty} 件`}</button>}</>}{renderPickupControls(source)}</div>)}</div>)}
   const modeCardStyle=active=>({flex:1,minWidth:220,borderRadius:14,padding:'14px 16px',cursor:'pointer',textAlign:'left',border:`2px solid ${active?'var(--indigo)':'var(--border)'}`,background:active?'var(--indigo-light)':'var(--surface)',fontFamily:'inherit'})
 
   return <div className="animate-fade">
@@ -211,6 +256,8 @@ export default function PendingProductReportSql(){
     {shipmentView==='shipped'&&<div className="no-print" style={{display:'flex',justifyContent:'flex-end',gap:10,alignItems:'center',marginBottom:14}}><button className={`btn btn-sm ${showArchived?'btn-primary':'btn-ghost'}`} onClick={()=>{setShowArchived(v=>!v);setSelectedBuyerKey('');setSelectedProduct(null);setProductBuyerSearch('');setOrders([])}}>{showArchived?<><ArchiveRestore size={13}/>隱藏封存</>:<><Archive size={13}/>顯示封存</>}</button></div>}
     <div className="no-print" style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:14}}><button type="button" style={modeCardStyle(mode==='buyer')} onClick={()=>{setMode('buyer');setSelectedProduct(null)}}><div style={{fontSize:16,fontWeight:900}}>👥 依買家查詢</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>輸入後才送 SQL 搜尋</div></button><button type="button" style={modeCardStyle(mode==='product')} onClick={()=>{setMode('product');setSelectedBuyerKey('')}}><div style={{fontSize:16,fontWeight:900}}>📦 依商品查詢</div><div style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>只顯示此狀態下有數量的商品</div></button></div>
     {shipmentView==='pending'&&<div className="no-print" style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:16}}><button className={`btn btn-sm ${arrivalView==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setArrivalView('all')}><Layers3 size={13}/>全部待出貨</button><button className={`btn btn-sm ${arrivalView==='arrived'?'btn-primary':'btn-ghost'}`} onClick={()=>setArrivalView('arrived')}><PackageCheck size={13}/>已到貨可先出貨</button><button className={`btn btn-sm ${arrivalView==='missing'?'btn-primary':'btn-ghost'}`} onClick={()=>setArrivalView('missing')}><PackageX size={13}/>尚未到貨</button></div>}
+
+    <div className="no-print" style={{display:'flex',gap:9,alignItems:'center',flexWrap:'wrap',marginBottom:16,padding:'10px 12px',border:'1px solid #86efac',borderRadius:10,background:'#f0fdf4'}}><button type="button" className={`btn btn-sm ${pickupManageMode?'btn-primary':'btn-ghost'}`} onClick={()=>{setPickupManageMode(v=>!v);setPickupDrafts({})}}><PackageCheck size={13}/>{pickupManageMode?'關閉取貨管理':'取貨管理模式'}</button><span style={{fontSize:12,color:'#166534',fontWeight:700}}>沿用目前報表搜尋；管理模式可直接修改／取消品項出貨或取貨，正常模式維持原本報表顯示。</span></div>
 
     {mode==='product'&&<div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{fontWeight:800}}>挑選有{statusLabel}訂單的商品</div><div className="card-body"><div className="search-input-wrap" style={{marginBottom:10}}><Search size={14}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder={`搜尋${statusLabel}商品...`} style={{padding:'8px 8px 8px 32px',width:'100%'}}/></div><div style={{display:'flex',gap:7,flexWrap:'wrap',maxHeight:210,overflowY:'auto'}}>{(catalogLoading||shipmentCatalogLoading)&&<span>讀取{statusLabel}商品中...</span>}{!catalogLoading&&!shipmentCatalogLoading&&productOptions.length===0&&<span style={{color:'var(--text-muted)'}}>目前沒有符合的{statusLabel}商品</span>}{!catalogLoading&&!shipmentCatalogLoading&&productOptions.map(product=><button key={product.id} className={`btn btn-sm ${selectedProduct?.id===product.id?'btn-primary':'btn-ghost'}`} onClick={()=>setSelectedProduct(product)}>{product.name}{product.active===false?'（已封存）':''}</button>)}</div>{selectedProduct&&<div style={{marginTop:10,fontSize:12,color:'var(--text-muted)'}}>目前只從 Neon SQL 查詢「{selectedProduct.name}」的{statusLabel}訂單。</div>}{shipmentView==='pending'&&selectedProduct&&orderingSummary.totalMissing>0&&<button className="btn btn-ghost btn-sm" style={{marginTop:10}} disabled={marking} onClick={markSelectedProductArrived}><PackageCheck size={13}/>{marking?'更新中...':`此商品全部到貨（尚欠 ${orderingSummary.totalMissing} 件）`}</button>}</div></div>}
     {mode==='buyer'&&<div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{fontWeight:800}}><UserSearch size={16}/>搜尋{statusLabel}買家</div><div className="card-body"><div className="search-input-wrap"><Search size={14}/><input autoFocus value={buyerSearch} onChange={e=>{setBuyerSearch(e.target.value);setSelectedBuyerKey('')}} placeholder="姓名／手機／末兩碼／Line／FB" style={{padding:'10px 10px 10px 34px',width:'100%'}}/></div>{!buyerSearch.trim()&&<div style={{marginTop:10,fontSize:12,color:'var(--text-muted)'}}>請輸入搜尋文字；空白時不下載任何訂單資料。</div>}{buyerSearch.trim()&&!loading&&<div style={{marginTop:12,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:8}}>{buyerCandidates.slice(0,30).map(c=><button type="button" key={c.key} onClick={()=>setSelectedBuyerKey(c.key)} style={{textAlign:'left',padding:'11px 12px',borderRadius:10,border:`2px solid ${selectedBuyerKey===c.key?'#7c3aed':'var(--border)'}`,background:selectedBuyerKey===c.key?'#f5f3ff':'var(--surface-2)'}}><strong>{c.name}</strong>{c.phone_last2&&<span className="badge badge-violet" style={{marginLeft:6}}>末碼 {c.phone_last2}</span>}<div style={{fontSize:11,color:'var(--text-secondary)',marginTop:4}}>{[c.phone,c.line_nick&&`Line ${c.line_nick}`,c.fb_name&&`FB ${c.fb_name}`].filter(Boolean).join(' ・ ')||'無其他辨識資料'}</div></button>)}</div>}</div></div>}

@@ -322,6 +322,7 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
     FROM order_items WHERE order_id=${row.order_id}`
   const completed=Number(state[0]?.item_count||0)>0&&Number(state[0]?.open_items||0)===0
   let orderCompleted=false
+  let orderReopened=false
   if(completed&&row.status==='pending'){
     const completedAt=new Date().toISOString()
     const historyEntry=[{status:'shipped',at:completedAt,note:'所有有效品項已出貨／取貨／釋出，自動完成訂單'}]
@@ -330,10 +331,18 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
         status_history=COALESCE(status_history,'[]'::jsonb) || ${JSON.stringify(historyEntry)}::jsonb,updated_at=now()
       WHERE id=${row.order_id}`
     orderCompleted=true
+  }else if(!completed&&row.status==='shipped'){
+    const reopenedAt=new Date().toISOString()
+    const historyEntry=[{status:'pending',at:reopenedAt,note:'品項出貨／取貨數量調整後仍有待完成品項，自動恢復待出貨'}]
+    await sql`
+      UPDATE orders SET status='pending',shipped_at=NULL,
+        status_history=COALESCE(status_history,'[]'::jsonb) || ${JSON.stringify(historyEntry)}::jsonb,updated_at=now()
+      WHERE id=${row.order_id}`
+    orderReopened=true
   }else{
     await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
   }
-  return {...updated[0],order_completed:orderCompleted}
+  return {...updated[0],order_completed:orderCompleted,order_reopened:orderReopened}
 }
 
 async function pickupStates(sql,ids){

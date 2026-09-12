@@ -107,7 +107,14 @@ function pickedUpPendingPage(page,status=''){
         const picked=Math.min(qty,Math.max(0,Number(item?.picked_up_qty||0)))
         if(!(qty>0&&picked>0))return {...item,_source_item_index:sourceItemIndex}
         const remaining=Math.max(0,qty-picked)
-        if(!remaining)return null
+        if(!remaining)return {
+          ...item,
+          _source_item_index:sourceItemIndex,
+          pickup_original_qty:qty,
+          pickup_picked_up_qty:picked,
+          picked_up_qty:0,
+          _pickup_completed:true,
+        }
         const arrived=Math.min(qty,Math.max(0,Number(item?.arrived_qty||0)))
         const price=Number(item.sale_price??item.price??0)
         return {
@@ -119,6 +126,7 @@ function pickedUpPendingPage(page,status=''){
           pickup_original_qty:qty,
           pickup_picked_up_qty:picked,
           picked_up_qty:0,
+          _pickup_completed:false,
         }
       }).filter(Boolean)
       return items.length?{...order,items}:null
@@ -161,7 +169,7 @@ export default function PendingProductReportFiltered() {
 
   // 報表內部固定以 includeArchived:true 載入商品目錄。
   // 同時讓「全部待出貨 / 已到貨可先出貨 / 尚未到貨」各自重建真正有數量的商品目錄。
-  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示；V54：待出貨只顯示尚未取貨數量。
+  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示；V59：正常待出貨只顯示尚未完成數量，取貨管理模式可重新顯示已完成品項。
   useEffect(() => {
     const originalList = originalListRef.current
     const originalSearchPage = originalSearchPageRef.current

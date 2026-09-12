@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第58版：同一訂單部分到貨時，可逐品項先出貨；未到貨品項繼續保留待出貨。
-const APP_VERSION = '第58版｜2026/09/12'
+// 第59版：品項出貨／取貨管理整合進出貨查詢報表，統一搜尋並可修改／取消取貨。
+const APP_VERSION = '第59版｜2026/09/12'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
