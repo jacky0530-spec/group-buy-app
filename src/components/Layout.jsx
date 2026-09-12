@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第59版：品項出貨／取貨管理整合進出貨查詢報表，統一搜尋並可修改／取消取貨。
-const APP_VERSION = '第59版｜2026/09/12'
+// 第60版：已出貨報表納入待出貨訂單中已先出貨的品項，部分出貨也可依買家／商品查到。
+const APP_VERSION = '第60版｜2026/09/13'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
