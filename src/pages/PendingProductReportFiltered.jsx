@@ -5,7 +5,7 @@ import { OrdersAPI, ProductsAPI } from '../lib/db'
 
 const ARRIVAL_BUTTONS = {
   '全部待出貨': 'all',
-  '已到貨可取貨': 'arrived',
+  '已到貨可先出貨': 'arrived',
   '尚未到貨': 'missing',
 }
 
@@ -160,7 +160,7 @@ export default function PendingProductReportFiltered() {
   const shippedProductDatesRef = useRef(new Map())
 
   // 報表內部固定以 includeArchived:true 載入商品目錄。
-  // 同時讓「全部待出貨 / 已到貨可取貨 / 尚未到貨」各自重建真正有數量的商品目錄。
+  // 同時讓「全部待出貨 / 已到貨可先出貨 / 尚未到貨」各自重建真正有數量的商品目錄。
   // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示；V54：待出貨只顯示尚未取貨數量。
   useEffect(() => {
     const originalList = originalListRef.current
@@ -244,7 +244,7 @@ export default function PendingProductReportFiltered() {
     const timer = window.setTimeout(() => {
       const root = reportRef.current
       if (!root) return
-      const label = arrivalCatalogView === 'arrived' ? '已到貨可取貨' : '尚未到貨'
+      const label = arrivalCatalogView === 'arrived' ? '已到貨可先出貨' : '尚未到貨'
       const button = Array.from(root.querySelectorAll('button')).find(el => String(el.textContent || '').trim() === label)
       button?.click()
     },0)

@@ -298,16 +298,16 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
     WHERE o.legacy_id=${id} AND oi.line_no=${lineNo} LIMIT 1`
   const row=rows[0]
   if(!row) throw new Error('找不到訂單商品')
-  if(row.status==='cancelled') throw new Error('已取消訂單不可標記取貨')
-  if(row.archived===true) throw new Error('已封存訂單不可標記取貨')
-  if(row.is_virtual===true) throw new Error('虛擬訂單不可標記取貨')
-  if(row.fulfillment_type==='stock') throw new Error('現貨訂單不使用預購品項取貨功能')
+  if(row.status==='cancelled') throw new Error('已取消訂單不可標記出貨／取貨')
+  if(row.archived===true) throw new Error('已封存訂單不可標記出貨／取貨')
+  if(row.is_virtual===true) throw new Error('虛擬訂單不可標記出貨／取貨')
+  if(row.fulfillment_type==='stock') throw new Error('現貨訂單不使用預購品項分批出貨／取貨功能')
   const qty=Math.max(0,Math.trunc(num(row.qty)))
   const arrived=Math.min(qty,Math.max(0,Math.trunc(num(row.arrived_qty))))
   const released=Math.min(qty,Math.max(0,Math.trunc(num(row.released_qty))))
   const maxPickup=Math.min(arrived,Math.max(0,qty-released))
   const pickedQty=Math.trunc(num(pickedQtyInput))
-  if(pickedQty<0||pickedQty>maxPickup) throw new Error(`已取貨數量必須介於 0～${maxPickup} 件；目前到貨 ${arrived}/${qty}、已釋出 ${released}`)
+  if(pickedQty<0||pickedQty>maxPickup) throw new Error(`已完成出貨／取貨數量必須介於 0～${maxPickup} 件；目前到貨 ${arrived}/${qty}、已釋出 ${released}`)
   const updated=await sql`
     UPDATE order_items SET
       picked_up_qty=${pickedQty},
@@ -324,7 +324,7 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
   let orderCompleted=false
   if(completed&&row.status==='pending'){
     const completedAt=new Date().toISOString()
-    const historyEntry=[{status:'shipped',at:completedAt,note:'所有有效品項已取貨／釋出，自動完成訂單'}]
+    const historyEntry=[{status:'shipped',at:completedAt,note:'所有有效品項已出貨／取貨／釋出，自動完成訂單'}]
     await sql`
       UPDATE orders SET status='shipped',shipped_at=COALESCE(shipped_at,${completedAt}),
         status_history=COALESCE(status_history,'[]'::jsonb) || ${JSON.stringify(historyEntry)}::jsonb,updated_at=now()
