@@ -39,6 +39,47 @@ async function fetchAllOrders(params){
   }while(cursor&&guard<100)
   return rows
 }
+function partialShippedOrder(order){
+  if(!order||order.is_virtual)return null
+  const items=(order.items||[]).map((item,sourceIndex)=>{
+    const picked=Math.max(0,Math.trunc(Number(item?.pickup_picked_up_qty??item?.picked_up_qty??0)))
+    if(picked<=0)return null
+    const originalQty=Math.max(picked,Math.trunc(Number(item?.pickup_original_qty??item?.original_qty??item?.qty??picked)))
+    const sourceItemIndex=Number.isInteger(Number(item?._source_item_index))?Number(item._source_item_index):sourceIndex
+    const transformed=item?.pickup_original_qty!==undefined||item?.pickup_picked_up_qty!==undefined
+    const visibleArrived=Math.max(0,Number(item?.arrived_qty||0))
+    const totalArrived=Math.min(originalQty,Math.max(picked,transformed?visibleArrived+picked:visibleArrived))
+    const price=Number(item?.pickup_original_price??item?.sale_price??item?.price??0)
+    return {
+      ...item,
+      _source_item_index:sourceItemIndex,
+      _partial_shipped_item:true,
+      _partial_shipped_total_arrived:totalArrived,
+      _pickup_completed:true,
+      qty:picked,
+      arrived_qty:picked,
+      sale_price:price,
+      price,
+      subtotal:price*picked,
+      pickup_original_qty:originalQty,
+      pickup_picked_up_qty:picked,
+      picked_up_qty:picked,
+    }
+  }).filter(Boolean)
+  if(!items.length)return null
+  const pickedTimes=items.map(item=>Date.parse(item?.picked_up_at||'')).filter(Number.isFinite)
+  const partialShippedAt=pickedTimes.length?new Date(Math.max(...pickedTimes)).toISOString():(order.updated_at||order.order_date||order.created_at||null)
+  return {...order,status:'shipped',archived:false,_partial_shipped_record:true,shipped_at:partialShippedAt,items}
+}
+async function fetchReportOrders(params){
+  if(params?.status!=='shipped')return fetchAllOrders(params)
+  const [shippedRows,pendingRows]=await Promise.all([
+    fetchAllOrders(params),
+    fetchAllOrders({...params,status:'pending',includeArchived:false,partialShippedLookup:true}),
+  ])
+  const partialRows=pendingRows.map(partialShippedOrder).filter(Boolean)
+  return [...shippedRows,...partialRows]
+}
 function buildRows(orderRows,customerMap,product,arrivalView,shippedView,pickupManageMode=false){
   const groups=new Map()
   orderRows.forEach(order=>{
@@ -56,11 +97,17 @@ function buildRows(orderRows,customerMap,product,arrivalView,shippedView,pickupM
     const base=order.customer_id||`${order.customer_name||customer.name||''}|${phone||last2||''}`
     const key=`${base}|${order.archived===true?'archived':'active'}`
     const created=order.created_at||order.order_date||''
-    if(!groups.has(key))groups.set(key,{key,customer_id:order.customer_id||'',name:order.customer_name||customer.name||'未命名客戶',phone,phone_last2:last2,line_nick:customer.line_nick||'',fb_name:customer.fb_name||'',latest_created_at:created,items:new Map(),total_qty:0,total_amount:0,total_ordered_qty:0,total_arrived_qty:0,total_missing_qty:0,order_ids:new Set(),real_order_ids:new Set(),virtual_order_ids:new Set(),has_virtual:false,all_virtual:true,archived:true,overall_arrived_qty:0,overall_missing_qty:0})
+    if(!groups.has(key))groups.set(key,{key,customer_id:order.customer_id||'',name:order.customer_name||customer.name||'未命名客戶',phone,phone_last2:last2,line_nick:customer.line_nick||'',fb_name:customer.fb_name||'',latest_created_at:created,items:new Map(),total_qty:0,total_amount:0,total_ordered_qty:0,total_arrived_qty:0,total_missing_qty:0,order_ids:new Set(),real_order_ids:new Set(),virtual_order_ids:new Set(),partial_order_ids:new Set(),has_virtual:false,all_virtual:true,archived:true,overall_arrived_qty:0,overall_missing_qty:0})
     const group=groups.get(key)
     if(timeValue(created)>timeValue(group.latest_created_at))group.latest_created_at=created
-    group.order_ids.add(order.id)
-    if(order.is_virtual){group.virtual_order_ids.add(order.id);group.has_virtual=true}else{group.real_order_ids.add(order.id);group.all_virtual=false}
+    if(order._partial_shipped_record){
+      group.partial_order_ids.add(order.id)
+      if(order.is_virtual)group.has_virtual=true
+      else group.all_virtual=false
+    }else{
+      group.order_ids.add(order.id)
+      if(order.is_virtual){group.virtual_order_ids.add(order.id);group.has_virtual=true}else{group.real_order_ids.add(order.id);group.all_virtual=false}
+    }
     if(order.archived!==true)group.archived=false
     group.overall_arrived_qty+=activeScopedItems.reduce((sum,item)=>sum+arrivedQty(item),0)
     group.overall_missing_qty+=activeScopedItems.reduce((sum,item)=>sum+missingQty(item),0)
@@ -75,17 +122,17 @@ function buildRows(orderRows,customerMap,product,arrivalView,shippedView,pickupM
       const pickedQty=Math.max(0,Number(item?.pickup_picked_up_qty??item?.picked_up_qty??0))
       const releasedQty=Math.max(0,Number(item?.pickup_released_qty??item?.released_qty??0))
       const transformedPickup=item?.pickup_original_qty!==undefined||item?.pickup_picked_up_qty!==undefined
-      const totalArrived=transformedPickup?Math.min(originalQty,Math.max(0,arrived+pickedQty)):Math.min(originalQty,Math.max(0,arrived))
+      const totalArrived=item?._partial_shipped_item?Math.min(originalQty,Math.max(pickedQty,Number(item?._partial_shipped_total_arrived??pickedQty))):transformedPickup?Math.min(originalQty,Math.max(0,arrived+pickedQty)):Math.min(originalQty,Math.max(0,arrived))
       const maxPickup=Math.min(totalArrived,Math.max(0,originalQty-releasedQty))
       const remainingTarget=Math.max(0,originalQty-releasedQty-pickedQty)
       const shipNowQty=Math.min(arrived,Math.max(0,ordered),remainingTarget)
       const nextPickedQty=Math.min(Math.max(0,originalQty-releasedQty),pickedQty+shipNowQty)
       const canPickup=!order.is_virtual&&remainingTarget>0&&shipNowQty>0
-      detail.qty+=shown;detail.ordered_qty+=ordered;detail.arrived_qty+=arrived;detail.missing_qty+=missing;detail.amount+=price*shown;detail.dates.add(dateText(order.order_date));detail.sources.push({order_id:order.id,item_index:sourceItemIndex,qty:originalQty,arrived_qty:totalArrived,released_qty:releasedQty,pickup_target:remainingTarget,ship_now_qty:shipNowQty,next_picked_up_qty:nextPickedQty,max_pickup:maxPickup,can_pickup:canPickup,picked_up_qty:pickedQty,pickup_completed:Boolean(item?._pickup_completed),locked_after_pickup:pickedQty>0,date:dateText(order.order_date),is_virtual:Boolean(order.is_virtual),order_status:order.status})
+      detail.qty+=shown;detail.ordered_qty+=ordered;detail.arrived_qty+=arrived;detail.missing_qty+=missing;detail.amount+=price*shown;detail.dates.add(dateText(order.order_date));detail.sources.push({order_id:order.id,item_index:sourceItemIndex,qty:originalQty,arrived_qty:totalArrived,released_qty:releasedQty,pickup_target:remainingTarget,ship_now_qty:shipNowQty,next_picked_up_qty:nextPickedQty,max_pickup:maxPickup,can_pickup:canPickup,picked_up_qty:pickedQty,pickup_completed:Boolean(item?._pickup_completed),locked_after_pickup:pickedQty>0,date:dateText(order.order_date),is_virtual:Boolean(order.is_virtual),order_status:order.status,partial_shipped_record:Boolean(order._partial_shipped_record)})
       group.total_qty+=shown;group.total_amount+=price*shown;group.total_ordered_qty+=ordered;group.total_arrived_qty+=arrived;group.total_missing_qty+=missing
     })
   })
-  return Array.from(groups.values()).map(group=>({...group,items:Array.from(group.items.values()).map(item=>({...item,dates:Array.from(item.dates)})),order_ids:Array.from(group.order_ids),real_order_ids:Array.from(group.real_order_ids),virtual_order_ids:Array.from(group.virtual_order_ids),order_count:group.order_ids.size,all_arrived:group.overall_missing_qty===0})).sort((a,b)=>product?timeValue(b.latest_created_at)-timeValue(a.latest_created_at)||a.name.localeCompare(b.name,'zh-Hant'):a.name.localeCompare(b.name,'zh-Hant'))
+  return Array.from(groups.values()).map(group=>({...group,items:Array.from(group.items.values()).map(item=>({...item,dates:Array.from(item.dates)})),order_ids:Array.from(group.order_ids),real_order_ids:Array.from(group.real_order_ids),virtual_order_ids:Array.from(group.virtual_order_ids),partial_order_ids:Array.from(group.partial_order_ids),order_count:new Set([...group.order_ids,...group.partial_order_ids]).size,has_partial_shipped:group.partial_order_ids.size>0,all_arrived:group.overall_missing_qty===0})).sort((a,b)=>product?timeValue(b.latest_created_at)-timeValue(a.latest_created_at)||a.name.localeCompare(b.name,'zh-Hant'):a.name.localeCompare(b.name,'zh-Hant'))
 }
 function increment(map,key,qty){if(key)map.set(key,(map.get(key)||0)+qty)}
 function mapRows(map){return Array.from(map.entries()).map(([label,qty])=>({label,qty})).sort((a,b)=>a.label.localeCompare(b.label,'zh-Hant',{numeric:true}))}
@@ -122,7 +169,7 @@ export default function PendingProductReportSql(){
     ;(async()=>{
       setShipmentCatalogLoading(true)
       try{
-        const rows=await fetchAllOrders({status:shipmentView,includeArchived:shipmentView==='shipped'&&showArchived})
+        const rows=await fetchReportOrders({status:shipmentView,includeArchived:shipmentView==='shipped'&&showArchived})
         const ids=new Set(),names=new Set()
         rows.forEach(order=>(order.items||[]).forEach(item=>{
           if(itemQty(item)<=0)return
@@ -147,7 +194,7 @@ export default function PendingProductReportSql(){
     setLoading(true);setError('')
     try{
       const directProductId=mode==='product'&&selectedProduct&&shipmentProductKeys?.ids?.has(selectedProduct.id)
-      const rows=await fetchAllOrders({
+      const rows=await fetchReportOrders({
         status:shipmentView,
         productId:directProductId?(selectedProduct?.id||''):'',
         search:mode==='buyer'?buyerSearch.trim():(mode==='product'&&!directProductId?(selectedProduct?.name||''):''),
@@ -250,7 +297,7 @@ export default function PendingProductReportSql(){
 
   return <div className="animate-fade">
     {archiveConfirmRow&&<ConfirmDialog danger={false} message={`確定要封存 ${archiveConfirmRow.name} 的 ${archiveConfirmRow.order_ids?.length||0} 筆已出貨訂單？\n封存後可從「顯示封存」中再解除封存。`} onCancel={()=>setArchiveConfirmRow(null)} onConfirm={confirmRowArchive}/>} 
-    <div className="no-print" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:20}}><div><h2 style={{fontSize:22,fontWeight:800}}>出貨查詢報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>SQL 篩選版：只顯示目前狀態下實際有數量的商品或買家</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" disabled={!canOutput} onClick={exportCurrent}><Download size={14}/>匯出 CSV</button><button className="btn btn-primary" disabled={!canOutput} onClick={()=>window.print()}><Printer size={14}/>列印</button></div></div>
+    <div className="no-print" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:20}}><div><h2 style={{fontSize:22,fontWeight:800}}>出貨查詢報表</h2><p style={{color:'var(--text-secondary)',fontSize:13,marginTop:2}}>SQL 篩選版：已出貨查詢同時包含整單已出貨與待出貨訂單中已先出貨的品項</p></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost" disabled={!canOutput} onClick={exportCurrent}><Download size={14}/>匯出 CSV</button><button className="btn btn-primary" disabled={!canOutput} onClick={()=>window.print()}><Printer size={14}/>列印</button></div></div>
     {error&&<div className="no-print" style={{background:'var(--rose-light)',color:'var(--rose)',padding:12,borderRadius:8,marginBottom:14}}>{error}</div>}
     <div className="no-print" style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10,marginBottom:14}}><button type="button" onClick={()=>{setShipmentView('shipped');setSelectedBuyerKey('');setSelectedProduct(null);setProductSearch('');setProductBuyerSearch('');setOrders([])}} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='shipped'?'#059669':'var(--border)'}`,background:shipmentView==='shipped'?'#ecfdf5':'var(--surface)',fontWeight:900,color:shipmentView==='shipped'?'#047857':'var(--text-secondary)'}}><PackageCheck size={16}/> 已出貨查詢</button><button type="button" onClick={()=>{setShipmentView('pending');setArrivalView('all');setShowArchived(false);setSelectedBuyerKey('');setSelectedProduct(null);setProductSearch('');setProductBuyerSearch('');setOrders([])}} style={{borderRadius:12,padding:'12px 16px',border:`2px solid ${shipmentView==='pending'?'#d97706':'var(--border)'}`,background:shipmentView==='pending'?'#fff7ed':'var(--surface)',fontWeight:900,color:shipmentView==='pending'?'#b45309':'var(--text-secondary)'}}><Truck size={16}/> 待出貨訂單</button></div>
     {shipmentView==='shipped'&&<div className="no-print" style={{display:'flex',justifyContent:'flex-end',gap:10,alignItems:'center',marginBottom:14}}><button className={`btn btn-sm ${showArchived?'btn-primary':'btn-ghost'}`} onClick={()=>{setShowArchived(v=>!v);setSelectedBuyerKey('');setSelectedProduct(null);setProductBuyerSearch('');setOrders([])}}>{showArchived?<><ArchiveRestore size={13}/>隱藏封存</>:<><Archive size={13}/>顯示封存</>}</button></div>}
@@ -265,7 +312,7 @@ export default function PendingProductReportSql(){
     {(mode==='product'?selectedProduct:buyerSearch.trim())&&<>
       <div className="no-print" style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginBottom:16}}><div style={{background:'var(--indigo-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:700,color:'var(--indigo)'}}>{viewLabel}客戶</div><strong style={{fontSize:22,color:'var(--indigo)'}}>{summary.customers} 位</strong></div><div style={{background:'var(--amber-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:700,color:'#b45309'}}>本檢視數量</div><strong style={{fontSize:22,color:'#b45309'}}>{summary.qty} 件</strong></div><div style={{background:'var(--emerald-light)',borderRadius:10,padding:14}}><div style={{fontSize:12,fontWeight:700,color:'var(--emerald)'}}>本檢視金額</div><strong style={{fontSize:22,color:'var(--emerald)'}}>{money(summary.amount)}</strong></div></div>
       {mode==='product'&&<div className="search-input-wrap no-print" style={{maxWidth:500,marginBottom:14}}><Search size={14}/><input value={productBuyerSearch} onChange={e=>setProductBuyerSearch(e.target.value)} placeholder="在此商品結果中搜尋買家..." style={{padding:'8px 8px 8px 32px',width:'100%'}}/></div>}
-      <div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><PackageSearch size={15}/> {reportLabel}</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>{loading?'SQL 查詢中...':`共 ${summary.customers} 位／${summary.qty} 件`}</span></div><div className="table-container"><table><thead><tr><th>客戶</th><th>手機辨識</th><th>訂購／到貨明細</th><th>訂單數</th><th>數量</th><th>小計</th><th>出貨操作</th></tr></thead><tbody>{loading&&<tr><td colSpan={7} style={{textAlign:'center',padding:32}}>Neon SQL 查詢中...</td></tr>}{!loading&&currentRows.length===0&&<tr><td colSpan={7} style={{textAlign:'center',padding:32,color:'var(--text-muted)'}}>目前沒有符合資料</td></tr>}{!loading&&currentRows.map(c=>{const actionKey=`${c.key}-${shipmentView==='pending'?'shipped':'pending'}`,mixed=c.has_virtual&&!c.all_virtual;return <tr key={c.key} style={{opacity:c.archived?.62:1,background:c.archived?'#f8fafc':c.all_virtual?'#fff1f2':mixed?'#fffbeb':undefined}}><td style={{fontWeight:800,minWidth:120}}>{c.name}{c.all_virtual&&<span className="badge badge-rose" style={{marginLeft:6}}>⚠ 全部虛擬</span>}{mixed&&<span className="badge badge-amber" style={{marginLeft:6}}>正式＋虛擬</span>}{c.archived&&<span className="badge badge-gray" style={{marginLeft:6}}>已封存</span>}<div style={{fontSize:11,marginTop:4,color:shipmentView==='shipped'?'var(--emerald)':c.all_arrived?'var(--emerald)':'#b45309'}}>{shipmentView==='shipped'?'✅ 已出貨':c.all_arrived?'✅ 商品全部到齊，可出貨':c.overall_arrived_qty>0?`🟡 已到貨 ${c.overall_arrived_qty} 件，可先出貨；尚欠 ${c.overall_missing_qty} 件`:`⚠️ 尚未到貨 ${c.overall_missing_qty} 件`}</div></td><td style={{minWidth:140,fontSize:12}}>{renderContact(c)}</td><td style={{minWidth:340,fontSize:12}}>{renderDetails(c,mode==='buyer')}</td><td>{c.order_count}</td><td style={{fontWeight:800}}>{c.total_qty}</td><td style={{fontWeight:900,color:'var(--indigo)'}}>{money(c.total_amount)}</td><td style={{minWidth:130}}>{shipmentView==='pending'?<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{c.has_virtual&&<button className="btn btn-sm" style={{background:'#e11d48',color:'white'}} onClick={()=>setVirtualState(c,false)}>✓ 轉正式</button>}{c.all_arrived?<button className="btn btn-sm btn-primary" disabled={Boolean(shippingKey)||!c.real_order_ids.length} onClick={()=>changeRowShipment(c,'shipped')}><Truck size={13}/>{shippingKey===actionKey?'更新中...':'整單標記已出貨'}</button>:<span style={{fontSize:11,color:'#b45309',fontWeight:800}}>請在已到貨品項旁按「先出貨」</span>}</div>:<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{!c.archived&&<button className="btn btn-sm btn-ghost" disabled={Boolean(shippingKey)} onClick={()=>changeRowShipment(c,'pending')}><Undo2 size={13}/>恢復待出貨</button>}{c.archived?<button className="btn btn-sm btn-ghost" disabled={Boolean(archivingKey)} onClick={()=>changeRowArchive(c,false)}><ArchiveRestore size={13}/>解除封存</button>:<button className="btn btn-sm btn-ghost" disabled={Boolean(archivingKey)} onClick={()=>requestRowArchive(c)}><Archive size={13}/>封存訂單</button>}</div>}</td></tr>})}</tbody></table></div></div>
+      <div className="card no-print" style={{marginBottom:16}}><div className="card-header" style={{display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><strong><PackageSearch size={15}/> {reportLabel}</strong><span style={{fontSize:12,color:'var(--text-muted)'}}>{loading?'SQL 查詢中...':`共 ${summary.customers} 位／${summary.qty} 件`}</span></div><div className="table-container"><table><thead><tr><th>客戶</th><th>手機辨識</th><th>訂購／到貨明細</th><th>訂單數</th><th>數量</th><th>小計</th><th>出貨操作</th></tr></thead><tbody>{loading&&<tr><td colSpan={7} style={{textAlign:'center',padding:32}}>Neon SQL 查詢中...</td></tr>}{!loading&&currentRows.length===0&&<tr><td colSpan={7} style={{textAlign:'center',padding:32,color:'var(--text-muted)'}}>目前沒有符合資料</td></tr>}{!loading&&currentRows.map(c=>{const actionKey=`${c.key}-${shipmentView==='pending'?'shipped':'pending'}`,mixed=c.has_virtual&&!c.all_virtual;return <tr key={c.key} style={{opacity:c.archived?.62:1,background:c.archived?'#f8fafc':c.all_virtual?'#fff1f2':mixed?'#fffbeb':undefined}}><td style={{fontWeight:800,minWidth:120}}>{c.name}{c.all_virtual&&<span className="badge badge-rose" style={{marginLeft:6}}>⚠ 全部虛擬</span>}{mixed&&<span className="badge badge-amber" style={{marginLeft:6}}>正式＋虛擬</span>}{c.archived&&<span className="badge badge-gray" style={{marginLeft:6}}>已封存</span>}<div style={{fontSize:11,marginTop:4,color:shipmentView==='shipped'?'var(--emerald)':c.all_arrived?'var(--emerald)':'#b45309'}}>{shipmentView==='shipped'?(c.has_partial_shipped?(c.order_ids.length?'✅ 已出貨（含部分先出貨）':'✅ 部分品項已出貨；其餘仍待出貨'):'✅ 已出貨'):c.all_arrived?'✅ 商品全部到齊，可出貨':c.overall_arrived_qty>0?`🟡 已到貨 ${c.overall_arrived_qty} 件，可先出貨；尚欠 ${c.overall_missing_qty} 件`:`⚠️ 尚未到貨 ${c.overall_missing_qty} 件`}</div></td><td style={{minWidth:140,fontSize:12}}>{renderContact(c)}</td><td style={{minWidth:340,fontSize:12}}>{renderDetails(c,mode==='buyer')}</td><td>{c.order_count}</td><td style={{fontWeight:800}}>{c.total_qty}</td><td style={{fontWeight:900,color:'var(--indigo)'}}>{money(c.total_amount)}</td><td style={{minWidth:130}}>{shipmentView==='pending'?<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{c.has_virtual&&<button className="btn btn-sm" style={{background:'#e11d48',color:'white'}} onClick={()=>setVirtualState(c,false)}>✓ 轉正式</button>}{c.all_arrived?<button className="btn btn-sm btn-primary" disabled={Boolean(shippingKey)||!c.real_order_ids.length} onClick={()=>changeRowShipment(c,'shipped')}><Truck size={13}/>{shippingKey===actionKey?'更新中...':'整單標記已出貨'}</button>:<span style={{fontSize:11,color:'#b45309',fontWeight:800}}>請在已到貨品項旁按「先出貨」</span>}</div>:<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{!c.archived&&<button className="btn btn-sm btn-ghost" disabled={Boolean(shippingKey)||!c.order_ids.length} onClick={()=>changeRowShipment(c,'pending')}><Undo2 size={13}/>恢復待出貨</button>}{c.archived?<button className="btn btn-sm btn-ghost" disabled={Boolean(archivingKey)||!c.order_ids.length} onClick={()=>changeRowArchive(c,false)}><ArchiveRestore size={13}/>解除封存</button>:<button className="btn btn-sm btn-ghost" disabled={Boolean(archivingKey)||!c.order_ids.length} onClick={()=>requestRowArchive(c)}><Archive size={13}/>封存訂單</button>}</div>}</td></tr>})}</tbody></table></div></div>
       {mode==='product'&&shipmentView==='pending'&&orderingSummary.combos.length>0&&<div className="card no-print"><div className="card-header"><strong><Boxes size={16}/> 團購訂貨／到貨彙總</strong><div style={{fontSize:13,color:'#2563eb',fontWeight:900,marginTop:5}}>供應廠商：{supplierName}</div></div><div className="card-body"><div className="table-container" style={{marginBottom:16}}><table><thead><tr><th>規格組合</th><th>訂購</th><th>已到</th><th>未到</th></tr></thead><tbody>{orderingSummary.combos.map(row=><tr key={row.label}><td><span style={row.packageName?COMBO_STYLE:SPEC_STYLE}>{row.label}</span></td><td><strong>{row.qty}</strong></td><td>{row.arrived}</td><td>{row.missing}</td></tr>)}</tbody></table></div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:12}}><DimensionSummary title="組合小計" rows={orderingSummary.packages}/><DimensionSummary title="口味小計" rows={orderingSummary.flavors}/><DimensionSummary title="顏色小計" rows={orderingSummary.colors}/><DimensionSummary title="尺寸小計" rows={orderingSummary.sizes}/></div></div></div>}
       <div className="print-only" style={{display:'none'}}><h2>{statusLabel}查詢報表</h2><div>{reportLabel}　列印日期：{new Date().toLocaleDateString('zh-TW')}</div><div>共 {summary.customers} 位／{summary.qty} 件／{money(summary.amount)}</div>{currentRows.map(c=><div key={`print-${c.key}`} style={{marginTop:10}}><strong>{c.name}</strong>　{c.phone||c.phone_last2}<div>{c.items.map((item,i)=><div key={i}>{mode==='buyer'&&<strong>{item.product_name}　</strong>}{item.spec} × {item.qty}</div>)}</div></div>)}</div>
     </>}

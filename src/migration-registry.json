@@ -691,6 +691,22 @@
       "data_logic": "正常待出貨檢視仍只顯示尚未完成數量；取貨管理模式才納入已完成品項。修改／取消取貨不得超過已到貨且未釋出數量；released_qty 與 picked_up_qty 維持不同語意。取消取貨後有剩餘數量則品項回待出貨，整張 shipped 訂單同步回 pending。",
       "data_migration": "無。沿用 V54 picked_up_* 欄位，不批次改寫歷史資料。",
       "rollback": "重新掛載 OrderPickupManager、移除報表取貨管理模式與 set_item_pickup 自動 reopen 段落，APP_VERSION 還原 V58；既有 picked_up_* 資料保留。"
+    },
+    {
+      "version": "V60",
+      "date": "2026-09-13",
+      "type": "bugfix/report",
+      "summary": "修正部分品項已先出貨但整張訂單仍 pending 時，已出貨報表依買家／商品查不到該客戶的問題；已出貨查詢現在同時顯示完整 shipped 訂單與 pending 訂單中 picked_up_qty>0 的已完成品項。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 已出貨查詢額外讀取符合搜尋條件的 pending 訂單，只抽出 picked_up_qty>0 的品項建立唯讀已出貨快照；未出貨品項不會混入已出貨報表。",
+        "部分出貨快照與真正 shipped 訂單分開保存 order id；恢復待出貨／封存按鈕不會誤操作仍為 pending 的原訂單。",
+        "已出貨商品候選清單也納入部分先出貨品項，因此可依商品查詢部分出貨紀錄。"
+      ],
+      "data_logic": "orders.status 仍維持既有規則：只要同張訂單尚有未完成品項就保持 pending。報表層將 pending 訂單中 picked_up_qty>0 的數量視為已出貨歷史快照，顯示數量與金額只計已完成部分；剩餘品項仍只出現在待出貨查詢。",
+      "data_migration": "無。僅修正查詢與顯示組合，不修改 orders/order_items 正式資料、不新增欄位、不新增 Serverless Function。",
+      "rollback": "移除 fetchReportOrders / partialShippedOrder 與 partial_order_ids 分流，APP_VERSION 還原 V59；資料庫不需 rollback。"
     }
   ]
 }
