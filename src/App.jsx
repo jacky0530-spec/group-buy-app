@@ -1,11 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useState } from 'react'
 import { ToastProvider } from './components/UI'
 import { AuthProvider, AuthGuard, RoleGuard, useAuth } from './components/AuthGuard'
 import CustomerSearchNotes from './components/CustomerSearchNotes'
 import OrderArrivalResetPatch from './components/OrderArrivalResetPatch'
 import OrderReleaseManager from './components/OrderReleaseManager'
-import OrderPickupManager from './components/OrderPickupManager'
 import ReleasedTextStyler from './components/ReleasedTextStyler'
 import StockAssetPanel from './components/StockAssetPanel'
 import StockValueTopCard from './components/StockValueTopCard'
@@ -33,8 +31,7 @@ import HelperEntries from './pages/HelperEntries'
 function LandingRedirect(){ const { role } = useAuth(); return <Navigate to={role === 'helper' ? '/helper' : '/'} replace /> }
 
 function PendingReportWorkspace(){
-  const [refreshKey,setRefreshKey]=useState(0)
-  return <><OrderPickupManager onChanged={()=>setRefreshKey(v=>v+1)}/><PendingProductReport key={refreshKey}/></>
+  return <PendingProductReport />
 }
 
 export default function App() {
