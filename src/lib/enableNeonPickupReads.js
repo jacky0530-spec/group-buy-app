@@ -27,6 +27,9 @@ if(!globalThis[INSTALLED]){
             picked_up_qty:Number(state.picked_up_qty||0),
             picked_up_at:state.picked_up_at||null,
             picked_up_by_uid:state.picked_up_by_uid||'',
+            picked_up_archived_qty:Number(state.picked_up_archived_qty||0),
+            picked_up_archived_at:state.picked_up_archived_at||null,
+            picked_up_archived_by_uid:state.picked_up_archived_by_uid||'',
           }:item
         }),
       })),
