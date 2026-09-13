@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第60版：已出貨報表納入待出貨訂單中已先出貨的品項，部分出貨也可依買家／商品查到。
-const APP_VERSION = '第60版｜2026/09/13'
+// 第61版：部分先出貨紀錄可獨立封存／解除封存，不影響同張訂單尚未完成的待出貨品項。
+const APP_VERSION = '第61版｜2026/09/13'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

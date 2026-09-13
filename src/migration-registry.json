@@ -707,6 +707,28 @@
       "data_logic": "orders.status 仍維持既有規則：只要同張訂單尚有未完成品項就保持 pending。報表層將 pending 訂單中 picked_up_qty>0 的數量視為已出貨歷史快照，顯示數量與金額只計已完成部分；剩餘品項仍只出現在待出貨查詢。",
       "data_migration": "無。僅修正查詢與顯示組合，不修改 orders/order_items 正式資料、不新增欄位、不新增 Serverless Function。",
       "rollback": "移除 fetchReportOrders / partialShippedOrder 與 partial_order_ids 分流，APP_VERSION 還原 V59；資料庫不需 rollback。"
+    },
+    {
+      "version": "V61",
+      "date": "2026-09-13",
+      "type": "feature/workflow",
+      "summary": "已出貨報表支援封存「同張訂單中的部分先出貨紀錄」；封存只影響已完成出貨的數量，尚未到貨／尚未出貨品項仍維持 pending 並繼續出現在待出貨查詢。",
+      "database_changes": [
+        "order_items 新增 picked_up_archived_qty integer NOT NULL DEFAULT 0。",
+        "order_items 新增 picked_up_archived_at timestamptz、picked_up_archived_by_uid text。"
+      ],
+      "api_changes": [
+        "api/neon-orders-runtime.js: 新增 set_item_pickup_archive；pickup_states 回傳部分出貨封存欄位。",
+        "set_item_pickup 降低已完成數量時會同步將 picked_up_archived_qty 上限夾到新的 picked_up_qty，避免封存量大於實際出貨量。"
+      ],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 部分先出貨列啟用「封存已出貨」；不再因原訂單仍 pending 而停用封存。",
+        "顯示封存時，部分出貨封存紀錄以獨立封存列顯示並可解除封存；未封存的新出貨數量仍可另外顯示。",
+        "整張 shipped 訂單仍沿用 orders.archived；部分先出貨則使用品項層級 picked_up_archived_qty，兩者互不干擾。"
+      ],
+      "data_logic": "picked_up_qty 維持累積已完成出貨／取貨數量；picked_up_archived_qty 只表示其中已封存的歷史數量。正常已出貨查詢顯示 picked_up_qty-picked_up_archived_qty；「顯示封存」額外顯示 archived qty。之後同品項若再新增出貨，新增數量會重新出現在未封存已出貨報表。",
+      "data_migration": "既有資料不批次改寫；新增欄位預設 0，因此 V60 以前的部分出貨紀錄全部維持未封存。Schema 由既有 neon-orders-runtime ensureReleaseSchema 安全補欄位。",
+      "rollback": "移除 picked_up_archived_* 報表與 API 邏輯，APP_VERSION 還原 V60；新增欄位可保留，不影響既有 picked_up_qty。"
     }
   ]
 }

@@ -16,7 +16,7 @@ async function ensureReleaseSchema(sql){
   const rows=await sql`
     SELECT column_name FROM information_schema.columns
     WHERE table_schema='public' AND table_name='order_items'
-      AND column_name IN ('released_qty','released_at','released_by_uid','picked_up_qty','picked_up_at','picked_up_by_uid')`
+      AND column_name IN ('released_qty','released_at','released_by_uid','picked_up_qty','picked_up_at','picked_up_by_uid','picked_up_archived_qty','picked_up_archived_at','picked_up_archived_by_uid')`
   const names=new Set(rows.map(r=>r.column_name))
   if(!names.has('released_qty')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_qty integer NOT NULL DEFAULT 0`
   if(!names.has('released_at')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS released_at timestamptz`
@@ -24,6 +24,9 @@ async function ensureReleaseSchema(sql){
   if(!names.has('picked_up_qty')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS picked_up_qty integer NOT NULL DEFAULT 0`
   if(!names.has('picked_up_at')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS picked_up_at timestamptz`
   if(!names.has('picked_up_by_uid')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS picked_up_by_uid text`
+  if(!names.has('picked_up_archived_qty')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS picked_up_archived_qty integer NOT NULL DEFAULT 0`
+  if(!names.has('picked_up_archived_at')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS picked_up_archived_at timestamptz`
+  if(!names.has('picked_up_archived_by_uid')) await sql`ALTER TABLE order_items ADD COLUMN IF NOT EXISTS picked_up_archived_by_uid text`
   releaseSchemaReady=true
 }
 
@@ -104,7 +107,7 @@ async function syncOrder(sql,row){
   if(!orderId) throw new Error('Neon 訂單同步失敗')
   const previousItems=await sql`
     SELECT line_no,product_id,spec_package,spec_flavor,spec_color,spec_size,qty,original_qty,released_qty,released_at,released_by_uid,
-      picked_up_qty,picked_up_at,picked_up_by_uid
+      picked_up_qty,picked_up_at,picked_up_by_uid,picked_up_archived_qty,picked_up_archived_at,picked_up_archived_by_uid
     FROM order_items WHERE order_id=${orderId}`
   await sql`DELETE FROM order_items WHERE order_id=${orderId}`
   let lineNo=0
@@ -123,6 +126,9 @@ async function syncOrder(sql,row){
     const pickedUpQty=Math.min(Math.max(0,qty-releasedQty),Math.max(0,Math.trunc(num(previous?.picked_up_qty??item.picked_up_qty))))
     const pickedUpAt=pickedUpQty>0?(iso(previous?.picked_up_at)||iso(item.picked_up_at)||new Date().toISOString()):null
     const pickedUpBy=pickedUpQty>0?text(previous?.picked_up_by_uid||item.picked_up_by_uid):''
+    const pickedUpArchivedQty=Math.min(pickedUpQty,Math.max(0,Math.trunc(num(previous?.picked_up_archived_qty??item.picked_up_archived_qty))))
+    const pickedUpArchivedAt=pickedUpArchivedQty>0?(iso(previous?.picked_up_archived_at)||iso(item.picked_up_archived_at)||new Date().toISOString()):null
+    const pickedUpArchivedBy=pickedUpArchivedQty>0?text(previous?.picked_up_archived_by_uid||item.picked_up_archived_by_uid):''
     const arrivedQty=Math.min(qty,Math.max(pickedUpQty,Math.max(0,Math.trunc(num(item.arrived_qty)))))
     const salePrice=num(item.sale_price??item.price)
     const costPrice=num(item.cost_price)
@@ -130,13 +136,13 @@ async function syncOrder(sql,row){
       INSERT INTO order_items (
         order_id,line_no,product_id,product_name,category,supplier,sale_price,cost_price,qty,original_qty,subtotal,cost_subtotal,note,
         spec_package,spec_flavor,spec_color,spec_size,fulfillment_type,arrived_qty,arrived_at,released_qty,released_at,released_by_uid,
-        picked_up_qty,picked_up_at,picked_up_by_uid,supplier_payment_term,supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at
+        picked_up_qty,picked_up_at,picked_up_by_uid,picked_up_archived_qty,picked_up_archived_at,picked_up_archived_by_uid,supplier_payment_term,supplier_paid_amount,supplier_payment_status,supplier_payment_refs,created_at,updated_at
       ) VALUES (
         ${orderId},${lineNo},${productId},${text(item.product_name||item.name)},${text(item.category)||'other'},${text(item.supplier)},
         ${salePrice},${costPrice},${qty},${originalQty},${num(item.subtotal||salePrice*qty)},${num(item.cost_subtotal||costPrice*qty)},${text(item.note)},
         ${spec.package},${spec.flavor},${spec.color},${spec.size},${fulfillment(item.fulfillment_type||orderFulfillment)},
         ${arrivedQty},${iso(item.arrived_at)},${releasedQty},${releasedAt},${releasedBy||null},
-        ${pickedUpQty},${pickedUpAt},${pickedUpBy||null},${text(item.supplier_payment_term)||'manual'},
+        ${pickedUpQty},${pickedUpAt},${pickedUpBy||null},${pickedUpArchivedQty},${pickedUpArchivedAt},${pickedUpArchivedBy||null},${text(item.supplier_payment_term)||'manual'},
         ${num(item.supplier_paid_amount)},${text(item.supplier_payment_status)||'unpaid'},${j(item.supplier_payment_refs)}::jsonb,
         ${iso(row.created_at)||new Date().toISOString()},${iso(row.updated_at)||new Date().toISOString()}
       )
@@ -293,7 +299,7 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
   const lineNo=Math.trunc(num(itemIndex))+1
   if(!id||lineNo<1) throw new Error('缺少訂單品項')
   const rows=await sql`
-    SELECT o.id AS order_id,o.status,o.archived,o.is_virtual,o.fulfillment_type,oi.line_no,oi.product_name,oi.qty,oi.arrived_qty,oi.released_qty,oi.picked_up_qty
+    SELECT o.id AS order_id,o.status,o.archived,o.is_virtual,o.fulfillment_type,oi.line_no,oi.product_name,oi.qty,oi.arrived_qty,oi.released_qty,oi.picked_up_qty,oi.picked_up_archived_qty
     FROM orders o JOIN order_items oi ON oi.order_id=o.id
     WHERE o.legacy_id=${id} AND oi.line_no=${lineNo} LIMIT 1`
   const row=rows[0]
@@ -313,9 +319,12 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
       picked_up_qty=${pickedQty},
       picked_up_at=${pickedQty>0?new Date().toISOString():null},
       picked_up_by_uid=${pickedQty>0?auth.uid:null},
+      picked_up_archived_qty=LEAST(COALESCE(picked_up_archived_qty,0),${pickedQty}),
+      picked_up_archived_at=CASE WHEN LEAST(COALESCE(picked_up_archived_qty,0),${pickedQty})>0 THEN picked_up_archived_at ELSE NULL END,
+      picked_up_archived_by_uid=CASE WHEN LEAST(COALESCE(picked_up_archived_qty,0),${pickedQty})>0 THEN picked_up_archived_by_uid ELSE NULL END,
       updated_at=now()
     WHERE order_id=${row.order_id} AND line_no=${lineNo}
-    RETURNING line_no,product_name,qty,arrived_qty,released_qty,picked_up_qty,picked_up_at,picked_up_by_uid`
+    RETURNING line_no,product_name,qty,arrived_qty,released_qty,picked_up_qty,picked_up_at,picked_up_by_uid,picked_up_archived_qty,picked_up_archived_at,picked_up_archived_by_uid`
   const state=await sql`
     SELECT COUNT(*)::int AS item_count,
       COUNT(*) FILTER (WHERE COALESCE(released_qty,0)+COALESCE(picked_up_qty,0)<qty)::int AS open_items
@@ -345,12 +354,39 @@ async function setItemPickup(sql,auth,legacyId,itemIndex,pickedQtyInput){
   return {...updated[0],order_completed:orderCompleted,order_reopened:orderReopened}
 }
 
+async function setItemPickupArchive(sql,auth,legacyId,itemIndex,archived){
+  const id=text(legacyId)
+  const lineNo=Math.trunc(num(itemIndex))+1
+  if(!id||lineNo<1) throw new Error('缺少訂單品項')
+  const rows=await sql`
+    SELECT o.id AS order_id,o.status,o.is_virtual,oi.line_no,oi.product_name,oi.picked_up_qty,oi.picked_up_archived_qty
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.legacy_id=${id} AND oi.line_no=${lineNo} LIMIT 1`
+  const row=rows[0]
+  if(!row) throw new Error('找不到訂單商品')
+  if(row.status==='cancelled') throw new Error('已取消訂單不可封存出貨紀錄')
+  if(row.is_virtual===true) throw new Error('虛擬訂單沒有部分出貨紀錄可封存')
+  const picked=Math.max(0,Math.trunc(num(row.picked_up_qty)))
+  if(picked<=0) throw new Error('目前沒有已出貨／取貨數量可封存')
+  const nextArchived=archived===true?picked:0
+  const updated=await sql`
+    UPDATE order_items SET
+      picked_up_archived_qty=${nextArchived},
+      picked_up_archived_at=${nextArchived>0?new Date().toISOString():null},
+      picked_up_archived_by_uid=${nextArchived>0?auth.uid:null},
+      updated_at=now()
+    WHERE order_id=${row.order_id} AND line_no=${lineNo}
+    RETURNING line_no,product_name,picked_up_qty,picked_up_archived_qty,picked_up_archived_at,picked_up_archived_by_uid`
+  await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
+  return updated[0]
+}
+
 async function pickupStates(sql,ids){
   const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
   if(!target.length)return[]
   if(target.length>250) throw new Error('單次最多讀取 250 筆訂單取貨狀態')
   return sql`
-    SELECT o.legacy_id AS id,oi.line_no,oi.picked_up_qty,oi.picked_up_at,oi.picked_up_by_uid
+    SELECT o.legacy_id AS id,oi.line_no,oi.picked_up_qty,oi.picked_up_at,oi.picked_up_by_uid,oi.picked_up_archived_qty,oi.picked_up_archived_at,oi.picked_up_archived_by_uid
     FROM orders o JOIN order_items oi ON oi.order_id=o.id
     WHERE o.legacy_id=ANY(${target}::text[])
     ORDER BY o.legacy_id,oi.line_no`
@@ -484,6 +520,7 @@ export default async function handler(req,res){
     if(action==='update_item_qty') return res.status(200).json({ok:true,result:await updateItemQty(sql,req.body?.id,req.body?.item_index,req.body?.qty)})
     if(action==='set_item_release') return res.status(200).json({ok:true,result:await setItemRelease(sql,auth,req.body?.id,req.body?.item_index,req.body?.released_qty)})
     if(action==='set_item_pickup') return res.status(200).json({ok:true,result:await setItemPickup(sql,auth,req.body?.id,req.body?.item_index,req.body?.picked_up_qty)})
+    if(action==='set_item_pickup_archive') return res.status(200).json({ok:true,result:await setItemPickupArchive(sql,auth,req.body?.id,req.body?.item_index,req.body?.archived===true)})
     if(action==='update_virtual') return res.status(200).json({ok:true,result:await updateVirtual(sql,req.body?.ids,req.body?.is_virtual)})
     if(action==='delete'){
       const ids=Array.isArray(req.body?.ids)?req.body.ids:[]

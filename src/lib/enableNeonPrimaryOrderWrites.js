@@ -82,6 +82,10 @@ if(!globalThis[INSTALLED]){
     return (await neonOrdersRuntime('set_item_pickup',{id,item_index,picked_up_qty:Number(picked_up_qty||0)}))?.result
   }
 
+  OrdersAPI.setItemPickupArchive=async function(id,item_index,archived=true){
+    return (await neonOrdersRuntime('set_item_pickup_archive',{id,item_index,archived:Boolean(archived)}))?.result
+  }
+
   OrdersAPI.updateItemQty=async function(id,item_index,qty){
     const m=await meta(id)
     if(m.fulfillment_type==='stock'){
