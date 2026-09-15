@@ -247,9 +247,9 @@ async function incomingComplete(sql,body){
   if(!r||r.valid!==true) throw new Error('本批實收數量超過目前訂單尚未到貨數量，請重新整理後調整')
   if(Number(r.completed||0)!==1||Math.abs(Number(r.requested||0)-Number(r.allocated||0))>0.001) throw new Error('到貨分配資料已變動，批次未完成，請重新整理後再試')
   const affected=Array.isArray(r.affected)?r.affected:[]
-  for(const a of affected){
-    try{await correctSupplierState(sql,a.order_id,a.item_index,false)}catch(err){console.error('incoming-correct-supplier-state',a,err)}
-  }
+  // arrived_qty 的 UPDATE 會由 trg_auto_supplier_payment_arrival 依商品付款條件處理自動付款。
+  // 這裡不可再呼叫 correctSupplierState，否則會把剛建立的自動付款 allocation 撤銷，
+  // 導致使用者完成到貨後又必須逐筆重新勾選供應商付款。
   return {completed:true,requested:Number(r.requested||0),allocated:Number(r.allocated||0),affected}
 }
 

@@ -729,6 +729,22 @@
       "data_logic": "picked_up_qty 維持累積已完成出貨／取貨數量；picked_up_archived_qty 只表示其中已封存的歷史數量。正常已出貨查詢顯示 picked_up_qty-picked_up_archived_qty；「顯示封存」額外顯示 archived qty。之後同品項若再新增出貨，新增數量會重新出現在未封存已出貨報表。",
       "data_migration": "既有資料不批次改寫；新增欄位預設 0，因此 V60 以前的部分出貨紀錄全部維持未封存。Schema 由既有 neon-orders-runtime ensureReleaseSchema 安全補欄位。",
       "rollback": "移除 picked_up_archived_* 報表與 API 邏輯，APP_VERSION 還原 V60；新增欄位可保留，不影響既有 picked_up_qty。"
+    },
+    {
+      "version": "V62",
+      "date": "2026-09-15",
+      "type": "bugfix/workflow",
+      "summary": "修正即將到貨批次完成時，arrived_qty 觸發的供應商自動付款隨即又被更正流程撤銷，造成到貨後必須逐筆重新勾選批次付款。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-status.js: incoming_complete 完成 arrived_qty 分配後不再呼叫 correctSupplierState；保留 trg_auto_supplier_payment_arrival 依 supplier_payment_term 自動建立的付款與 allocation，不新增 Serverless Function。"
+      ],
+      "ui_changes": [
+        "src/pages/IncomingBatches.jsx: 明確提示完成本批到貨即更新未出貨報表；供應商付款不是到貨顯示前置條件，只有仍需手動付款的明細才另外處理。"
+      ],
+      "data_logic": "完成本批到貨仍只負責將實收數量依正式預購訂單順序配置到 order_items.arrived_qty；arrived_qty 增加時由既有 trg_auto_supplier_payment_arrival 依 supplier_payment_term='order'/'arrival' 自動付款，manual 才保留手動付款。完成到貨本身不要求先勾選付款，未完成出貨的訂單仍可立即出現在未出貨報表。V37 的手動全額付款後 incoming_ship_ready 規則保留。",
+      "data_migration": "無 schema migration、無歷史資料批次改寫；只修正未來完成到貨時的付款狀態處理。既有已被撤銷的付款不自動重建，避免未經確認改寫正式金流紀錄。",
+      "rollback": "恢復 incoming_complete 完成後逐 affected item 呼叫 correctSupplierState(..., false) 的 V61 行為，並將 APP_VERSION 還原 V61；不需資料庫 rollback。"
     }
   ]
 }
