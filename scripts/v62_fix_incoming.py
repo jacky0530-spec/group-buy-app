@@ -60,7 +60,7 @@ layout_path.write_text(layout, encoding='utf-8')
 # 4) Migration Registry
 registry_path = Path('src/migration-registry.json')
 registry = json.loads(registry_path.read_text(encoding='utf-8'))
-entries = registry if isinstance(registry, list) else registry.get('migrations')
+entries = registry if isinstance(registry, list) else registry.get('entries')
 if not isinstance(entries, list):
     raise SystemExit('migration registry format not recognized')
 if not any(str(item.get('version')) == 'V62' for item in entries):
