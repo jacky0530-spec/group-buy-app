@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第62版：修正完成即將到貨後自動付款被撤銷；到貨完成立即同步未出貨，付款不再被誤要求重做。
-const APP_VERSION = '第62版｜2026/09/15'
+// 第63版：完成到貨批次可直接批次出貨本批已到齊訂單；出貨不再綁定供應商付款。
+const APP_VERSION = '第63版｜2026/09/16'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

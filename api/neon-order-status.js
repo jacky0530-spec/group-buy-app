@@ -291,6 +291,40 @@ async function incomingShipReady(sql,body){
   return {requested:ids.length,shipped:Number(rows[0]?.shipped||0),waiting:Math.max(0,ids.length-shippedIds.length),ids:shippedIds}
 }
 
+async function incomingShipBatchReady(sql,body){
+  await ensureIncomingSchema(sql)
+  const batchId=text(body?.id)
+  if(!batchId) throw new Error('缺少到貨批次 ID')
+  // incoming_complete 與 order_items.arrived_at 使用同一交易的 now()，
+  // 因此 arrived_at = completed_at 可準確找回「這一批」實際完成到貨的訂單，
+  // 不會把其他批次或更早已到貨的訂單混進來。
+  const rows=await sql`
+    SELECT DISTINCT o.legacy_id AS id
+    FROM incoming_batches b
+    JOIN incoming_batch_items bi ON bi.batch_id=b.id
+    JOIN order_items oi ON oi.product_id=bi.product_id
+      AND oi.supplier=b.supplier
+      AND COALESCE(oi.spec_package,'')=COALESCE(bi.spec_package,'')
+      AND COALESCE(oi.spec_flavor,'')=COALESCE(bi.spec_flavor,'')
+      AND COALESCE(oi.spec_color,'')=COALESCE(bi.spec_color,'')
+      AND COALESCE(oi.spec_size,'')=COALESCE(bi.spec_size,'')
+      AND oi.arrived_at=b.completed_at
+    JOIN orders o ON o.id=oi.order_id
+    WHERE b.legacy_id=${batchId}
+      AND b.status='completed'
+      AND o.status='pending'
+      AND COALESCE(o.is_virtual,false)=false
+      AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+    ORDER BY o.legacy_id`
+  const ids=rows.map(r=>text(r.id)).filter(Boolean)
+  if(!ids.length) return {batch_id:batchId,requested:0,shipped:0,waiting:0,ids:[]}
+  const result=await incomingShipReady(sql,{
+    order_ids:ids,
+    reason:text(body?.reason)||`即將到貨批次 ${batchId} 完成後批次出貨`,
+  })
+  return {batch_id:batchId,...result}
+}
+
 async function getOrder(sql,legacyId){
   const rows=await sql`
     SELECT id,legacy_id,status,payment_status,fulfillment_type,status_history
@@ -492,6 +526,7 @@ export default async function handler(req,res){
     if(action==='incoming_save') return res.status(200).json({ok:true,result:await incomingSave(sql,req.body||{})})
     if(action==='incoming_complete') return res.status(200).json({ok:true,result:await incomingComplete(sql,req.body||{})})
     if(action==='incoming_ship_ready') return res.status(200).json({ok:true,result:await incomingShipReady(sql,req.body||{})})
+    if(action==='incoming_ship_batch_ready') return res.status(200).json({ok:true,result:await incomingShipBatchReady(sql,req.body||{})})
     throw new Error('未知的訂單狀態動作')
   }catch(err){
     console.error('neon-order-status',err)
