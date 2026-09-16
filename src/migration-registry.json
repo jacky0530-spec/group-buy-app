@@ -745,6 +745,22 @@
       "data_logic": "完成本批到貨仍只負責將實收數量依正式預購訂單順序配置到 order_items.arrived_qty；arrived_qty 增加時由既有 trg_auto_supplier_payment_arrival 依 supplier_payment_term='order'/'arrival' 自動付款，manual 才保留手動付款。完成到貨本身不要求先勾選付款，未完成出貨的訂單仍可立即出現在未出貨報表。V37 的手動全額付款後 incoming_ship_ready 規則保留。",
       "data_migration": "無 schema migration、無歷史資料批次改寫；只修正未來完成到貨時的付款狀態處理。既有已被撤銷的付款不自動重建，避免未經確認改寫正式金流紀錄。",
       "rollback": "恢復 incoming_complete 完成後逐 affected item 呼叫 correctSupplierState(..., false) 的 V61 行為，並將 APP_VERSION 還原 V61；不需資料庫 rollback。"
+    },
+    {
+      "version": "V63",
+      "date": "2026-09-16",
+      "type": "bugfix/workflow",
+      "summary": "即將到貨批次完成後新增獨立的批次出貨流程，不再要求先進入供應商付款；只出貨本批實際完成到貨且整張訂單所有商品均已到齊的正式預購訂單。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-status.js: 新增 incoming_ship_batch_ready；以同一批次完成交易的 order_items.arrived_at = incoming_batches.completed_at 找回本批實際完成到貨的訂單，再沿用 incomingShipReady 只出貨全品項到齊的 pending 正式預購訂單。"
+      ],
+      "ui_changes": [
+        "src/pages/IncomingBatches.jsx: 已完成批次新增「批次出貨本批已到齊訂單」按鈕；尚有其他商品未到齊的訂單自動略過並保留待出貨，供應商付款不再是批次出貨前置條件。"
+      ],
+      "data_logic": "到貨、出貨、供應商付款三者分離：完成到貨只更新 arrived_qty；使用者可在已完成批次直接批次出貨該批相關且整張均到齊的訂單；未到齊、虛擬、非預購或非 pending 訂單不會被出貨。付款功能與既有自動付款規則保持不變。",
+      "data_migration": "無 schema migration、無歷史資料批次改寫。既有已完成批次可直接使用新按鈕補做批次出貨。",
+      "rollback": "移除 incoming_ship_batch_ready 與已完成批次的獨立出貨按鈕，APP_VERSION 還原 V62；不需資料庫 rollback。"
     }
   ]
 }

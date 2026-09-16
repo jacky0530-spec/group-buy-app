@@ -46,6 +46,7 @@ export default function IncomingBatches(){
   const[paymentNote,setPaymentNote]=useState('')
   const[paymentDate,setPaymentDate]=useState(today())
   const[paying,setPaying]=useState(false)
+  const[shippingReady,setShippingReady]=useState(false)
 
   const loadHome=useCallback(async()=>{
     setLoading(true)
@@ -170,6 +171,23 @@ export default function IncomingBatches(){
     finally{setSaving(false)}
   }
 
+  const shipReadyBatch=async()=>{
+    if(!activeBatch||activeBatch.status!=='completed'||shippingReady)return
+    if(!window.confirm('確定批次出貨本批已到齊訂單？\n\n只會出貨「整張訂單所有商品都已到齊」的正式預購訂單；仍有其他商品未到貨的訂單會繼續保留待出貨。\n供應商付款狀態不會阻擋此操作。'))return
+    setShippingReady(true)
+    try{
+      const data=await neonOrderStatusRuntime('incoming_ship_batch_ready',{
+        id:activeBatch.id,
+        reason:`即將到貨批次 ${activeBatch.id} 完成後批次出貨`,
+      })
+      const result=data?.result||{}
+      const shipped=Number(result.shipped||0),waiting=Number(result.waiting||0),requested=Number(result.requested||0)
+      if(requested===0) toast('本批目前沒有尚待出貨的相關訂單')
+      else toast(`✅ 本批已批次出貨 ${shipped} 張${waiting>0?`；另 ${waiting} 張仍有商品未到齊，繼續保留待出貨`:''}`)
+    }catch(e){toast('本批批次出貨失敗：'+e.message,'error')}
+    finally{setShippingReady(false)}
+  }
+
   const payBatch=async()=>{
     const amount=Number(paymentAmount||0)
     if(!activeBatch||!paymentLines.length){toast('本批目前沒有可付款明細','error');return}
@@ -215,7 +233,7 @@ export default function IncomingBatches(){
 
   return <div className="animate-fade">
     <div className="no-print" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:16}}>
-      <div><h2 style={{fontSize:22,fontWeight:900}}>🚚 即將到貨</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>先把廠商這次要送的商品拉成一批；完成本批到貨後會立即更新未出貨報表，供應商付款依商品付款條件另外處理。</p></div>
+      <div><h2 style={{fontSize:22,fontWeight:900}}>🚚 即將到貨</h2><p style={{fontSize:13,color:'var(--text-secondary)',marginTop:3}}>先把廠商這次要送的商品拉成一批；完成到貨後立即更新未出貨報表，並可直接批次出貨本批已到齊訂單，不需先完成供應商付款。</p></div>
       <button className="btn btn-ghost" onClick={loadHome} disabled={loading||saving}><RefreshCw size={15}/>重新整理</button>
     </div>
 
@@ -231,6 +249,8 @@ export default function IncomingBatches(){
       <div className="print-only" style={{marginBottom:14}}><h2>到貨表單</h2><div>供應商：{activeBatch.supplier}　批次：{activeBatch.id}　預計到貨：{activeBatch.expected_date||'—'}　完成：{activeBatch.completed_at||'—'}</div></div>
       <div className="table-container"><table><thead><tr><th>商品 / 規格</th><th>預計</th><th>實收</th><th>實際售價</th><th>單位成本</th><th>本批成本</th></tr></thead><tbody>{draftItems.map(i=><tr key={i.id}><td><div style={{fontWeight:850}}>{i.product_name}</div><div style={{fontSize:11,color:'var(--indigo)'}}>{specLabel(i)}</div></td><td>{i.expected_qty}</td><td>{activeBatch.status==='completed'?<strong>{i.received_qty}</strong>:<><input className="no-print" type="number" min="0" max={i.expected_qty} value={i.received_qty} onFocus={e=>e.currentTarget.select()} onClick={e=>e.currentTarget.select()} onChange={e=>setReceived(i.id,e.target.value)} style={{width:90}}/><span className="print-only">{i.received_qty}</span></>}</td><td style={{fontWeight:900,color:'var(--indigo-dark)'}}>{salePriceOf(i,productMap)>0?money(salePriceOf(i,productMap)):'—'}</td><td>{money(i.unit_cost)}</td><td>{money(Number(i.received_qty)*Number(i.unit_cost))}</td></tr>)}</tbody></table></div>
       <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',marginTop:12}}><div><strong>實收 {draftReceived} 件</strong>　預估成本 <strong>{money(draftAmount)}</strong></div>{activeBatch.status!=='completed'&&<div className="no-print" style={{display:'flex',gap:7,flexWrap:'wrap'}}><button className="btn btn-ghost" onClick={fillExpected}>全部符合預計數量</button><button className="btn btn-ghost" disabled={saving} onClick={saveReceiving}>儲存理貨</button><button className="btn btn-primary" disabled={saving||draftReceived<=0} onClick={completeBatch}><PackageCheck size={15}/>{saving?'處理中...':'完成本批到貨'}</button></div>}</div>
+
+      {activeBatch.status==='completed'&&<div className="no-print" style={{marginTop:16,padding:12,border:'1px solid #bfdbfe',borderRadius:10,background:'#eff6ff'}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><div><div style={{display:'flex',alignItems:'center',gap:8,fontWeight:900}}><Truck size={18}/>本批出貨</div><div style={{fontSize:12,color:'#1e40af',marginTop:4}}>到貨與供應商付款分開處理。可直接批次出貨本批「整張訂單均已到齊」的正式訂單；真正尚未到齊的會自動略過並保留待出貨。</div></div><button className="btn btn-primary" disabled={shippingReady} onClick={shipReadyBatch}><Truck size={15}/>{shippingReady?'批次出貨中...':'批次出貨本批已到齊訂單'}</button></div></div>}
 
       {activeBatch.status==='completed'&&<div className="no-print" style={{marginTop:16,paddingTop:14,borderTop:'1px solid var(--border)'}}><div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}><WalletCards size={18}/><strong>本批付款</strong></div>{paymentLines.length===0?<div style={{padding:12,borderRadius:10,background:'var(--emerald-light)',fontSize:12}}>✅ 到貨資料已完成分配，已立即同步到「未出貨報表」。供應商付款不是到貨顯示的前置條件；若沒有付款明細，代表已付款或付款條件由系統自動處理。</div>:<><div style={{background:'var(--amber-light)',padding:10,borderRadius:10,fontSize:12,marginBottom:10}}>本批另有可手動付款 {paymentLines.length} 筆，共 <strong>{money(paymentLines.reduce((s,l)=>s+Number(l.outstanding||0),0))}</strong>。到貨資料已經同步未出貨報表，不需先付款；若在這裡全額付款，仍沿用既有規則自動批次出貨「整張訂單商品均已到齊」的正式預購訂單。</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:9}}><div className="form-group"><label>付款日期</label><input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/></div><div className="form-group"><label>本次付款金額</label><input type="number" min="1" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/></div></div><div className="form-group"><label>付款備註</label><input value={paymentNote} onChange={e=>setPaymentNote(e.target.value)} placeholder="例：本批貨到全額付款"/></div><button className="btn btn-primary" disabled={paying} onClick={payBatch}><Truck size={15}/>{paying?'付款／出貨處理中...':'完成本批付款＋自動出貨'}</button></>}</div>}
     </div></div>}
