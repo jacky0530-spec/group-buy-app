@@ -761,6 +761,21 @@
       "data_logic": "到貨、出貨、供應商付款三者分離：完成到貨只更新 arrived_qty；使用者可在已完成批次直接批次出貨該批相關且整張均到齊的訂單；未到齊、虛擬、非預購或非 pending 訂單不會被出貨。付款功能與既有自動付款規則保持不變。",
       "data_migration": "無 schema migration、無歷史資料批次改寫。既有已完成批次可直接使用新按鈕補做批次出貨。",
       "rollback": "移除 incoming_ship_batch_ready 與已完成批次的獨立出貨按鈕，APP_VERSION 還原 V62；不需資料庫 rollback。"
+    },
+    {
+      "version": "V64",
+      "date": "2026-09-18",
+      "type": "ui/workflow",
+      "summary": "供應商付款中心新增商品／規格搜尋，選擇供應商後不再自動勾選全部可付款明細，改為搜尋後手動勾選付款。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/SupplierPayments.jsx: 待付款／成本確認明細新增商品名稱／規格即時搜尋；搜尋結果可一鍵全選，清除勾選獨立保留。",
+        "選擇供應商後預設不自動勾選；使用者可先搜尋商品再逐筆勾選，勾選／取消時自動重算本次付款金額。"
+      ],
+      "data_logic": "只在前端篩選既有 supplier_payables 明細，不改變 isEligible、付款條件、到貨判定、成本確認或 SupplierPaymentsAPI.createPayment 的分配規則。跨不同搜尋詞已勾選的明細會保留，付款金額預設跟隨目前勾選待付合計，使用者仍可手動輸入較小金額做部分付款。",
+      "data_migration": "無。純前端搜尋與操作流程調整，不修改 supplier_payments、supplier_payment_allocations、orders、order_items 或 Neon schema。",
+      "rollback": "移除 productSearch/visibleSupplierLines 與搜尋框，chooseSupplier 恢復 autoSelect:true，APP_VERSION 還原 V63；不需資料庫 rollback。"
     }
   ]
 }
