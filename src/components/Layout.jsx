@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第63版：完成到貨批次可直接批次出貨本批已到齊訂單；出貨不再綁定供應商付款。
-const APP_VERSION = '第63版｜2026/09/16'
+// 第64版：供應商付款明細新增商品／規格搜尋，改為手動搜尋後勾選付款。
+const APP_VERSION = '第64版｜2026/09/18'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
