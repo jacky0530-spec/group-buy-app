@@ -103,7 +103,8 @@ if(!globalThis[INSTALLED]){
     const primary=await neonRuntime('write_product',{op:'create',id,row})
     return {...row,...(primary?.result||{})}
   }
-  ProductsAPI.update=async function(id,data={}){return (await neonRuntime('write_product',{op:'update',id,data:stripUndefined(data)}))?.result}
+  ProductsAPI.previewUpdateImpact=async function(id,data={}){return (await neonRuntime('product_update_impact',{id,data:stripUndefined(data)}))?.summary||{}}
+  ProductsAPI.update=async function(id,data={},options={}){return (await neonRuntime('write_product',{op:'update',id,data:stripUndefined(data),sync_pending_orders:options?.syncPendingOrders===true}))?.result}
   ProductsAPI.archive=async function(id){return (await neonRuntime('write_product',{op:'archive',id}))?.result}
   ProductsAPI.restore=async function(id){return (await neonRuntime('write_product',{op:'restore',id}))?.result}
   ProductsAPI.isDuplicate=async function(name,excludeId=null){
