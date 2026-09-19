@@ -793,6 +793,21 @@
       "data_logic": "只處理 status=pending、未封存、非虛擬、preorder 的既有訂單。若客戶已有收款／退款、品項已有供應商付款、已有 picked_up_qty 或 released_qty，則保留原售價／成本不自動改寫。安全品項同步 sale_price、cost_price、subtotal、cost_subtotal，並重算受影響 orders.total_amount。多規格商品依 order_items.spec_package 對應新 price_options label；找不到相同組合標籤時保留原金額並警示。",
       "data_migration": "無 schema migration。只有使用者在商品編輯影響確認中選擇『同步可安全訂單』時才會修改符合安全條件的既有 pending 訂單；已完成歷史與有金流／履約紀錄資料不改。",
       "rollback": "移除 product_update_impact、sync_pending_orders 與商品編輯影響確認 UI，APP_VERSION 還原 V64。已被使用者確認同步過的訂單金額不自動回滾，需依實際交易資料人工更正。"
+    },
+    {
+      "version": "V66",
+      "date": "2026-09-19",
+      "type": "ui/bugfix",
+      "summary": "Excel 匯入訂單移除瀏覽器原生 window.confirm，改用 React Modal 確認，修正 iPad／Safari／平板瀏覽器按確認後無反應或阻擋式對話框不穩定的問題。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/ExcelOrderImport.jsx: 匯入前先把待建立 rows 保存在頁面狀態，再用系統 Modal 顯示筆數與重複略過說明。",
+        "確認後才呼叫既有 OrdersAPI.batchCreate；執行期間顯示「建立訂單中…」並鎖住重複送出。"
+      ],
+      "data_logic": "不改 Excel 解析、客戶／商品配對、重複訂單 signature、Neon create_many 或批次上限。只把原生 window.confirm 換成應用程式內確認視窗；匯入仍走 Neon primary。",
+      "data_migration": "無。沒有修改正式訂單資料、Neon schema 或 Serverless Function。",
+      "rollback": "ExcelOrderImport.jsx 恢復 window.confirm 與原 importOrders 流程，APP_VERSION 還原 V65；不需資料庫 rollback。"
     }
   ]
 }
