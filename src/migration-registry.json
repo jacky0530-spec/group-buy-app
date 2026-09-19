@@ -776,6 +776,23 @@
       "data_logic": "只在前端篩選既有 supplier_payables 明細，不改變 isEligible、付款條件、到貨判定、成本確認或 SupplierPaymentsAPI.createPayment 的分配規則。跨不同搜尋詞已勾選的明細會保留，付款金額預設跟隨目前勾選待付合計，使用者仍可手動輸入較小金額做部分付款。",
       "data_migration": "無。純前端搜尋與操作流程調整，不修改 supplier_payments、supplier_payment_allocations、orders、order_items 或 Neon schema。",
       "rollback": "移除 productSearch/visibleSupplierLines 與搜尋框，chooseSupplier 恢復 autoSelect:true，APP_VERSION 還原 V63；不需資料庫 rollback。"
+    },
+    {
+      "version": "V65",
+      "date": "2026-09-19",
+      "type": "feature/finance/workflow",
+      "summary": "商品主檔修改售價／成本時，先預覽既有未完成正式預購訂單影響；使用者可選擇同步安全訂單、只修改商品主檔或取消。安全同步會一併更新訂單品項售價／成本、小計與 orders.total_amount。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-runtime.js: 新增 product_update_impact 唯讀 action；write_product update 支援 sync_pending_orders，沿用既有 Serverless Function。",
+        "src/lib/enableNeonPrimaryCatalogWrites.js: ProductsAPI.previewUpdateImpact 與 ProductsAPI.update(...,{syncPendingOrders})。"
+      ],
+      "ui_changes": [
+        "src/pages/Products.jsx: 編輯商品價格時先顯示影響確認，列出可安全同步訂單與因金流／履約紀錄被保留的訂單數；提供取消、只改商品主檔、同步可安全訂單三種操作。"
+      ],
+      "data_logic": "只處理 status=pending、未封存、非虛擬、preorder 的既有訂單。若客戶已有收款／退款、品項已有供應商付款、已有 picked_up_qty 或 released_qty，則保留原售價／成本不自動改寫。安全品項同步 sale_price、cost_price、subtotal、cost_subtotal，並重算受影響 orders.total_amount。多規格商品依 order_items.spec_package 對應新 price_options label；找不到相同組合標籤時保留原金額並警示。",
+      "data_migration": "無 schema migration。只有使用者在商品編輯影響確認中選擇『同步可安全訂單』時才會修改符合安全條件的既有 pending 訂單；已完成歷史與有金流／履約紀錄資料不改。",
+      "rollback": "移除 product_update_impact、sync_pending_orders 與商品編輯影響確認 UI，APP_VERSION 還原 V64。已被使用者確認同步過的訂單金額不自動回滾，需依實際交易資料人工更正。"
     }
   ]
 }
