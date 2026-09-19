@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第65版：商品售價／成本修改可安全同步尚未完成訂單，已有金流或履約紀錄則保留原金額。
-const APP_VERSION = '第65版｜2026/09/19'
+// 第66版：Excel 匯入移除瀏覽器原生 window.confirm，改用平板／iPad 相容的系統確認視窗與明確建立中狀態。
+const APP_VERSION = '第66版｜2026/09/19'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
