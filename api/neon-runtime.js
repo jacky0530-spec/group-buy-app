@@ -58,11 +58,143 @@ async function writeCustomer(sql,body){
   await syncCustomer(sql,row);return row
 }
 
+
+function parseJsonArray(value){
+  if(Array.isArray(value)) return value
+  if(typeof value==='string'){try{const parsed=JSON.parse(value);return Array.isArray(parsed)?parsed:[]}catch{return[]}}
+  return []
+}
+function targetProductPricing(productData,item){
+  const options=Array.isArray(productData?.price_options)?productData.price_options:[]
+  const mode=text(productData?.pricing_mode)||((options||[]).length?'options':'single')
+  if(mode==='options'||options.length){
+    const label=text(item?.spec_package)
+    const match=options.find(option=>text(option?.label)===label)
+    if(!match) return {matched:false,label}
+    return {matched:true,sale:num(match.price),cost:num(match.cost),label}
+  }
+  return {matched:true,sale:num(productData?.price),cost:num(productData?.cost),label:''}
+}
+async function productUpdateImpact(sql,id,data={}){
+  const products=await sql`SELECT id AS product_uuid,legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products WHERE legacy_id=${id} LIMIT 1`
+  const current=products[0]
+  if(!current) throw new Error('Neon 找不到商品')
+  const merged={...current,...data,id}
+  const rows=await sql`
+    SELECT oi.id::text AS item_id,oi.order_id::text AS order_id,oi.line_no,oi.sale_price,oi.cost_price,oi.qty,
+           oi.spec_package,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,
+           COALESCE(oi.picked_up_qty,0) AS picked_up_qty,COALESCE(oi.released_qty,0) AS released_qty,
+           o.legacy_id AS order_legacy_id,o.customer_name,o.payment_status
+    FROM order_items oi
+    JOIN orders o ON o.id=oi.order_id
+    WHERE oi.product_id=${current.product_uuid}
+      AND o.status='pending'
+      AND COALESCE(o.archived,false)=false
+      AND COALESCE(o.is_virtual,false)=false
+      AND COALESCE(o.fulfillment_type,'preorder')='preorder'
+      AND COALESCE(oi.fulfillment_type,'preorder')='preorder'
+    ORDER BY o.order_date ASC,oi.line_no ASC`
+  const patches=[]
+  const skipped=[]
+  const changed=[]
+  let saleChangedItems=0,costChangedItems=0
+  for(const row of rows){
+    const target=targetProductPricing(merged,row)
+    if(!target.matched){
+      skipped.push({...row,reason:'組合／包裝規格在新價格設定中找不到'})
+      continue
+    }
+    const saleChanged=Math.abs(num(row.sale_price)-target.sale)>0.0001
+    const costChanged=Math.abs(num(row.cost_price)-target.cost)>0.0001
+    if(!saleChanged&&!costChanged) continue
+    changed.push(row)
+    if(saleChanged) saleChangedItems++
+    if(costChanged) costChangedItems++
+    const reasons=[]
+    const paymentStatus=text(row.payment_status)
+    if(paymentStatus&&paymentStatus!=='unpaid') reasons.push('客戶已有收款／退款紀錄')
+    const supplierRefs=parseJsonArray(row.supplier_payment_refs)
+    if(num(row.supplier_paid_amount)>0||['paid','partial'].includes(text(row.supplier_payment_status))||supplierRefs.length>0) reasons.push('供應商已有付款紀錄')
+    if(num(row.picked_up_qty)>0) reasons.push('已有部分出貨／取貨紀錄')
+    if(num(row.released_qty)>0) reasons.push('已有釋出紀錄')
+    if(reasons.length){
+      skipped.push({...row,reason:reasons.join('、')})
+      continue
+    }
+    const qty=Math.max(0,Math.trunc(num(row.qty)))
+    patches.push({
+      item_id:row.item_id,order_id:row.order_id,qty,
+      sale_price:target.sale,cost_price:target.cost,
+      subtotal:target.sale*qty,cost_subtotal:target.cost*qty
+    })
+  }
+  const unique=count=>new Set(count).size
+  const reasonCounts={}
+  for(const row of skipped) reasonCounts[row.reason]=(reasonCounts[row.reason]||0)+1
+  return {
+    product:merged,
+    patches,
+    summary:{
+      changed_item_count:changed.length,
+      changed_order_count:unique(changed.map(r=>r.order_id)),
+      safe_item_count:patches.length,
+      safe_order_count:unique(patches.map(r=>r.order_id)),
+      safe_qty:patches.reduce((sum,row)=>sum+num(row.qty),0),
+      skipped_item_count:skipped.length,
+      skipped_order_count:unique(skipped.map(r=>r.order_id)),
+      sale_changed_items:saleChangedItems,
+      cost_changed_items:costChangedItems,
+      skipped_reasons:reasonCounts,
+      skipped_samples:skipped.slice(0,8).map(row=>({order_id:row.order_legacy_id||row.order_id,customer_name:row.customer_name||'',reason:row.reason}))
+    }
+  }
+}
+async function applyProductUpdateWithOrders(sql,id,data={}){
+  const impact=await productUpdateImpact(sql,id,data)
+  const row=impact.product,now=new Date().toISOString()
+  const patches=impact.patches
+  const patchJson=JSON.stringify(patches)
+  const queries=[
+    sql`UPDATE products SET
+      name=${text(row.name)||'未命名商品'},category=${text(row.category)||'other'},supplier=${text(row.supplier)},
+      price=${num(row.price)},cost=${num(row.cost)},pricing_mode=${text(row.pricing_mode)||((row.price_options||[]).length?'options':'single')},
+      spec_mode=${text(row.spec_mode)||'none'},spec_colors=${j(row.spec_colors)}::jsonb,spec_sizes=${j(row.spec_sizes)}::jsonb,
+      spec_flavors=${j(row.spec_flavors)}::jsonb,price_options=${j(row.price_options)}::jsonb,
+      supplier_payment_term=${text(row.supplier_payment_term)||'manual'},updated_at=${now}
+      WHERE legacy_id=${id}`
+  ]
+  if(patches.length){
+    queries.push(sql`
+      WITH patch AS (
+        SELECT * FROM jsonb_to_recordset(${patchJson}::jsonb)
+        AS x(item_id uuid,order_id uuid,qty integer,sale_price numeric,cost_price numeric,subtotal numeric,cost_subtotal numeric)
+      )
+      UPDATE order_items oi SET
+        sale_price=patch.sale_price,cost_price=patch.cost_price,subtotal=patch.subtotal,cost_subtotal=patch.cost_subtotal,updated_at=${now}
+      FROM patch WHERE oi.id=patch.item_id`)
+    queries.push(sql`
+      WITH patch AS (
+        SELECT * FROM jsonb_to_recordset(${patchJson}::jsonb)
+        AS x(item_id uuid,order_id uuid,qty integer,sale_price numeric,cost_price numeric,subtotal numeric,cost_subtotal numeric)
+      ), totals AS (
+        SELECT oi.order_id,COALESCE(SUM(oi.subtotal),0) AS total_amount
+        FROM order_items oi
+        WHERE oi.order_id IN (SELECT DISTINCT order_id FROM patch)
+        GROUP BY oi.order_id
+      )
+      UPDATE orders o SET total_amount=totals.total_amount,updated_at=${now}
+      FROM totals WHERE o.id=totals.order_id`)
+  }
+  await sql.transaction(queries)
+  return {...row,id,updated_at:now,sync_summary:impact.summary}
+}
+
 async function writeProduct(sql,body){
   const op=text(body?.op)||'update',id=text(body?.id||body?.row?.id)
   if(!id) throw new Error('缺少商品 ID')
   const now=new Date().toISOString()
   if(op==='create'){const row={...(body.row||{}),id,active:true,created_at:body.row?.created_at||now,updated_at:now};await syncProduct(sql,row);return row}
+  if(op==='update'&&body?.sync_pending_orders===true) return applyProductUpdateWithOrders(sql,id,body.data||{})
   const rows=await sql`SELECT legacy_id AS id,name,category,supplier,price,cost,pricing_mode,spec_mode,spec_colors,spec_sizes,spec_flavors,price_options,supplier_payment_term,active,created_at,archived_at,updated_at FROM products WHERE legacy_id=${id} LIMIT 1`
   if(!rows[0]) throw new Error('Neon 找不到商品')
   let row={...rows[0],...(body.data||{}),id,updated_at:now}
@@ -147,6 +279,7 @@ export default async function handler(req,res){
     if(action==='sync_product'){requireStaff(account);return json(res,200,{ok:true,id:await syncProduct(sql,req.body?.row||{})})}
     if(action==='sync_expense'){requireStaff(account);return json(res,200,{ok:true,id:await syncExpense(sql,req.body?.row||{})})}
     if(action==='write_customer'){requireStaff(account);return json(res,200,{ok:true,result:await writeCustomer(sql,req.body||{})})}
+    if(action==='product_update_impact'){requireStaff(account);const id=text(req.body?.id);if(!id)throw new Error('缺少商品 ID');const impact=await productUpdateImpact(sql,id,req.body?.data||{});return json(res,200,{ok:true,summary:impact.summary})}
     if(action==='write_product'){requireStaff(account);return json(res,200,{ok:true,result:await writeProduct(sql,req.body||{})})}
     if(action==='write_expense'){requireStaff(account);return json(res,200,{ok:true,result:await writeExpense(sql,req.body||{})})}
     throw new Error('未知的 Neon runtime 動作')
