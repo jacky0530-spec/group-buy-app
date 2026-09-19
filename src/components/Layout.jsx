@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第64版：供應商付款明細新增商品／規格搜尋，改為手動搜尋後勾選付款。
-const APP_VERSION = '第64版｜2026/09/18'
+// 第65版：商品售價／成本修改可安全同步尚未完成訂單，已有金流或履約紀錄則保留原金額。
+const APP_VERSION = '第65版｜2026/09/19'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
