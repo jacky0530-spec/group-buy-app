@@ -264,6 +264,56 @@ async function updateItemQty(sql,legacyId,itemIndex,qty){
   return {total_amount:total}
 }
 
+async function cancelVirtualItem(sql,legacyId,itemIndex){
+  const id=text(legacyId)
+  const lineNo=Math.trunc(num(itemIndex))+1
+  if(!id||lineNo<1) throw new Error('缺少虛擬訂單品項')
+  const rows=await sql`
+    SELECT o.id AS order_id,o.legacy_id,o.status,o.archived,o.is_virtual,o.fulfillment_type,o.payment_status,o.helper_entry_id,
+           oi.id AS item_id,oi.line_no,oi.product_name,oi.spec_color,oi.spec_size,oi.spec_flavor,oi.spec_package,
+           oi.qty,oi.arrived_qty,oi.released_qty,oi.picked_up_qty,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,
+           (SELECT COUNT(*)::int FROM order_items x WHERE x.order_id=o.id) AS item_count,
+           EXISTS(SELECT 1 FROM supplier_payment_allocations spa WHERE spa.order_item_id=oi.id OR spa.order_id=o.id) AS has_allocation,
+           EXISTS(SELECT 1 FROM inventory_transactions it WHERE it.order_id=o.id) AS has_inventory
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.legacy_id=${id} AND oi.line_no=${lineNo}
+    LIMIT 1`
+  const row=rows[0]
+  if(!row) throw new Error('找不到虛擬訂單品項')
+  if(row.is_virtual!==true) throw new Error('只有虛擬訂單可將單一品項取消為 0')
+  if(row.status!=='pending'||row.archived===true) throw new Error('只有未出貨、未封存的虛擬訂單可取消品項')
+  if(row.fulfillment_type!=='preorder') throw new Error('現貨訂單不可用此功能取消品項')
+  if(text(row.payment_status)&&text(row.payment_status)!=='unpaid') throw new Error('此虛擬訂單已有客戶收款／退款狀態，不能直接取消品項')
+  if(num(row.arrived_qty)>0||num(row.released_qty)>0||num(row.picked_up_qty)>0) throw new Error('此品項已有到貨／釋出／取貨紀錄，不能直接取消')
+  const refs=Array.isArray(row.supplier_payment_refs)?row.supplier_payment_refs:(()=>{try{return JSON.parse(row.supplier_payment_refs||'[]')}catch{return[]}})()
+  if(num(row.supplier_paid_amount)>0||['paid','partial'].includes(text(row.supplier_payment_status))||refs.length>0||row.has_allocation===true) throw new Error('此品項已有供應商付款紀錄，不能直接取消')
+  if(row.has_inventory===true) throw new Error('此訂單已有庫存流水，不能直接取消品項')
+  const now=new Date().toISOString()
+  const spec=[row.spec_package&&`組合：${row.spec_package}`,row.spec_flavor&&`口味：${row.spec_flavor}`,row.spec_color&&`顏色：${row.spec_color}`,row.spec_size&&`尺寸：${row.spec_size}`].filter(Boolean).join('／')||'一般規格'
+  if(Number(row.item_count||0)<=1){
+    const history=[{status:'cancelled',at:now,note:`虛擬訂單最後品項取消：${row.product_name}／${spec}`}]
+    const updated=await sql`
+      UPDATE orders SET status='cancelled',cancelled_at=${now},cancellation_reason='虛擬訂單最後品項取消',
+        status_history=COALESCE(status_history,'[]'::jsonb) || ${JSON.stringify(history)}::jsonb,updated_at=now()
+      WHERE id=${row.order_id} AND status='pending' AND archived=false AND is_virtual=true
+      RETURNING legacy_id AS id`
+    if(!updated[0]) throw new Error('訂單狀態剛剛已變更，請重新整理後再試')
+    return {order_id:row.legacy_id,item_cancelled:true,order_cancelled:true,product_name:row.product_name,spec}
+  }
+  const history=[{status:'pending',at:now,note:`取消虛擬品項：${row.product_name}／${spec} ×${row.qty}`}]
+  await sql.transaction([
+    sql`DELETE FROM order_items WHERE id=${row.item_id}`,
+    sql`UPDATE order_items SET line_no=-line_no,updated_at=now() WHERE order_id=${row.order_id} AND line_no>${lineNo}`,
+    sql`UPDATE order_items SET line_no=(-line_no)-1,updated_at=now() WHERE order_id=${row.order_id} AND line_no<0`,
+    sql`UPDATE orders SET
+      total_amount=(SELECT COALESCE(SUM(subtotal),0) FROM order_items WHERE order_id=${row.order_id}),
+      status_history=COALESCE(status_history,'[]'::jsonb) || ${JSON.stringify(history)}::jsonb,
+      updated_at=now()
+      WHERE id=${row.order_id}`
+  ])
+  return {order_id:row.legacy_id,item_cancelled:true,order_cancelled:false,product_name:row.product_name,spec}
+}
+
 async function setItemRelease(sql,auth,legacyId,itemIndex,releasedQtyInput){
   const id=text(legacyId)
   const lineNo=Math.trunc(num(itemIndex))+1
@@ -518,6 +568,7 @@ export default async function handler(req,res){
     if(action==='clear_refunds') return res.status(200).json({ok:true,result:await clearRefunds(sql,req.body?.id)})
     if(action==='update_arrival') return res.status(200).json({ok:true,result:await updateArrival(sql,req.body?.id,req.body?.items)})
     if(action==='update_item_qty') return res.status(200).json({ok:true,result:await updateItemQty(sql,req.body?.id,req.body?.item_index,req.body?.qty)})
+    if(action==='cancel_virtual_item') return res.status(200).json({ok:true,result:await cancelVirtualItem(sql,req.body?.id,req.body?.item_index)})
     if(action==='set_item_release') return res.status(200).json({ok:true,result:await setItemRelease(sql,auth,req.body?.id,req.body?.item_index,req.body?.released_qty)})
     if(action==='set_item_pickup') return res.status(200).json({ok:true,result:await setItemPickup(sql,auth,req.body?.id,req.body?.item_index,req.body?.picked_up_qty)})
     if(action==='set_item_pickup_archive') return res.status(200).json({ok:true,result:await setItemPickupArchive(sql,auth,req.body?.id,req.body?.item_index,req.body?.archived===true)})
