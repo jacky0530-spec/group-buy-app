@@ -808,6 +808,25 @@
       "data_logic": "不改 Excel 解析、客戶／商品配對、重複訂單 signature、Neon create_many 或批次上限。只把原生 window.confirm 換成應用程式內確認視窗；匯入仍走 Neon primary。",
       "data_migration": "無。沒有修改正式訂單資料、Neon schema 或 Serverless Function。",
       "rollback": "ExcelOrderImport.jsx 恢復 window.confirm 與原 importOrders 流程，APP_VERSION 還原 V65；不需資料庫 rollback。"
+    },
+    {
+      "version": "V67",
+      "date": "2026-09-20",
+      "type": "feature/order-workflow",
+      "summary": "未出貨報表中的虛擬訂單可將單一規格／品項數量設為 0，或按「取消品項」移除；同張訂單其他品項保留。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-orders-runtime.js: 新增 cancel_virtual_item action，僅允許 pending、未封存、preorder 的虛擬訂單品項；已有到貨、取貨、釋出、供應商付款、allocation 或庫存流水時阻擋。",
+        "src/lib/enableNeonPrimaryOrderWrites.js: 新增 OrdersAPI.cancelVirtualItem，沿用既有 neon-orders-runtime，不新增 Serverless Function。"
+      ],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 虛擬品項訂購量最小值改為 0，輸入 0 會進入取消確認；另提供「取消品項」按鈕。",
+        "取消多品項訂單中的一個規格後只移除該 order_item、重新編號 line_no 並重算 orders.total_amount；其他規格維持原狀。",
+        "若取消的是虛擬訂單最後一個品項，整張訂單改為 cancelled，不會留下空白訂單。"
+      ],
+      "data_logic": "正式訂單仍維持訂購量至少 1。虛擬品項取消採安全條件檢查；多品項訂單刪除指定 item 後以負 line_no 暫存方式避免 UNIQUE(order_id,line_no) 衝突，再重新連號。取消紀錄寫入 status_history。",
+      "data_migration": "無 schema migration。部署本身不修改既有正式資料；只有管理者實際確認取消虛擬品項時才寫入。",
+      "rollback": "移除 cancel_virtual_item、OrdersAPI.cancelVirtualItem 與虛擬品項 0／取消按鈕，APP_VERSION 還原 V66。已由使用者取消的品項不自動恢復。"
     }
   ]
 }
