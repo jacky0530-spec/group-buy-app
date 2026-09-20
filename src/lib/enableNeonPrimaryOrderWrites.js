@@ -94,6 +94,12 @@ if(!globalThis[INSTALLED]){
     return (await neonOrdersRuntime('update_item_qty',{id,item_index,qty}))?.result
   }
 
+  OrdersAPI.cancelVirtualItem=async function(id,item_index){
+    const m=await meta(id)
+    if(m.fulfillment_type==='stock') throw new Error('現貨訂單不可取消虛擬預購品項')
+    return (await neonOrdersRuntime('cancel_virtual_item',{id,item_index}))?.result
+  }
+
   OrdersAPI.batchUpdateStatus=async function(ids=[],status){
     const target=[...new Set((ids||[]).filter(Boolean))]
     for(const id of target) await OrdersAPI.updateStatus(id,status,{reason:'批次更新'})
