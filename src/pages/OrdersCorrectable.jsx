@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw, Search, WalletCards } from 'lucide-react'
 import { OrdersAPI } from '../lib/db'
-import { useToast } from '../components/UI'
+import { ConfirmDialog, useToast } from '../components/UI'
 import Orders from './OrdersFast'
 
 const money=value=>`NT$${Math.round(Number(value||0)).toLocaleString()}`
@@ -14,6 +14,8 @@ function CorrectionPanel({ onChanged }) {
   const [open,setOpen]=useState(false)
   const [busy,setBusy]=useState('')
   const [productSearch,setProductSearch]=useState('')
+  const [selectedOrderIds,setSelectedOrderIds]=useState([])
+  const [batchConfirm,setBatchConfirm]=useState(null)
   const requestRef=useRef(0)
 
   const load=useCallback(async(searchTerm='')=>{
@@ -60,6 +62,21 @@ function CorrectionPanel({ onChanged }) {
     ))
   },[candidates,productSearch])
 
+  const visiblePaidCandidates=useMemo(()=>visibleCandidates.filter(order=>
+    (order.items||[]).reduce((sum,item)=>sum+qty(item.supplier_paid_amount),0)>0
+  ),[visibleCandidates])
+  const allVisiblePaidSelected=visiblePaidCandidates.length>0&&visiblePaidCandidates.every(order=>selectedOrderIds.includes(order.id))
+
+  function toggleSelectedOrder(id){
+    setSelectedOrderIds(prev=>prev.includes(id)?prev.filter(value=>value!==id):[...prev,id])
+  }
+  function toggleAllVisiblePaid(){
+    const ids=visiblePaidCandidates.map(order=>order.id)
+    if(!ids.length)return
+    if(ids.every(id=>selectedOrderIds.includes(id)))setSelectedOrderIds(prev=>prev.filter(id=>!ids.includes(id)))
+    else setSelectedOrderIds(prev=>[...new Set([...prev,...ids])])
+  }
+
   useEffect(()=>{
     if(!open)return undefined
     const timer=setTimeout(()=>load(productSearch.trim()),productSearch.trim()?300:0)
@@ -102,13 +119,43 @@ function CorrectionPanel({ onChanged }) {
     finally{setBusy('')}
   }
 
+  function requestBatchUnpaid(){
+    const ids=selectedOrderIds.filter(id=>visiblePaidCandidates.some(order=>order.id===id))
+    if(!productSearch.trim()){toast('請先搜尋商品名稱，再使用批次整單改未付款','warning');return}
+    if(!ids.length){toast('請先勾選要更正的訂單','warning');return}
+    setBatchConfirm({ids,search:productSearch.trim()})
+  }
+
+  async function confirmBatchUnpaid(){
+    const ids=batchConfirm?.ids||[]
+    if(!ids.length||busy)return
+    setBusy('batch-payment')
+    try{
+      const result=await OrdersAPI.batchCorrectSupplierPayments(ids)
+      toast(`↩️ 已將 ${Number(result?.updated||ids.length)} 張訂單整單改為供應商未付款，撤銷 ${money(result?.removed_payment||0)}`,'warning')
+      setSelectedOrderIds([])
+      setBatchConfirm(null)
+      await load(productSearch.trim()); onChanged()
+    }catch(err){toast('批次更正失敗：'+err.message,'error')}
+    finally{setBusy('')}
+  }
+
   return <div className="card" style={{marginBottom:14,border:'1px solid #fed7aa'}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',padding:'11px 14px'}}>
       <div><strong style={{display:'flex',alignItems:'center',gap:7}}><RotateCcw size={15}/>到貨／供應商付款更正</strong><div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>只提供預購訂單更正；輸入商品名稱時直接查 Neon 全部符合訂單，不受最近 500 筆限制。</div></div>
       <button className="btn btn-sm btn-ghost" disabled={loading&&!open} onClick={toggleOpen}>{loading&&!open?'載入中...':open?'收合':'開啟更正'} {!loading&&candidates.length>0&&`(${candidates.length})`}</button>
     </div>
     {open&&<div style={{borderTop:'1px solid var(--border)',padding:'10px 14px 14px'}}>
-      <div className="search-input-wrap" style={{marginBottom:12,height:48,padding:'0 14px',display:'flex',alignItems:'center',gap:10,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)'}}><Search size={20}/><input value={productSearch} onChange={e=>setProductSearch(e.target.value)} placeholder="搜尋商品名稱..." style={{flex:1,minWidth:0,height:'100%',border:0,outline:'none',background:'transparent',fontSize:16,padding:'0 4px'}}/><span style={{fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{loading?'Neon 搜尋中...':`${visibleCandidates.length} 筆`}</span></div>
+      <div className="search-input-wrap" style={{marginBottom:12,height:48,padding:'0 14px',display:'flex',alignItems:'center',gap:10,border:'1px solid var(--border)',borderRadius:10,background:'var(--surface)'}}><Search size={20}/><input value={productSearch} onChange={e=>{setProductSearch(e.target.value);setSelectedOrderIds([])}} placeholder="搜尋商品名稱..." style={{flex:1,minWidth:0,height:'100%',border:0,outline:'none',background:'transparent',fontSize:16,padding:'0 4px'}}/><span style={{fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{loading?'Neon 搜尋中...':`${visibleCandidates.length} 筆`}</span></div>
+      {!loading&&productSearch.trim()&&visiblePaidCandidates.length>0&&<div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',padding:'10px 12px',marginBottom:12,background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:10}}>
+        <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,fontWeight:900,color:'#9a3412',cursor:'pointer'}}>
+          <input type="checkbox" checked={allVisiblePaidSelected} onChange={toggleAllVisiblePaid} disabled={Boolean(busy)}/>
+          全選搜尋結果可更正訂單（{visiblePaidCandidates.length}）
+        </label>
+        <span style={{fontSize:12,color:'var(--text-secondary)'}}>已勾 {selectedOrderIds.filter(id=>visiblePaidCandidates.some(order=>order.id===id)).length} 張</span>
+        <button className="btn btn-sm" style={{marginLeft:'auto',background:'#c2410c',color:'white',fontWeight:900}} disabled={Boolean(busy)||!selectedOrderIds.some(id=>visiblePaidCandidates.some(order=>order.id===id))} onClick={requestBatchUnpaid}><WalletCards size={13}/>{busy==='batch-payment'?'批次處理中...':`批次整單改未付款（${selectedOrderIds.filter(id=>visiblePaidCandidates.some(order=>order.id===id)).length}）`}</button>
+        <div style={{width:'100%',fontSize:11,color:'#9a3412'}}>⚠️ 此操作是「整張訂單」更正：若同一張訂單還有其他商品的供應商付款，也會一起撤銷；到貨數量不會改變。</div>
+      </div>}
       {loading&&<div style={{padding:12,color:'var(--text-muted)'}}>載入中...</div>}
       {!loading&&candidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>{productSearch.trim()?'查無符合此商品名稱的可更正訂單。':'目前沒有需要更正的預購訂單。'}</div>}
       {!loading&&candidates.length>0&&visibleCandidates.length===0&&<div style={{padding:12,color:'var(--text-muted)'}}>查無符合此商品名稱的更正訂單。</div>}
@@ -116,7 +163,10 @@ function CorrectionPanel({ onChanged }) {
         const paid=(order.items||[]).reduce((sum,item)=>sum+qty(item.supplier_paid_amount),0)
         return <div key={order.id} style={{border:'1px solid var(--border)',borderRadius:9,padding:10,marginTop:8,background:'var(--surface-2)'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-            <div><strong>{order.customer_name||'未命名客戶'}</strong>{paid>0&&<span className="badge badge-emerald" style={{marginLeft:7}}>供應商已付 {money(paid)}</span>}</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              {productSearch.trim()&&paid>0&&<input type="checkbox" checked={selectedOrderIds.includes(order.id)} onChange={()=>toggleSelectedOrder(order.id)} disabled={Boolean(busy)} aria-label={`選取 ${order.customer_name||'未命名客戶'} 整單改未付款`} style={{width:20,height:20}}/>}
+              <div><strong>{order.customer_name||'未命名客戶'}</strong>{paid>0&&<span className="badge badge-emerald" style={{marginLeft:7}}>供應商已付 {money(paid)}</span>}</div>
+            </div>
             {paid>0&&<button className="btn btn-sm btn-ghost" disabled={Boolean(busy)} onClick={()=>correctOrderPayment(order)}><WalletCards size={12}/>{busy===`${order.id}:all-payment`?'處理中...':'整單改未付款'}</button>}
           </div>
           <div style={{marginTop:7}}>{(order.items||[]).map((item,index)=>{
@@ -133,6 +183,7 @@ function CorrectionPanel({ onChanged }) {
         </div>
       })}
     </div>}
+    {batchConfirm&&<ConfirmDialog danger={true} message={`確定將已勾選的 ${batchConfirm.ids.length} 張訂單「整單改未付款」？\n\n搜尋商品：${batchConfirm.search}\n\n這會撤銷每張訂單所有品項的供應商付款分攤（不只搜尋到的商品），但不會改動到貨狀態。批次採交易處理，任一張失敗則整批不寫入。`} onCancel={()=>{if(!busy)setBatchConfirm(null)}} onConfirm={confirmBatchUnpaid}/>}
   </div>
 }
 

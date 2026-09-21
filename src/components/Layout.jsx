@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第67版：虛擬訂單支援單一品項取消；數量輸入 0 或按「取消品項」只移除該規格，其他品項保留。
-const APP_VERSION = '第67版｜2026/09/20'
+// 第68版：到貨／供應商付款更正支援依商品搜尋後全選訂單，批次整單改為供應商未付款。
+const APP_VERSION = '第68版｜2026/09/21'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
