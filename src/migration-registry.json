@@ -864,6 +864,24 @@
       "data_logic": "只同步 status=pending、未封存、非虛擬、preorder 的正式訂單。供應商／付款條件變更時，只允許 arrived_qty=0、supplier_paid_amount=0、無 supplier_payment_allocations、無客戶收款／退款、無部分出貨／取貨與釋出紀錄的品項。已有到貨或任何金流／履約紀錄者保留原供應商快照。價格與成本同步仍沿用 V65 安全規則。",
       "data_migration": "無 schema migration。部署本身不修改既有訂單；只有管理者編輯商品並在影響確認中選擇「同步可安全訂單」才會修改符合條件的 order_items。",
       "rollback": "移除 supplier / supplier_payment_term 的 impact 與 patch 同步，Products.jsx 恢復只在價格／成本變更時顯示影響確認，APP_VERSION 還原 V68。已由使用者確認同步的訂單供應商不自動回滾。"
+    },
+    {
+      "version": "V70",
+      "date": "2026-09-22",
+      "type": "bugfix/shipping-workflow",
+      "summary": "修正分批到貨／先出貨並封存後，最後剩餘數量整單標記已出貨時，先前已封存的出貨數量會重新出現在已出貨報表的問題。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-status.js: 當整單標記 shipped 且已有品項分批出貨／封存歷史時，先檢查剩餘有效數量是否已到貨，再把所有有效品項 picked_up_qty 補齊到 qty-released_qty，保留既有 picked_up_archived_qty。",
+        "api/neon-orders-runtime.js: set_item_pickup_archive 對已完成 shipped 訂單可依 qty-released_qty 推導實際已出貨量；舊資料若 picked_up_qty 未補齊，封存／解除封存時會安全自我修正。"
+      ],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 已完成 shipped 訂單若存在品項級先出貨／封存歷史，改以『已出貨總量－已封存量』顯示目前可見出貨；勾選顯示封存時另顯示已封存切片。",
+        "先前已封存的數量在最後一批出貨後不會重新跑回一般已出貨清單；只顯示這次新增、尚未封存的出貨數量。"
+      ],
+      "data_logic": "一般沒有分批出貨歷史的整單出貨流程不變。只有存在 picked_up_qty 或 picked_up_archived_qty 的正式預購訂單才套用分批完成規則。若仍有未到貨且未釋出的品項，整單標記已出貨會被阻擋。報表對已完成訂單以 qty-released_qty 視為最終已出貨總量，並扣除 picked_up_archived_qty 後顯示未封存部分。",
+      "data_migration": "無 schema migration、無部署時批次改寫。既有異常 shipped 資料可直接由新版報表正確顯示；之後若對該筆做封存／解除封存，後端會把 picked_up_qty 自我修正為已完成數量。",
+      "rollback": "還原 shipped 訂單切片顯示、updateStatus 分批完成正規化與 setItemPickupArchive 推導邏輯，APP_VERSION 還原 V69。"
     }
   ]
 }
