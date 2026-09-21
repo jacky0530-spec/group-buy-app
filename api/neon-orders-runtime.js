@@ -409,24 +409,33 @@ async function setItemPickupArchive(sql,auth,legacyId,itemIndex,archived){
   const lineNo=Math.trunc(num(itemIndex))+1
   if(!id||lineNo<1) throw new Error('缺少訂單品項')
   const rows=await sql`
-    SELECT o.id AS order_id,o.status,o.is_virtual,oi.line_no,oi.product_name,oi.picked_up_qty,oi.picked_up_archived_qty
+    SELECT o.id AS order_id,o.status,o.is_virtual,
+      oi.line_no,oi.product_name,oi.qty,oi.released_qty,oi.picked_up_qty,oi.picked_up_archived_qty,oi.picked_up_at,oi.picked_up_by_uid
     FROM orders o JOIN order_items oi ON oi.order_id=o.id
     WHERE o.legacy_id=${id} AND oi.line_no=${lineNo} LIMIT 1`
   const row=rows[0]
   if(!row) throw new Error('找不到訂單商品')
   if(row.status==='cancelled') throw new Error('已取消訂單不可封存出貨紀錄')
   if(row.is_virtual===true) throw new Error('虛擬訂單沒有部分出貨紀錄可封存')
-  const picked=Math.max(0,Math.trunc(num(row.picked_up_qty)))
-  if(picked<=0) throw new Error('目前沒有已出貨／取貨數量可封存')
-  const nextArchived=archived===true?picked:0
+  const qty=Math.max(0,Math.trunc(num(row.qty)))
+  const released=Math.min(qty,Math.max(0,Math.trunc(num(row.released_qty))))
+  const rawPicked=Math.max(0,Math.trunc(num(row.picked_up_qty)))
+  const effectivePicked=row.status==='shipped'?Math.max(rawPicked,Math.max(0,qty-released)):rawPicked
+  if(effectivePicked<=0) throw new Error('目前沒有已出貨／取貨數量可封存')
+  const nextArchived=archived===true?effectivePicked:0
+  const inferred=effectivePicked>rawPicked
+  const now=new Date().toISOString()
   const updated=await sql`
     UPDATE order_items SET
+      picked_up_qty=${effectivePicked},
+      picked_up_at=CASE WHEN ${inferred} THEN COALESCE(picked_up_at,${now}) ELSE picked_up_at END,
+      picked_up_by_uid=CASE WHEN ${inferred} THEN COALESCE(picked_up_by_uid,${auth.uid}) ELSE picked_up_by_uid END,
       picked_up_archived_qty=${nextArchived},
-      picked_up_archived_at=${nextArchived>0?new Date().toISOString():null},
+      picked_up_archived_at=${nextArchived>0?now:null},
       picked_up_archived_by_uid=${nextArchived>0?auth.uid:null},
       updated_at=now()
     WHERE order_id=${row.order_id} AND line_no=${lineNo}
-    RETURNING line_no,product_name,picked_up_qty,picked_up_archived_qty,picked_up_archived_at,picked_up_archived_by_uid`
+    RETURNING line_no,product_name,qty,released_qty,picked_up_qty,picked_up_at,picked_up_by_uid,picked_up_archived_qty,picked_up_archived_at,picked_up_archived_by_uid`
   await sql`UPDATE orders SET updated_at=now() WHERE id=${row.order_id}`
   return updated[0]
 }
