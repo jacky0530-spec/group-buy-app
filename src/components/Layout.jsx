@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第68版：到貨／供應商付款更正支援依商品搜尋後全選訂單，批次整單改為供應商未付款。
-const APP_VERSION = '第68版｜2026/09/21'
+// 第69版：商品可中途更換供應商，並安全同步尚未到貨／未付款的既有正式預購訂單。
+const APP_VERSION = '第69版｜2026/09/21'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
