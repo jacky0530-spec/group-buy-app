@@ -846,6 +846,24 @@
       "data_logic": "批次更正只在使用者搜尋商品、勾選訂單並再次確認後執行。後端對每張選取訂單沿用既有整單 correct_preorder_supplier_state(id,NULL,false) 規則，撤銷供應商付款分攤但不重設 arrived_qty。批次以 transaction 原子處理。",
       "data_migration": "無 schema migration。部署本身不修改既有訂單或付款資料；只有管理者實際按下批次確認時才會更正被勾選的訂單。",
       "rollback": "移除 correct_supplier_state_batch、OrdersAPI.batchCorrectSupplierPayments 與批次勾選 UI，APP_VERSION 還原 V67。已由使用者確認執行的付款更正不自動回滾。"
+    },
+    {
+      "version": "V69",
+      "date": "2026-09-21",
+      "type": "feature/catalog/order-workflow",
+      "summary": "商品編輯支援中途更換供應商／供應商付款條件，儲存前先檢查既有 pending 正式預購訂單，並可選擇同步尚未到貨、未付款且無履約紀錄的安全品項。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-runtime.js: product_update_impact 擴充檢查 supplier、supplier_payment_term、arrived_qty 與 supplier_payment_allocations；安全 patch 可同步 order_items.supplier / supplier_payment_term。",
+        "applyProductUpdateWithOrders 沿用既有 write_product 與同一 Neon transaction，不新增 Serverless Function。"
+      ],
+      "ui_changes": [
+        "src/pages/Products.jsx: 商品供應商欄位加入中途更換說明；供應商或付款條件變更也會觸發影響確認。",
+        "影響確認顯示舊供應商 → 新供應商，並提供「同步可安全訂單／只修改商品主檔／取消」。"
+      ],
+      "data_logic": "只同步 status=pending、未封存、非虛擬、preorder 的正式訂單。供應商／付款條件變更時，只允許 arrived_qty=0、supplier_paid_amount=0、無 supplier_payment_allocations、無客戶收款／退款、無部分出貨／取貨與釋出紀錄的品項。已有到貨或任何金流／履約紀錄者保留原供應商快照。價格與成本同步仍沿用 V65 安全規則。",
+      "data_migration": "無 schema migration。部署本身不修改既有訂單；只有管理者編輯商品並在影響確認中選擇「同步可安全訂單」才會修改符合條件的 order_items。",
+      "rollback": "移除 supplier / supplier_payment_term 的 impact 與 patch 同步，Products.jsx 恢復只在價格／成本變更時顯示影響確認，APP_VERSION 還原 V68。已由使用者確認同步的訂單供應商不自動回滾。"
     }
   ]
 }
