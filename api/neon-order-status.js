@@ -377,6 +377,23 @@ async function correctSupplierState(sql,legacyId,itemIndex,resetArrival){
   return rows[0]?.result||{}
 }
 
+async function batchCorrectSupplierPayment(sql,ids){
+  const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
+  if(!target.length) throw new Error('沒有選取要改為未付款的訂單')
+  if(target.length>400) throw new Error('單次最多批次更正 400 張訂單')
+  const tx=await sql.transaction(target.map(id=>sql`
+    SELECT correct_preorder_supplier_state(${id},NULL,false) AS result
+  `))
+  let removedPayment=0
+  const results=[]
+  for(let i=0;i<tx.length;i++){
+    const result=tx[i]?.[0]?.result||{}
+    removedPayment+=Number(result?.removed_payment||0)
+    results.push({id:target[i],removed_payment:Number(result?.removed_payment||0)})
+  }
+  return {updated:results.length,removed_payment:removedPayment,results}
+}
+
 async function cleanupCandidates(sql,days){
   const takeDays=cleanupDays(days)
   const rows=await sql`
@@ -511,6 +528,9 @@ export default async function handler(req,res){
     }
     if(action==='correct_supplier_state'){
       return res.status(200).json({ok:true,result:await correctSupplierState(sql,req.body?.id,req.body?.item_index,req.body?.reset_arrival)})
+    }
+    if(action==='correct_supplier_state_batch'){
+      return res.status(200).json({ok:true,result:await batchCorrectSupplierPayment(sql,req.body?.ids)})
     }
     if(action==='cleanup_candidates'){
       requireOwner(account)
