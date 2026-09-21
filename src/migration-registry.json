@@ -827,6 +827,25 @@
       "data_logic": "正式訂單仍維持訂購量至少 1。虛擬品項取消採安全條件檢查；多品項訂單刪除指定 item 後以負 line_no 暫存方式避免 UNIQUE(order_id,line_no) 衝突，再重新連號。取消紀錄寫入 status_history。",
       "data_migration": "無 schema migration。部署本身不修改既有正式資料；只有管理者實際確認取消虛擬品項時才寫入。",
       "rollback": "移除 cancel_virtual_item、OrdersAPI.cancelVirtualItem 與虛擬品項 0／取消按鈕，APP_VERSION 還原 V66。已由使用者取消的品項不自動恢復。"
+    },
+    {
+      "version": "V68",
+      "date": "2026-09-21",
+      "type": "feature/payment-correction/workflow",
+      "summary": "到貨／供應商付款更正新增依商品搜尋後批次勾選訂單，可一次將選取訂單整單改為供應商未付款，避免逐筆操作漏按。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-status.js: 新增 correct_supplier_state_batch action；單次最多 400 張，使用同一 Neon transaction 呼叫既有 correct_preorder_supplier_state，任一筆失敗則整批回滾。",
+        "src/lib/enableNeonPrimaryOrderWrites.js: 新增 OrdersAPI.batchCorrectSupplierPayments；沿用既有 neon-order-status Serverless Function。"
+      ],
+      "ui_changes": [
+        "src/pages/OrdersCorrectable.jsx: 輸入商品名稱後，僅對目前搜尋結果中有 supplier_paid_amount 的訂單顯示勾選框與『全選搜尋結果可更正訂單』。",
+        "新增『批次整單改未付款（N）』與系統確認視窗；確認訊息明示整張訂單其他商品的供應商付款也會一起撤銷，但到貨數量不變。",
+        "搜尋關鍵字變更時自動清除選取，避免跨商品誤選。"
+      ],
+      "data_logic": "批次更正只在使用者搜尋商品、勾選訂單並再次確認後執行。後端對每張選取訂單沿用既有整單 correct_preorder_supplier_state(id,NULL,false) 規則，撤銷供應商付款分攤但不重設 arrived_qty。批次以 transaction 原子處理。",
+      "data_migration": "無 schema migration。部署本身不修改既有訂單或付款資料；只有管理者實際按下批次確認時才會更正被勾選的訂單。",
+      "rollback": "移除 correct_supplier_state_batch、OrdersAPI.batchCorrectSupplierPayments 與批次勾選 UI，APP_VERSION 還原 V67。已由使用者確認執行的付款更正不自動回滾。"
     }
   ]
 }
