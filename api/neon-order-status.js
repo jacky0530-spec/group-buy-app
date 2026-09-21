@@ -334,12 +334,52 @@ async function getOrder(sql,legacyId){
   return rows[0]
 }
 
-async function updateStatus(sql,legacyId,status,reason){
+async function updateStatus(sql,auth,legacyId,status,reason){
   if(!['pending','shipped','cancelled'].includes(status)) throw new Error('訂單狀態不正確')
   const order=await getOrder(sql,legacyId)
   if(order.fulfillment_type==='stock') throw new Error('現貨訂單狀態必須使用庫存交易流程')
-  const event=JSON.stringify([{status,at:new Date().toISOString(),note:text(reason)}])
+  const now=new Date().toISOString()
+  const event=JSON.stringify([{status,at:now,note:text(reason)}])
   if(status==='shipped'){
+    const items=await sql`
+      SELECT line_no,qty,arrived_qty,released_qty,picked_up_qty,picked_up_archived_qty
+      FROM order_items WHERE order_id=${order.id} ORDER BY line_no`
+    const hasPickupHistory=items.some(item=>num(item.picked_up_qty)>0||num(item.picked_up_archived_qty)>0)
+    if(hasPickupHistory){
+      const notReady=items.filter(item=>{
+        const qty=Math.max(0,Math.trunc(num(item.qty)))
+        const released=Math.min(qty,Math.max(0,Math.trunc(num(item.released_qty))))
+        const arrived=Math.min(qty,Math.max(0,Math.trunc(num(item.arrived_qty))))
+        const picked=Math.min(qty,Math.max(0,Math.trunc(num(item.picked_up_qty))))
+        return Math.max(arrived,picked)+released<qty
+      })
+      if(notReady.length) throw new Error('此訂單已有分批出貨紀錄，但仍有品項尚未全部到貨；請先完成到貨或使用品項「先出貨」')
+      const tx=await sql.transaction([
+        sql`
+          UPDATE order_items SET
+            picked_up_qty=GREATEST(COALESCE(picked_up_qty,0),GREATEST(0,qty-COALESCE(released_qty,0))),
+            picked_up_at=CASE
+              WHEN COALESCE(picked_up_qty,0)<GREATEST(0,qty-COALESCE(released_qty,0)) THEN ${now}
+              ELSE picked_up_at END,
+            picked_up_by_uid=CASE
+              WHEN COALESCE(picked_up_qty,0)<GREATEST(0,qty-COALESCE(released_qty,0)) THEN ${auth?.uid||null}
+              ELSE picked_up_by_uid END,
+            picked_up_archived_qty=LEAST(
+              COALESCE(picked_up_archived_qty,0),
+              GREATEST(COALESCE(picked_up_qty,0),GREATEST(0,qty-COALESCE(released_qty,0)))
+            ),
+            updated_at=now()
+          WHERE order_id=${order.id}`,
+        sql`
+          UPDATE orders SET
+            status='shipped',shipped_at=now(),cancelled_at=NULL,cancellation_reason='',
+            payment_status=CASE WHEN payment_status IN ('partial_refund','refunded') THEN payment_status ELSE 'paid' END,
+            status_history=COALESCE(status_history,'[]'::jsonb)||${event}::jsonb,updated_at=now()
+          WHERE id=${order.id}
+          RETURNING legacy_id AS id,status,payment_status,shipped_at,cancelled_at,cancellation_reason,status_history,updated_at`
+      ])
+      return tx[1]?.[0]
+    }
     const rows=await sql`
       UPDATE orders SET
         status='shipped',shipped_at=now(),cancelled_at=NULL,cancellation_reason='',
@@ -524,7 +564,7 @@ export default async function handler(req,res){
       return res.status(200).json({ok:true,result:{id:order.legacy_id,fulfillment_type:order.fulfillment_type,status:order.status}})
     }
     if(action==='update'){
-      return res.status(200).json({ok:true,result:await updateStatus(sql,req.body?.id,text(req.body?.status),req.body?.reason)})
+      return res.status(200).json({ok:true,result:await updateStatus(sql,auth,req.body?.id,text(req.body?.status),req.body?.reason)})
     }
     if(action==='correct_supplier_state'){
       return res.status(200).json({ok:true,result:await correctSupplierState(sql,req.body?.id,req.body?.item_index,req.body?.reset_arrival)})
