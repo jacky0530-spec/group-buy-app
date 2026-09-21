@@ -82,8 +82,9 @@ async function productUpdateImpact(sql,id,data={}){
   const merged={...current,...data,id}
   const rows=await sql`
     SELECT oi.id::text AS item_id,oi.order_id::text AS order_id,oi.line_no,oi.sale_price,oi.cost_price,oi.qty,
-           oi.spec_package,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,
-           COALESCE(oi.picked_up_qty,0) AS picked_up_qty,COALESCE(oi.released_qty,0) AS released_qty,
+           oi.spec_package,oi.supplier,oi.supplier_payment_term,oi.supplier_paid_amount,oi.supplier_payment_status,oi.supplier_payment_refs,
+           COALESCE(oi.arrived_qty,0) AS arrived_qty,COALESCE(oi.picked_up_qty,0) AS picked_up_qty,COALESCE(oi.released_qty,0) AS released_qty,
+           EXISTS(SELECT 1 FROM supplier_payment_allocations spa WHERE spa.order_item_id=oi.id) AS has_supplier_allocation,
            o.legacy_id AS order_legacy_id,o.customer_name,o.payment_status
     FROM order_items oi
     JOIN orders o ON o.id=oi.order_id
@@ -97,7 +98,7 @@ async function productUpdateImpact(sql,id,data={}){
   const patches=[]
   const skipped=[]
   const changed=[]
-  let saleChangedItems=0,costChangedItems=0
+  let saleChangedItems=0,costChangedItems=0,supplierChangedItems=0,paymentTermChangedItems=0
   for(const row of rows){
     const target=targetProductPricing(merged,row)
     if(!target.matched){
@@ -106,15 +107,20 @@ async function productUpdateImpact(sql,id,data={}){
     }
     const saleChanged=Math.abs(num(row.sale_price)-target.sale)>0.0001
     const costChanged=Math.abs(num(row.cost_price)-target.cost)>0.0001
-    if(!saleChanged&&!costChanged) continue
+    const supplierChanged=text(row.supplier)!==text(merged.supplier)
+    const paymentTermChanged=(text(row.supplier_payment_term)||'manual')!==(text(merged.supplier_payment_term)||'manual')
+    if(!saleChanged&&!costChanged&&!supplierChanged&&!paymentTermChanged) continue
     changed.push(row)
     if(saleChanged) saleChangedItems++
     if(costChanged) costChangedItems++
+    if(supplierChanged) supplierChangedItems++
+    if(paymentTermChanged) paymentTermChangedItems++
     const reasons=[]
     const paymentStatus=text(row.payment_status)
     if(paymentStatus&&paymentStatus!=='unpaid') reasons.push('客戶已有收款／退款紀錄')
     const supplierRefs=parseJsonArray(row.supplier_payment_refs)
-    if(num(row.supplier_paid_amount)>0||['paid','partial'].includes(text(row.supplier_payment_status))||supplierRefs.length>0) reasons.push('供應商已有付款紀錄')
+    if(num(row.supplier_paid_amount)>0||['paid','partial'].includes(text(row.supplier_payment_status))||supplierRefs.length>0||row.has_supplier_allocation===true) reasons.push('供應商已有付款紀錄')
+    if((supplierChanged||paymentTermChanged)&&num(row.arrived_qty)>0) reasons.push('已有到貨紀錄，不能直接更換供應商／付款條件')
     if(num(row.picked_up_qty)>0) reasons.push('已有部分出貨／取貨紀錄')
     if(num(row.released_qty)>0) reasons.push('已有釋出紀錄')
     if(reasons.length){
@@ -125,7 +131,9 @@ async function productUpdateImpact(sql,id,data={}){
     patches.push({
       item_id:row.item_id,order_id:row.order_id,qty,
       sale_price:target.sale,cost_price:target.cost,
-      subtotal:target.sale*qty,cost_subtotal:target.cost*qty
+      subtotal:target.sale*qty,cost_subtotal:target.cost*qty,
+      supplier:text(merged.supplier),
+      supplier_payment_term:text(merged.supplier_payment_term)||'manual'
     })
   }
   const unique=count=>new Set(count).size
@@ -133,6 +141,7 @@ async function productUpdateImpact(sql,id,data={}){
   for(const row of skipped) reasonCounts[row.reason]=(reasonCounts[row.reason]||0)+1
   return {
     product:merged,
+    previous_product:current,
     patches,
     summary:{
       changed_item_count:changed.length,
@@ -144,6 +153,12 @@ async function productUpdateImpact(sql,id,data={}){
       skipped_order_count:unique(skipped.map(r=>r.order_id)),
       sale_changed_items:saleChangedItems,
       cost_changed_items:costChangedItems,
+      supplier_changed_items:supplierChangedItems,
+      payment_term_changed_items:paymentTermChangedItems,
+      supplier_from:text(current.supplier),
+      supplier_to:text(merged.supplier),
+      payment_term_from:text(current.supplier_payment_term)||'manual',
+      payment_term_to:text(merged.supplier_payment_term)||'manual',
       skipped_reasons:reasonCounts,
       skipped_samples:skipped.slice(0,8).map(row=>({order_id:row.order_legacy_id||row.order_id,customer_name:row.customer_name||'',reason:row.reason}))
     }
@@ -167,15 +182,16 @@ async function applyProductUpdateWithOrders(sql,id,data={}){
     queries.push(sql`
       WITH patch AS (
         SELECT * FROM jsonb_to_recordset(${patchJson}::jsonb)
-        AS x(item_id uuid,order_id uuid,qty integer,sale_price numeric,cost_price numeric,subtotal numeric,cost_subtotal numeric)
+        AS x(item_id uuid,order_id uuid,qty integer,sale_price numeric,cost_price numeric,subtotal numeric,cost_subtotal numeric,supplier text,supplier_payment_term text)
       )
       UPDATE order_items oi SET
-        sale_price=patch.sale_price,cost_price=patch.cost_price,subtotal=patch.subtotal,cost_subtotal=patch.cost_subtotal,updated_at=${now}
+        sale_price=patch.sale_price,cost_price=patch.cost_price,subtotal=patch.subtotal,cost_subtotal=patch.cost_subtotal,
+        supplier=patch.supplier,supplier_payment_term=patch.supplier_payment_term,updated_at=${now}
       FROM patch WHERE oi.id=patch.item_id`)
     queries.push(sql`
       WITH patch AS (
         SELECT * FROM jsonb_to_recordset(${patchJson}::jsonb)
-        AS x(item_id uuid,order_id uuid,qty integer,sale_price numeric,cost_price numeric,subtotal numeric,cost_subtotal numeric)
+        AS x(item_id uuid,order_id uuid,qty integer,sale_price numeric,cost_price numeric,subtotal numeric,cost_subtotal numeric,supplier text,supplier_payment_term text)
       ), totals AS (
         SELECT oi.order_id,COALESCE(SUM(oi.subtotal),0) AS total_amount
         FROM order_items oi
