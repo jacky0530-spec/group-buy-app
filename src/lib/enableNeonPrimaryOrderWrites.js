@@ -70,6 +70,7 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.applyRefund=async (id,{amount,note=''}={})=> (await neonOrdersRuntime('apply_refund',{id,amount,note}))?.result
   OrdersAPI.clearRefunds=async id=> (await neonOrdersRuntime('clear_refunds',{id}))?.result
   OrdersAPI.correctSupplierState=async (id,{item_index=null,reset_arrival=false}={})=> (await neonOrderStatusRuntime('correct_supplier_state',{id,item_index,reset_arrival}))?.result
+  OrdersAPI.batchCorrectSupplierPayments=async (ids=[])=> (await neonOrderStatusRuntime('correct_supplier_state_batch',{ids:[...new Set((ids||[]).filter(Boolean))]}))?.result
   OrdersAPI.updateArrival=async function(id,items){
     return (await neonOrdersRuntime('update_arrival',{id,items}))?.result
   }
