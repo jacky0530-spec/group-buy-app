@@ -39,20 +39,33 @@ async function fetchAllOrders(params){
   }while(cursor&&guard<100)
   return rows
 }
+function hasPickupHistory(order){
+  return Boolean((order?.items||[]).some(item=>{
+    const picked=Math.max(0,Math.trunc(Number(item?.pickup_picked_up_qty??item?.picked_up_qty??0)))
+    const archived=Math.max(0,Math.trunc(Number(item?.picked_up_archived_qty??item?.pickup_archived_qty??0)))
+    return picked>0||archived>0
+  }))
+}
 function partialShippedOrder(order,archiveView='active'){
   if(!order||order.is_virtual)return null
   const archivedView=archiveView==='archived'
+  const completedWhole=order.status==='shipped'
   const items=(order.items||[]).map((item,sourceIndex)=>{
-    const picked=Math.max(0,Math.trunc(Number(item?.pickup_picked_up_qty??item?.picked_up_qty??0)))
-    const archived=Math.min(picked,Math.max(0,Math.trunc(Number(item?.picked_up_archived_qty||0))))
+    const rawPicked=Math.max(0,Math.trunc(Number(item?.pickup_picked_up_qty??item?.picked_up_qty??0)))
+    const rawOriginal=Math.trunc(Number(item?.pickup_original_qty??item?.original_qty??item?.qty??rawPicked))
+    const originalQty=Math.max(rawPicked,Math.max(0,rawOriginal))
+    const released=Math.min(originalQty,Math.max(0,Math.trunc(Number(item?.pickup_released_qty??item?.released_qty??0))))
+    const completedQty=Math.max(0,originalQty-released)
+    const picked=completedWhole?Math.max(rawPicked,completedQty):rawPicked
+    const archived=Math.min(picked,Math.max(0,Math.trunc(Number(item?.picked_up_archived_qty??item?.pickup_archived_qty??0))))
     const shown=archivedView?archived:Math.max(0,picked-archived)
     if(shown<=0)return null
-    const originalQty=Math.max(picked,Math.trunc(Number(item?.pickup_original_qty??item?.original_qty??item?.qty??picked)))
     const sourceItemIndex=Number.isInteger(Number(item?._source_item_index))?Number(item._source_item_index):sourceIndex
     const transformed=item?.pickup_original_qty!==undefined||item?.pickup_picked_up_qty!==undefined
     const visibleArrived=Math.max(0,Number(item?.arrived_qty||0))
-    const totalArrived=Math.min(originalQty,Math.max(picked,transformed?visibleArrived+picked:visibleArrived))
+    const totalArrived=Math.min(originalQty,Math.max(picked,transformed?visibleArrived+rawPicked:visibleArrived))
     const price=Number(item?.pickup_original_price??item?.sale_price??item?.price??0)
+    const inferredCompleted=completedWhole&&picked>rawPicked
     return {
       ...item,
       _source_item_index:sourceItemIndex,
@@ -68,12 +81,14 @@ function partialShippedOrder(order,archiveView='active'){
       pickup_original_qty:originalQty,
       pickup_picked_up_qty:picked,
       pickup_archived_qty:archived,
+      pickup_released_qty:released,
       picked_up_qty:picked,
+      picked_up_at:inferredCompleted?(order.shipped_at||item?.picked_up_at):item?.picked_up_at,
     }
   }).filter(Boolean)
   if(!items.length)return null
-  const pickedTimes=items.map(item=>Date.parse(archivedView?(item?.picked_up_archived_at||item?.picked_up_at||''):(item?.picked_up_at||''))).filter(Number.isFinite)
-  const partialShippedAt=pickedTimes.length?new Date(Math.max(...pickedTimes)).toISOString():(order.updated_at||order.order_date||order.created_at||null)
+  const pickedTimes=items.map(item=>Date.parse(archivedView?(item?.picked_up_archived_at||item?.picked_up_at||''):(completedWhole?(order.shipped_at||item?.picked_up_at||''):(item?.picked_up_at||'')))).filter(Number.isFinite)
+  const partialShippedAt=pickedTimes.length?new Date(Math.max(...pickedTimes)).toISOString():(order.shipped_at||order.updated_at||order.order_date||order.created_at||null)
   return {...order,status:'shipped',archived:archivedView,_partial_shipped_record:true,_partial_shipped_archived_record:archivedView,shipped_at:partialShippedAt,items}
 }
 async function fetchReportOrders(params){
@@ -82,9 +97,24 @@ async function fetchReportOrders(params){
     fetchAllOrders(params),
     fetchAllOrders({...params,status:'pending',includeArchived:false,partialShippedLookup:true}),
   ])
+  const normalShipped=[]
+  const completedActiveSlices=[]
+  const completedArchivedSlices=[]
+  shippedRows.forEach(order=>{
+    if(order.archived===true||!hasPickupHistory(order)){
+      normalShipped.push(order)
+      return
+    }
+    const active=partialShippedOrder(order,'active')
+    if(active)completedActiveSlices.push(active)
+    if(params?.includeArchived){
+      const archived=partialShippedOrder(order,'archived')
+      if(archived)completedArchivedSlices.push(archived)
+    }
+  })
   const activePartialRows=pendingRows.map(order=>partialShippedOrder(order,'active')).filter(Boolean)
   const archivedPartialRows=params?.includeArchived?pendingRows.map(order=>partialShippedOrder(order,'archived')).filter(Boolean):[]
-  return [...shippedRows,...activePartialRows,...archivedPartialRows]
+  return [...normalShipped,...completedActiveSlices,...activePartialRows,...completedArchivedSlices,...archivedPartialRows]
 }
 function buildRows(orderRows,customerMap,product,arrivalView,shippedView,pickupManageMode=false){
   const groups=new Map()
