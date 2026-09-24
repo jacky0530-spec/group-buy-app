@@ -21,6 +21,8 @@ function withOriginalQtyLabels(rows=[]){
 
 async function withReleaseStates(rows=[]){
   if(!rows.length)return withOriginalQtyLabels(rows)
+  const hydrated=rows.every(order=>(order.items||[]).every(item=>item?._neon_item_state_complete===true))
+  if(hydrated)return withOriginalQtyLabels(rows)
   const ids=[...new Set(rows.map(row=>row.id).filter(Boolean))]
   const stateMap=new Map()
   for(let i=0;i<ids.length;i+=250){
