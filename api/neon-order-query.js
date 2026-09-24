@@ -1,12 +1,12 @@
 import { neon } from '@neondatabase/serverless'
 import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
+import { getCachedAccount } from '../server/accountAccessCache.js'
 
 const text=v=>String(v??'').trim()
 const int=(v,d=0)=>Number.isFinite(Number(v))?Math.trunc(Number(v)):d
 
 async function requireStaff(sql,auth){
-  const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
-  const a=rows[0]
+  const a=await getCachedAccount(sql,auth.uid)
   if(!a||a.disabled||!['owner','staff'].includes(a.role)) throw new Error('權限不足')
 }
 
