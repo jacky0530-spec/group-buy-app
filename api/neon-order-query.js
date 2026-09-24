@@ -157,6 +157,50 @@ export default async function handler(req,res){
         LIMIT ${pageSize}`
       return res.status(200).json({ok:true,rows:await hydrate(sql,orders)})
     }
+    if(action==='report_product_catalog'){
+      const status=['pending','shipped'].includes(text(req.body?.status))?text(req.body?.status):'pending'
+      const includeArchived=req.body?.includeArchived===true
+      const rows=await sql`
+        SELECT DISTINCT
+          COALESCE(p.legacy_id,'') AS id,
+          oi.product_name AS name
+        FROM orders o
+        JOIN order_items oi ON oi.order_id=o.id
+        LEFT JOIN products p ON p.id=oi.product_id
+        WHERE COALESCE(oi.qty,0)>0
+          AND (
+            (
+              ${status}='pending'
+              AND o.status='pending'
+              AND COALESCE(o.archived,false)=false
+              AND GREATEST(0,COALESCE(oi.qty,0)-COALESCE(oi.released_qty,0))>0
+            )
+            OR
+            (
+              ${status}='shipped'
+              AND (
+                (
+                  o.status='shipped'
+                  AND (${includeArchived}::boolean OR COALESCE(o.archived,false)=false)
+                )
+                OR
+                (
+                  o.status='pending'
+                  AND COALESCE(o.archived,false)=false
+                  AND COALESCE(o.is_virtual,false)=false
+                  AND (
+                    (${includeArchived}::boolean AND (COALESCE(oi.picked_up_qty,0)>0 OR COALESCE(oi.picked_up_archived_qty,0)>0))
+                    OR
+                    (NOT ${includeArchived}::boolean AND COALESCE(oi.picked_up_qty,0)>COALESCE(oi.picked_up_archived_qty,0))
+                  )
+                )
+              )
+            )
+          )
+        ORDER BY oi.product_name ASC
+      `
+      return res.status(200).json({ok:true,rows})
+    }
     if(action==='report_data'){
       const mode=['all','month','range'].includes(text(req.body?.mode))?text(req.body?.mode):'month'
       const month=text(req.body?.month)
