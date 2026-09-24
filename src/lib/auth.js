@@ -30,7 +30,7 @@ function readAccessCache(uid){
 function writeAccessCache(uid,access){
   const row={...access,at:Date.now()}
   memoryAccessCache.set(uid,row)
-  try{sessionStorage.setItem(ACCESS_CACHE_PREFIX+uid,JSON.stringify(row))}catch{}
+  try{sessionStorage.setItem(ACCESS_CACHE_PREFIX+uid,JSON.stringify(row))}catch{return access}
   return access
 }
 
@@ -40,7 +40,7 @@ function clearAccessCache(uid){
   try{
     if(uid)sessionStorage.removeItem(ACCESS_CACHE_PREFIX+uid)
     else Object.keys(sessionStorage).filter(key=>key.startsWith(ACCESS_CACHE_PREFIX)).forEach(key=>sessionStorage.removeItem(key))
-  }catch{}
+  }catch{return}
 }
 
 async function getNeonAccountAccess(uid) {
