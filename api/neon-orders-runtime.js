@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
+import { getCachedAccount } from '../server/accountAccessCache.js'
 
 const text=v=>String(v??'').trim()
 const num=v=>Number.isFinite(Number(v))?Number(v):0
@@ -31,8 +32,7 @@ async function ensureReleaseSchema(sql){
 }
 
 async function requireAccount(sql,auth){
-  const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
-  const account=rows[0]
+  const account=await getCachedAccount(sql,auth.uid)
   if(!account) throw new Error('Neon 找不到登入帳號')
   if(account.disabled) throw new Error('帳號已停用')
   if(!['owner','staff','helper'].includes(account.role)) throw new Error('權限不足')
