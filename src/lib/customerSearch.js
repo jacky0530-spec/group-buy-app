@@ -52,5 +52,7 @@ export function customerSecondaryLabel(customer) {
   if (customer?.phone) parts.push(customer.phone)
   if (customer?.line_nick) parts.push(`Line: ${customer.line_nick}`)
   else if (customer?.fb_name) parts.push(`FB: ${customer.fb_name}`)
+  const note=String(customer?.note||'').trim()
+  if (note) parts.push(`備註：${note}`)
   return parts.join(' ｜ ')
 }
