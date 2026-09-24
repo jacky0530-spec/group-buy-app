@@ -9,6 +9,7 @@ if(!globalThis[INSTALLED]){
   OrdersAPI.searchPage=async function(params={}){
     const page=await originalSearchPage(params)
     const rows=Array.isArray(page?.rows)?page.rows:[]
+    if(rows.length&&rows.every(order=>(order.items||[]).every(item=>item?._neon_item_state_complete===true))) return page
     const ids=[...new Set(rows.map(row=>String(row?.id||'').trim()).filter(Boolean))]
     if(!ids.length)return page
     const states=await neonOrdersRuntime('pickup_states',{ids})
