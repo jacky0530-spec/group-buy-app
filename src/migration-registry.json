@@ -899,6 +899,23 @@
       "data_logic": "搜尋『05』時，若舊訂單本身沒有 05 的手機快照，但該訂單仍連結到目前末兩碼為 05 的 customer，現在仍會納入結果；後續前端仍依 customer_id 聚合同一買家，因此姓名搜尋與末兩碼搜尋應得到相同的該客戶已出貨明細。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "移除 neon-order-query buyer search 對 customers.name / customers.phone / current last2 的額外比對，APP_VERSION 還原 V70。"
+    },
+    {
+      "version": "V72",
+      "date": "2026-09-24",
+      "type": "bugfix/report-search/customer-ui",
+      "summary": "修正已出貨報表用末兩碼找到客戶後，仍只顯示部分歷史訂單；點選客戶後改以該客戶姓名重新做 SQL 補查。另在管理員與小幫手的客戶選擇器顯示客戶備註。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 末兩碼／手機搜尋先找候選客戶；點選候選人後以候選人的姓名重新查詢同狀態歷史訂單，避免舊訂單手機快照缺失時漏項。",
+        "src/lib/customerSearch.js: customerSecondaryLabel 加入『備註：...』，供訂單與小幫手客戶搜尋共同顯示。",
+        "src/pages/Orders.jsx: 選定客戶後若有備註，表單持續顯示備註。",
+        "src/pages/HelperPortalV3.jsx: 小幫手選定客戶後持續顯示末碼／電話／Line/FB／備註辨識資訊。"
+      ],
+      "data_logic": "V71 已擴充 SQL 同時比對訂單快照與目前 customers 手機；V72 再處理歷史訂單可能掛在舊客戶資料或舊手機快照的情況：使用者先以末兩碼找到候選客戶，點選後改以姓名補查完整歷史訂單。原始搜尋字串仍保留在輸入框，不改寫任何訂單或客戶資料。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "移除 selectedBuyerLookup 補查與 customerSecondaryLabel 備註顯示，APP_VERSION 還原 V71。"
     }
   ]
 }
