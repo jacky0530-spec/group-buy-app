@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第74版：客戶備註改用醒目棕橘色顯示，並與末碼／電話等辨識資訊分行呈現。
-const APP_VERSION = '第74版｜2026/09/24'
+// 第75版：修正正式訂單頁實際使用 OrdersFast，客戶備註改為醒目棕橘色獨立顯示。
+const APP_VERSION = '第75版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
