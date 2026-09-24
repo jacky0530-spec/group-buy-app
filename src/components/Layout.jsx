@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第73版：出貨報表用末兩碼搜尋時，點選其中一位客戶後保留原本所有同號碼候選人，仍可直接切換其他同號碼客戶。
-const APP_VERSION = '第73版｜2026/09/24'
+// 第74版：客戶備註改用醒目棕橘色顯示，並與末碼／電話等辨識資訊分行呈現。
+const APP_VERSION = '第74版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
