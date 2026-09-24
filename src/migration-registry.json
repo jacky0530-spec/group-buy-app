@@ -916,6 +916,22 @@
       "data_logic": "V71 已擴充 SQL 同時比對訂單快照與目前 customers 手機；V72 再處理歷史訂單可能掛在舊客戶資料或舊手機快照的情況：使用者先以末兩碼找到候選客戶，點選後改以姓名補查完整歷史訂單。原始搜尋字串仍保留在輸入框，不改寫任何訂單或客戶資料。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "移除 selectedBuyerLookup 補查與 customerSecondaryLabel 備註顯示，APP_VERSION 還原 V71。"
+    },
+    {
+      "version": "V73",
+      "date": "2026-09-24",
+      "type": "bugfix/report-search-ui",
+      "summary": "恢復出貨報表原本的同號碼候選人保留方式：輸入手機末兩碼後，點選其中一位客戶不再把上方其他同末碼客戶清掉。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 首次用末兩碼／手機搜尋完成後，保留當下候選客戶快照；點選其中一位後，下方明細仍可用 V72 的姓名補查完整歷史訂單，但上方候選卡片維持原搜尋結果。",
+        "可直接在同一批同末碼候選人之間切換，不必重新輸入號碼。",
+        "更改搜尋文字、切換已出貨／待出貨、切換顯示封存或改用商品查詢時，才清除候選快照。"
+      ],
+      "data_logic": "候選客戶清單與下方明細查詢分離。buyerSearch 保留原始末兩碼搜尋結果；selectedBuyerLookup 僅用於選定客戶後補查完整歷史明細，不再覆蓋上方候選顯示。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "移除 buyerCandidateSnapshot / visibleBuyerCandidates，恢復 V72 點選客戶後候選清單跟著姓名補查結果變動。"
     }
   ]
 }
