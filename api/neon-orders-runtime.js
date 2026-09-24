@@ -554,8 +554,10 @@ export default async function handler(req,res){
     const auth=await verifyFirebaseIdToken(req)
     const sql=neon(process.env.DATABASE_URL)
     const account=await requireAccount(sql,auth)
-    await ensureReleaseSchema(sql)
     const action=text(req.body?.action)
+    if(['sync','release_states','pickup_states','update_item_qty','cancel_virtual_item','set_item_release','set_item_pickup','set_item_pickup_archive'].includes(action)){
+      await ensureReleaseSchema(sql)
+    }
     if(action==='sync'){
       const row=req.body?.row||{}
       requireOwnHelperOrder(account,auth,row)
