@@ -45,14 +45,25 @@ export function filterCustomers(customers, search) {
     })
 }
 
-export function customerSecondaryLabel(customer) {
+export function customerIdentityLabel(customer) {
   const parts = []
   const last2 = getCustomerPhoneLast2(customer)
   if (last2) parts.push(`末碼 ${last2}`)
   if (customer?.phone) parts.push(customer.phone)
   if (customer?.line_nick) parts.push(`Line: ${customer.line_nick}`)
   else if (customer?.fb_name) parts.push(`FB: ${customer.fb_name}`)
-  const note=String(customer?.note||'').trim()
+  return parts.join(' ｜ ')
+}
+
+export function customerNoteText(customer) {
+  return String(customer?.note || '').trim()
+}
+
+export function customerSecondaryLabel(customer) {
+  const parts = []
+  const identity = customerIdentityLabel(customer)
+  const note = customerNoteText(customer)
+  if (identity) parts.push(identity)
   if (note) parts.push(`備註：${note}`)
   return parts.join(' ｜ ')
 }
