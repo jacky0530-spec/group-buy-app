@@ -1,13 +1,35 @@
 import { auth } from './firebase'
 
 const READ_INFLIGHT=Symbol.for('group-buy.neon-read-inflight')
+const READ_CACHE=Symbol.for('group-buy.neon-read-cache')
 const readInflight=globalThis[READ_INFLIGHT]||(globalThis[READ_INFLIGHT]=new Map())
+const readCache=globalThis[READ_CACHE]||(globalThis[READ_CACHE]=new Map())
+const READ_CACHE_TTL_MS=10000
 
-function dedupeReadKey(path,body={}){
+const READ_ACTIONS={
+  '/api/neon-order-query':new Set(['all','date_range','page','query','summary','customer_directory','correction_candidates','report_product_catalog','report_data','report_product_buyers']),
+  '/api/neon-runtime':new Set(['ping','stock_search','list_customers','list_products','list_orders','list_expenses','expense_month']),
+  '/api/neon-orders-runtime':new Set(['release_states','pickup_states']),
+  '/api/neon-helper-runtime':new Set(['catalog','search_catalog','product_deadlines','customers','search_customers','my_entries','my_pending_orders','duplicate_pending']),
+  '/api/neon-helper-admin':new Set(['all','home_dashboard','dashboard','product_query','product_duplicate','stock_query','stock_support']),
+}
+
+function readKey(path,body={}){
   const action=String(body?.action||'')
-  if(path==='/api/neon-order-query'&&['all','date_range','page'].includes(action)) return `${path}|${JSON.stringify(body)}`
-  if(path==='/api/neon-runtime'&&['list_customers','list_products','list_orders'].includes(action)) return `${path}|${JSON.stringify(body)}`
+  if(path==='/api/neon-helper-admin') return `${path}|${JSON.stringify(body)}`
+  if(READ_ACTIONS[path]?.has(action)) return `${path}|${JSON.stringify(body)}`
   return ''
+}
+
+function pruneReadCache(now=Date.now()){
+  for(const [key,value] of readCache){
+    if(now-Number(value?.at||0)>READ_CACHE_TTL_MS) readCache.delete(key)
+  }
+  if(readCache.size<=200)return
+  for(const key of readCache.keys()){
+    readCache.delete(key)
+    if(readCache.size<=160)break
+  }
 }
 
 async function performAuthedPost(path,body={}){
@@ -25,10 +47,22 @@ async function performAuthedPost(path,body={}){
 }
 
 async function postAuthed(path,body={}){
-  const key=dedupeReadKey(path,body)
-  if(!key) return performAuthedPost(path,body)
+  const key=readKey(path,body)
+  if(!key){
+    readCache.clear()
+    return performAuthedPost(path,body)
+  }
+  const now=Date.now()
+  const hit=readCache.get(key)
+  if(hit&&now-Number(hit.at||0)<READ_CACHE_TTL_MS)return hit.data
   if(readInflight.has(key)) return readInflight.get(key)
-  const promise=performAuthedPost(path,body).finally(()=>readInflight.delete(key))
+  const promise=performAuthedPost(path,body)
+    .then(data=>{
+      readCache.set(key,{at:Date.now(),data})
+      pruneReadCache()
+      return data
+    })
+    .finally(()=>readInflight.delete(key))
   readInflight.set(key,promise)
   return promise
 }
