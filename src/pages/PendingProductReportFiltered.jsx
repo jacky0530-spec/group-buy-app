@@ -164,19 +164,40 @@ export default function PendingProductReportFiltered() {
   const reportRef = useRef(null)
   const originalListRef = useRef(ProductsAPI.list)
   const originalSearchPageRef = useRef(OrdersAPI.searchPage)
+  const originalReportProductCatalogRef = useRef(OrdersAPI.reportProductCatalog)
   const qtyTimersRef = useRef(new Map())
   const shippedProductDatesRef = useRef(new Map())
 
   // 報表內部固定以 includeArchived:true 載入商品目錄。
   // 同時讓「全部待出貨 / 已到貨可先出貨 / 尚未到貨」各自重建真正有數量的商品目錄。
-  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示；V59：正常待出貨只顯示尚未完成數量，取貨管理模式可重新顯示已完成品項。
+  // V43/V44：已出貨商品依出貨日期分組；V45：已釋出品項仍顯示；V59：正常待出貨只顯示尚未完成數量；V78：日期改由輕量商品目錄 SQL 直接回傳，不再掃描全部訂單。
   useEffect(() => {
     const originalList = originalListRef.current
     const originalSearchPage = originalSearchPageRef.current
+    const originalReportProductCatalog = originalReportProductCatalogRef.current
 
     ProductsAPI.list = async (...args) => {
       const rows = await originalList(...args)
       return showArchivedProducts ? rows : (rows || []).filter(product => product.active !== false)
+    }
+
+    OrdersAPI.reportProductCatalog = async (params = {}) => {
+      const rows = await originalReportProductCatalog(params)
+      if (params?.status === 'shipped') {
+        const dateMap = new Map()
+        ;(rows || []).forEach(row => {
+          const name = String(row?.name || '').trim()
+          if (!name) return
+          const value = row?.latest_shipped_at || row?.latest_arrived_at || ''
+          const time = Date.parse(value)
+          dateMap.set(name,{
+            time:Number.isFinite(time) ? time : 0,
+            label:taipeiDateLabel(value),
+          })
+        })
+        shippedProductDatesRef.current = dateMap
+      }
+      return rows
     }
 
     OrdersAPI.searchPage = async (params = {}) => {
@@ -224,6 +245,7 @@ export default function PendingProductReportFiltered() {
     return () => {
       ProductsAPI.list = originalList
       OrdersAPI.searchPage = originalSearchPage
+      OrdersAPI.reportProductCatalog = originalReportProductCatalog
     }
   },[showArchivedProducts,arrivalCatalogView])
 

@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第77版：進一步降低 Neon 用量：移除重複取貨查詢、加入短期讀取／權限快取、批次狀態更新共用單一 API，並減少 runtime schema 檢查。
-const APP_VERSION = '第77版｜2026/09/24'
+// 第78版：恢復已出貨商品依日期分組；日期直接由輕量商品目錄 SQL 回傳，不再為日期分組掃描全部訂單。
+const APP_VERSION = '第78版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
