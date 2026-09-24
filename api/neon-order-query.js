@@ -169,9 +169,18 @@ export default async function handler(req,res){
       const status=['pending','shipped'].includes(text(req.body?.status))?text(req.body?.status):'pending'
       const includeArchived=req.body?.includeArchived===true
       const rows=await sql`
-        SELECT DISTINCT
+        SELECT
           COALESCE(p.legacy_id,'') AS id,
-          oi.product_name AS name
+          oi.product_name AS name,
+          MAX(
+            CASE
+              WHEN o.status='shipped' THEN COALESCE(o.shipped_at,o.updated_at,o.created_at)
+              WHEN o.status='pending' AND COALESCE(oi.picked_up_qty,0)>0
+                THEN COALESCE(oi.picked_up_at,oi.picked_up_archived_at,o.updated_at,o.created_at)
+              ELSE NULL
+            END
+          ) AS latest_shipped_at,
+          MAX(oi.arrived_at) FILTER (WHERE COALESCE(oi.arrived_qty,0)>0) AS latest_arrived_at
         FROM orders o
         JOIN order_items oi ON oi.order_id=o.id
         LEFT JOIN products p ON p.id=oi.product_id
@@ -205,6 +214,7 @@ export default async function handler(req,res){
               )
             )
           )
+        GROUP BY COALESCE(p.legacy_id,''),oi.product_name
         ORDER BY oi.product_name ASC
       `
       return res.status(200).json({ok:true,rows})
