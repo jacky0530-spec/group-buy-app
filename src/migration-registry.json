@@ -882,6 +882,23 @@
       "data_logic": "一般沒有分批出貨歷史的整單出貨流程不變。只有存在 picked_up_qty 或 picked_up_archived_qty 的正式預購訂單才套用分批完成規則。若仍有未到貨且未釋出的品項，整單標記已出貨會被阻擋。報表對已完成訂單以 qty-released_qty 視為最終已出貨總量，並扣除 picked_up_archived_qty 後顯示未封存部分。",
       "data_migration": "無 schema migration、無部署時批次改寫。既有異常 shipped 資料可直接由新版報表正確顯示；之後若對該筆做封存／解除封存，後端會把 picked_up_qty 自我修正為已完成數量。",
       "rollback": "還原 shipped 訂單切片顯示、updateStatus 分批完成正規化與 setItemPickupArchive 推導邏輯，APP_VERSION 還原 V69。"
+    },
+    {
+      "version": "V71",
+      "date": "2026-09-24",
+      "type": "bugfix/report-search",
+      "summary": "修正出貨查詢報表以手機末兩碼搜尋時，部分舊訂單因訂單建立當時 customer_phone_last2／customer_phone 快照空白或過期而漏列；姓名搜尋卻能看到完整商品的問題。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-query.js: buyer/search SQL 除了訂單快照 customer_name/customer_phone/customer_phone_last2，也比對目前 customers.name、customers.phone 與目前手機末兩碼。",
+        "保留既有訂單交易快照不改寫，只擴充查詢條件；同一 customer_id 的舊訂單可由目前客戶手機資訊被完整找回。"
+      ],
+      "ui_changes": [
+        "APP_VERSION 更新為第71版｜2026/09/24；出貨報表 UI 與操作方式不變。"
+      ],
+      "data_logic": "搜尋『05』時，若舊訂單本身沒有 05 的手機快照，但該訂單仍連結到目前末兩碼為 05 的 customer，現在仍會納入結果；後續前端仍依 customer_id 聚合同一買家，因此姓名搜尋與末兩碼搜尋應得到相同的該客戶已出貨明細。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "移除 neon-order-query buyer search 對 customers.name / customers.phone / current last2 的額外比對，APP_VERSION 還原 V70。"
     }
   ]
 }
