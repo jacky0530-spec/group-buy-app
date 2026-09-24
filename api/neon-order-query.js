@@ -17,7 +17,11 @@ async function hydrate(sql,orders){
     SELECT oi.order_id,p.legacy_id AS product_id,oi.product_name,oi.category,oi.supplier,oi.sale_price,oi.cost_price,
       oi.qty,oi.original_qty,oi.subtotal,oi.cost_subtotal,oi.note,oi.spec_package,oi.spec_flavor,oi.spec_color,oi.spec_size,
       oi.fulfillment_type,oi.arrived_qty,oi.arrived_at,oi.supplier_payment_term,oi.supplier_paid_amount,
-      oi.supplier_payment_status,oi.supplier_payment_refs,oi.created_at,oi.updated_at,oi.line_no
+      oi.supplier_payment_status,oi.supplier_payment_refs,
+      oi.released_qty,oi.released_at,oi.released_by_uid,
+      oi.picked_up_qty,oi.picked_up_at,oi.picked_up_by_uid,
+      oi.picked_up_archived_qty,oi.picked_up_archived_at,oi.picked_up_archived_by_uid,
+      oi.created_at,oi.updated_at,oi.line_no
     FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id
     WHERE oi.order_id = ANY(${ids}::uuid[])
     ORDER BY oi.order_id,oi.line_no
@@ -32,7 +36,11 @@ async function hydrate(sql,orders){
       spec:{package:i.spec_package||'',flavor:i.spec_flavor||'',color:i.spec_color||'',size:i.spec_size||''},
       fulfillment_type:i.fulfillment_type,arrived_qty:Number(i.arrived_qty||0),arrived_at:i.arrived_at,
       supplier_payment_term:i.supplier_payment_term,supplier_paid_amount:Number(i.supplier_paid_amount||0),
-      supplier_payment_status:i.supplier_payment_status,supplier_payment_refs:i.supplier_payment_refs||[],created_at:i.created_at,updated_at:i.updated_at,
+      supplier_payment_status:i.supplier_payment_status,supplier_payment_refs:i.supplier_payment_refs||[],
+      released_qty:Number(i.released_qty||0),released_at:i.released_at,released_by_uid:i.released_by_uid||'',
+      picked_up_qty:Number(i.picked_up_qty||0),picked_up_at:i.picked_up_at,picked_up_by_uid:i.picked_up_by_uid||'',
+      picked_up_archived_qty:Number(i.picked_up_archived_qty||0),picked_up_archived_at:i.picked_up_archived_at,picked_up_archived_by_uid:i.picked_up_archived_by_uid||'',
+      _neon_item_state_complete:true,created_at:i.created_at,updated_at:i.updated_at,
     })
   }
   return orders.map(({neon_id,total_count,...o})=>({...o,total_amount:Number(o.total_amount||0),refund_amount:Number(o.refund_amount||0),items:map.get(neon_id)||[]}))
@@ -156,6 +164,50 @@ export default async function handler(req,res){
         ORDER BY o.order_date DESC
         LIMIT ${pageSize}`
       return res.status(200).json({ok:true,rows:await hydrate(sql,orders)})
+    }
+    if(action==='report_product_catalog'){
+      const status=['pending','shipped'].includes(text(req.body?.status))?text(req.body?.status):'pending'
+      const includeArchived=req.body?.includeArchived===true
+      const rows=await sql`
+        SELECT DISTINCT
+          COALESCE(p.legacy_id,'') AS id,
+          oi.product_name AS name
+        FROM orders o
+        JOIN order_items oi ON oi.order_id=o.id
+        LEFT JOIN products p ON p.id=oi.product_id
+        WHERE COALESCE(oi.qty,0)>0
+          AND (
+            (
+              ${status}='pending'
+              AND o.status='pending'
+              AND COALESCE(o.archived,false)=false
+              AND GREATEST(0,COALESCE(oi.qty,0)-COALESCE(oi.released_qty,0))>0
+            )
+            OR
+            (
+              ${status}='shipped'
+              AND (
+                (
+                  o.status='shipped'
+                  AND (${includeArchived}::boolean OR COALESCE(o.archived,false)=false)
+                )
+                OR
+                (
+                  o.status='pending'
+                  AND COALESCE(o.archived,false)=false
+                  AND COALESCE(o.is_virtual,false)=false
+                  AND (
+                    (${includeArchived}::boolean AND (COALESCE(oi.picked_up_qty,0)>0 OR COALESCE(oi.picked_up_archived_qty,0)>0))
+                    OR
+                    (NOT ${includeArchived}::boolean AND COALESCE(oi.picked_up_qty,0)>COALESCE(oi.picked_up_archived_qty,0))
+                  )
+                )
+              )
+            )
+          )
+        ORDER BY oi.product_name ASC
+      `
+      return res.status(200).json({ok:true,rows})
     }
     if(action==='report_data'){
       const mode=['all','month','range'].includes(text(req.body?.mode))?text(req.body?.mode):'month'

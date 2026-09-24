@@ -963,6 +963,25 @@
       "data_logic": "只修正正式訂單頁的呈現元件；不改搜尋規則、不改客戶資料、不改訂單資料。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "還原 OrdersFast 客戶備註分色顯示，APP_VERSION 還原 V74。"
+    },
+    {
+      "version": "V76",
+      "date": "2026-09-24",
+      "type": "performance/report-query",
+      "summary": "優化未出貨／已出貨報表 Neon 查詢量，不改使用者操作流程。報表商品目錄由整批下載訂單改為單次 DISTINCT SQL；訂單查詢同時帶回釋出／取貨狀態，避免每頁再呼叫 release_states。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-query.js: 新增 report_product_catalog action，只回傳目前待出貨／已出貨狀態下存在的 product legacy id 與 product_name，不 hydrate 訂單。",
+        "api/neon-order-query.js: hydrate order_items 時直接回傳 released_qty / released_at / released_by_uid / picked_up_qty / picked_up_at / picked_up_by_uid / picked_up_archived_qty / picked_up_archived_at / picked_up_archived_by_uid。",
+        "src/lib/enableNeonOrderRead.js: OrdersAPI.reportProductCatalog；若 order query 已帶完整 item state，withReleaseStates 不再額外呼叫 neon-orders-runtime release_states。"
+      ],
+      "ui_changes": [
+        "src/pages/PendingProductReportSql.jsx: 開啟報表或切換已出貨／待出貨時，不再用 fetchReportOrders 掃描全部訂單建立商品清單，改用 OrdersAPI.reportProductCatalog。",
+        "買家搜尋 debounce 由 280ms 調為 500ms，減少快速輸入時的重複 SQL；姓名、手機、末兩碼、Line、FB、封存、部分出貨等既有操作不變。"
+      ],
+      "data_logic": "待出貨商品目錄只列 pending、未封存且 qty-released_qty>0 的品項；已出貨商品目錄列 shipped 訂單以及 pending 中已有部分取貨／出貨紀錄的品項。正式訂單查詢結果內容不變，只將 release/pickup state 併入原 hydrate SQL。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "移除 report_product_catalog 並恢復以 fetchReportOrders 建立商品目錄；enableNeonOrderRead 恢復每頁 release_states 補查；APP_VERSION 還原 V75。"
     }
   ]
 }

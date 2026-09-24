@@ -207,15 +207,15 @@ export default function PendingProductReportSql(){
     ;(async()=>{
       setShipmentCatalogLoading(true)
       try{
-        const rows=await fetchReportOrders({status:shipmentView,includeArchived:shipmentView==='shipped'&&showArchived})
+        const rows=await OrdersAPI.reportProductCatalog({
+          status:shipmentView,
+          includeArchived:shipmentView==='shipped'&&showArchived,
+        })
         const ids=new Set(),names=new Set()
-        rows.forEach(order=>(order.items||[]).forEach(item=>{
-          if(itemQty(item)<=0)return
-          const id=item.product_id||item.id
-          const name=item.original_product_name||item.product_name||item.name
-          if(id)ids.add(id)
-          if(name)names.add(name)
-        }))
+        ;(rows||[]).forEach(row=>{
+          if(row?.id)ids.add(row.id)
+          if(row?.name)names.add(row.name)
+        })
         if(active)setShipmentProductKeys({ids,names})
       }catch(err){
         const label=shipmentView==='shipped'?'已出貨':'待出貨'
@@ -243,7 +243,7 @@ export default function PendingProductReportSql(){
     }catch(err){if(seq===querySeq.current)setError(`出貨報表 SQL 查詢失敗：${err.message}`)}finally{if(seq===querySeq.current)setLoading(false)}
   },[mode,selectedProduct,buyerSearch,selectedBuyerLookup,shipmentView,showArchived,shipmentProductKeys])
 
-  useEffect(()=>{const timer=setTimeout(queryOrders,mode==='buyer'?280:0);return()=>clearTimeout(timer)},[queryOrders,mode])
+  useEffect(()=>{const timer=setTimeout(queryOrders,mode==='buyer'?500:0);return()=>clearTimeout(timer)},[queryOrders,mode])
 
   const customerMap=useMemo(()=>Object.fromEntries(customers.map(c=>[c.id,c])),[customers])
   const productOptions=useMemo(()=>{

@@ -21,6 +21,8 @@ function withOriginalQtyLabels(rows=[]){
 
 async function withReleaseStates(rows=[]){
   if(!rows.length)return withOriginalQtyLabels(rows)
+  const hydrated=rows.every(order=>(order.items||[]).every(item=>item?._neon_item_state_complete===true))
+  if(hydrated)return withOriginalQtyLabels(rows)
   const ids=[...new Set(rows.map(row=>row.id).filter(Boolean))]
   const stateMap=new Map()
   for(let i=0;i<ids.length;i+=250){
@@ -80,6 +82,12 @@ if(!globalThis[INSTALLED]){
     const result=await neonOrderQuery('correction_candidates',{pageSize})
     if(!Array.isArray(result?.rows)) throw new Error('Neon 更正候選訂單回傳格式錯誤')
     return withReleaseStates(result.rows)
+  }
+
+  OrdersAPI.reportProductCatalog=async function({status='pending',includeArchived=false}={}){
+    const result=await neonOrderQuery('report_product_catalog',{status,includeArchived})
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 出貨商品目錄回傳格式錯誤')
+    return result.rows.map(row=>({id:row.id||'',name:row.name||''}))
   }
 
   OrdersAPI.reportData=async function({mode='month',month='',start='',end=''}={}){
