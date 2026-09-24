@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第70版：修正分批到貨／先出貨後，最後整單出貨時舊封存品項重新出現；保留已封存數量，只顯示本次新出貨。
-const APP_VERSION = '第70版｜2026/09/22'
+// 第71版：修正出貨報表用末兩碼搜尋時，舊訂單手機快照不完整會漏掉同一客戶部分已出貨商品。
+const APP_VERSION = '第71版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
