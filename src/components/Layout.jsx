@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第71版：修正出貨報表用末兩碼搜尋時，舊訂單手機快照不完整會漏掉同一客戶部分已出貨商品。
-const APP_VERSION = '第71版｜2026/09/24'
+// 第72版：修正出貨報表選擇末兩碼客戶後重新以客戶姓名補查完整歷史訂單；客戶搜尋結果顯示備註。
+const APP_VERSION = '第72版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
