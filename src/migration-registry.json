@@ -1004,6 +1004,24 @@
       "data_logic": "所有快取都只降低重複讀取，不改 Neon primary 資料來源。read-through cache 最長 10 秒且同一瀏覽器任何寫入會立即 invalidation；帳號 server cache 最長 30 秒，client auth profile cache 最長 5 分鐘，但所有 business API 仍在 server 端驗證 Firebase token 與帳號角色。批次狀態更新保留既有 updateStatus 安全規則。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "移除 client/server 快取、恢復 pickup_states 補查、恢復 batchUpdateStatus 逐筆 API 與所有 order runtime schema 檢查，APP_VERSION 還原 V76。"
+    },
+    {
+      "version": "V78",
+      "date": "2026-09-24",
+      "type": "bugfix/report-catalog-date",
+      "summary": "修正 V76/V77 將已出貨商品目錄改為輕量 SQL 後，原本的出貨日期分組全部變成『出貨日期未記錄』。恢復日期分組，但不恢復整批訂單掃描。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-order-query.js: report_product_catalog 改以 GROUP BY 商品並額外回傳 latest_shipped_at / latest_arrived_at；已出貨整單使用 shipped_at，部分先出貨使用 picked_up_at，保留 updated_at/created_at 安全 fallback。",
+        "src/lib/enableNeonOrderRead.js: OrdersAPI.reportProductCatalog 保留 latest_shipped_at / latest_arrived_at metadata。"
+      ],
+      "ui_changes": [
+        "src/pages/PendingProductReportFiltered.jsx: 攔截輕量 reportProductCatalog 回傳，重建 shippedProductDatesRef，已出貨商品候選清單再次依最近出貨日期分組並由舊到新排列。",
+        "沒有日期的極少數舊資料仍顯示『出貨日期未記錄』；正常有 shipped/pickup 時間的商品會顯示 YYYY/MM/DD。"
+      ],
+      "data_logic": "日期分組只讀商品層級 MAX timestamp，不下載訂單明細。正式 shipped 訂單優先 shipped_at；仍 pending 的部分先出貨品項使用 picked_up_at / picked_up_archived_at。pending 商品目錄同時回傳 latest_arrived_at 供相容與後續使用。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "移除 report_product_catalog 日期欄位與 wrapper 日期 metadata 攔截，APP_VERSION 還原 V77。"
     }
   ]
 }
