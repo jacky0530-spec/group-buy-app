@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第76版：未出貨／已出貨報表改用輕量商品目錄 SQL，避免開頁即掃描全部訂單；同次訂單查詢直接帶回釋出／取貨狀態，減少重複 Neon 查詢。
-const APP_VERSION = '第76版｜2026/09/24'
+// 第77版：進一步降低 Neon 用量：移除重複取貨查詢、加入短期讀取／權限快取、批次狀態更新共用單一 API，並減少 runtime schema 檢查。
+const APP_VERSION = '第77版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [

@@ -56,11 +56,12 @@ if(!globalThis[INSTALLED]){
   }
 
   OrdersAPI.updateStatus=async function(id,status,options={}){
-    const m=await meta(id)
-    if(m.fulfillment_type==='stock'){
+    try{
+      return (await neonOrderStatusRuntime('update',{id,status,reason:options?.reason||''}))?.result
+    }catch(err){
+      if(!String(err?.message||'').includes('現貨訂單狀態必須使用庫存交易流程')) throw err
       return (await neonStockOrderState({order_id:id,status,reason:options?.reason||''}))?.result
     }
-    return (await neonOrderStatusRuntime('update',{id,status,reason:options?.reason||''}))?.result
   }
 
   OrdersAPI.updatePayment=async (id,payment_status)=> (await neonOrdersRuntime('update_payment',{id,payment_status}))?.result
@@ -103,8 +104,13 @@ if(!globalThis[INSTALLED]){
 
   OrdersAPI.batchUpdateStatus=async function(ids=[],status){
     const target=[...new Set((ids||[]).filter(Boolean))]
-    for(const id of target) await OrdersAPI.updateStatus(id,status,{reason:'批次更新'})
-    return {updated:target.length}
+    if(!target.length)return{updated:0}
+    const result=(await neonOrderStatusRuntime('update_batch',{ids:target,status,reason:'批次更新'}))?.result||{}
+    if(result.requires_individual===true){
+      for(const id of target) await OrdersAPI.updateStatus(id,status,{reason:'批次更新'})
+      return {updated:target.length}
+    }
+    return {updated:Number(result.updated||0)}
   }
 
   OrdersAPI.updateVirtual=async function(ids=[],isVirtual=false){

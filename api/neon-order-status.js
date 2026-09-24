@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
+import { getCachedAccount } from '../server/accountAccessCache.js'
 
 const text=v=>String(v??'').trim()
 const num=v=>Number.isFinite(Number(v))?Number(v):0
@@ -10,10 +11,10 @@ const cleanupDays=v=>{
   return days
 }
 const incomingId=()=>`incoming-${Date.now()}-${Math.random().toString(36).slice(2,8)}`
+let incomingSchemaReady=false
 
 async function requireStaff(sql,auth){
-  const rows=await sql`SELECT role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
-  const account=rows[0]
+  const account=await getCachedAccount(sql,auth.uid)
   if(!account||account.disabled||!['owner','staff'].includes(account.role)) throw new Error('權限不足')
   return account
 }
@@ -22,6 +23,7 @@ function requireOwner(account){
 }
 
 async function ensureIncomingSchema(sql){
+  if(incomingSchemaReady)return
   await sql`
     CREATE TABLE IF NOT EXISTS incoming_batches (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,6 +66,7 @@ async function ensureIncomingSchema(sql){
   await sql`CREATE INDEX IF NOT EXISTS incoming_batches_supplier_status_idx ON incoming_batches(supplier,status,created_at DESC)`
   await sql`CREATE INDEX IF NOT EXISTS incoming_batch_items_batch_sort_idx ON incoming_batch_items(batch_id,sort_order,created_at)`
   await sql`CREATE INDEX IF NOT EXISTS incoming_batch_items_product_idx ON incoming_batch_items(product_id)`
+  incomingSchemaReady=true
 }
 
 async function incomingSelfTest(sql){
@@ -410,6 +413,25 @@ async function updateStatus(sql,auth,legacyId,status,reason){
   return rows[0]
 }
 
+
+async function updateStatusBatch(sql,auth,ids,status,reason='批次更新'){
+  const target=[...new Set((Array.isArray(ids)?ids:[]).map(text).filter(Boolean))]
+  if(!target.length)return {updated:0,results:[]}
+  if(target.length>200) throw new Error('單次最多批次更新 200 張訂單')
+  const stockRows=await sql`
+    SELECT legacy_id AS id
+    FROM orders
+    WHERE legacy_id=ANY(${target}::text[]) AND fulfillment_type='stock'`
+  if(stockRows.length){
+    return {updated:0,requires_individual:true,stock_ids:stockRows.map(r=>r.id)}
+  }
+  const results=[]
+  for(const id of target){
+    results.push(await updateStatus(sql,auth,id,status,reason))
+  }
+  return {updated:results.length,results}
+}
+
 async function correctSupplierState(sql,legacyId,itemIndex,resetArrival){
   const hasItem=itemIndex!==undefined&&itemIndex!==null&&itemIndex!==''
   const lineNo=hasItem?Math.max(1,Math.trunc(num(itemIndex))+1):null
@@ -565,6 +587,9 @@ export default async function handler(req,res){
     }
     if(action==='update'){
       return res.status(200).json({ok:true,result:await updateStatus(sql,auth,req.body?.id,text(req.body?.status),req.body?.reason)})
+    }
+    if(action==='update_batch'){
+      return res.status(200).json({ok:true,result:await updateStatusBatch(sql,auth,req.body?.ids,text(req.body?.status),req.body?.reason)})
     }
     if(action==='correct_supplier_state'){
       return res.status(200).json({ok:true,result:await correctSupplierState(sql,req.body?.id,req.body?.item_index,req.body?.reset_arrival)})

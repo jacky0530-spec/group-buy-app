@@ -982,6 +982,28 @@
       "data_logic": "待出貨商品目錄只列 pending、未封存且 qty-released_qty>0 的品項；已出貨商品目錄列 shipped 訂單以及 pending 中已有部分取貨／出貨紀錄的品項。正式訂單查詢結果內容不變，只將 release/pickup state 併入原 hydrate SQL。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "移除 report_product_catalog 並恢復以 fetchReportOrders 建立商品目錄；enableNeonOrderRead 恢復每頁 release_states 補查；APP_VERSION 還原 V75。"
+    },
+    {
+      "version": "V77",
+      "date": "2026-09-24",
+      "type": "performance/neon-usage",
+      "summary": "在 V76 報表 SQL 優化後，進一步降低 Neon API 與 SQL 呼叫量：移除重複 pickup_states、加入前端 10 秒讀取快取與登入權限 session cache、server-side 帳號權限短快取、批次狀態更新共用單一 API，並減少 runtime schema 自我檢查。",
+      "database_changes": [],
+      "api_changes": [
+        "server/accountAccessCache.js: 新增 30 秒 serverless instance 內帳號權限快取，供 neon-auth-profile、neon-order-query、neon-orders-runtime、neon-order-status、neon-runtime、neon-helper-admin 共用。",
+        "api/neon-order-status.js: 新增 update_batch action，批次正式預購狀態更新共用單一 HTTP/驗證流程；若偵測到現貨訂單則安全回退個別流程。",
+        "api/neon-order-status.js: incoming schema 建立／索引確認加入 warm-instance guard，同一 serverless instance 只執行一次。",
+        "api/neon-orders-runtime.js: 只有 release/pickup/sync 等確實需要的 action 才執行 release schema 檢查，付款、封存、退款等一般 action 不再做 information_schema 檢查。"
+      ],
+      "ui_changes": [
+        "src/lib/enableNeonPickupReads.js: 若 V76 order query 已帶完整 picked_up 狀態，不再額外呼叫 pickup_states。",
+        "src/lib/neonRuntime.js: 對安全讀取 action 加入 10 秒 read-through cache 與 inflight 去重；任何寫入立即清除本機讀取快取。",
+        "src/lib/auth.js: Neon auth profile 成功結果以 sessionStorage / memory 快取 5 分鐘；拒絕結果僅快取 30 秒，登出會清除。",
+        "src/lib/enableNeonPrimaryOrderWrites.js: 一般預購 updateStatus 不再先呼叫 meta；直接更新，只有偵測現貨時回退 stock flow。batchUpdateStatus 改用 update_batch。"
+      ],
+      "data_logic": "所有快取都只降低重複讀取，不改 Neon primary 資料來源。read-through cache 最長 10 秒且同一瀏覽器任何寫入會立即 invalidation；帳號 server cache 最長 30 秒，client auth profile cache 最長 5 分鐘，但所有 business API 仍在 server 端驗證 Firebase token 與帳號角色。批次狀態更新保留既有 updateStatus 安全規則。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "移除 client/server 快取、恢復 pickup_states 補查、恢復 batchUpdateStatus 逐筆 API 與所有 order runtime schema 檢查，APP_VERSION 還原 V76。"
     }
   ]
 }
