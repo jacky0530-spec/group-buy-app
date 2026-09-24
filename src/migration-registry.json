@@ -948,6 +948,21 @@
       "data_logic": "只調整客戶辨識資訊的呈現方式，不改搜尋條件、不改客戶資料、不改訂單資料。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "還原 customerSearch 共用標籤拆分與 Orders/HelperPortalV3 備註分色，APP_VERSION 還原 V73。"
+    },
+    {
+      "version": "V75",
+      "date": "2026-09-24",
+      "type": "bugfix/ui/customer-identification",
+      "summary": "修正 V74 調整到未實際掛載的 Orders.jsx；正式 /orders 目前由 OrdersCorrectable → OrdersFast 顯示，現已在真正生效的 OrdersFast 套用客戶備註醒目樣式。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/pages/OrdersFast.jsx: 客戶搜尋結果將末碼／電話／Line/FB 與備註拆行；備註以 #b45309 粗體顯示。",
+        "OrdersFast 選定客戶後若有備註，也持續在客戶欄位下方以 #b45309 粗體顯示。"
+      ],
+      "data_logic": "只修正正式訂單頁的呈現元件；不改搜尋規則、不改客戶資料、不改訂單資料。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "還原 OrdersFast 客戶備註分色顯示，APP_VERSION 還原 V74。"
     }
   ]
 }
