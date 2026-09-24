@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { verifyFirebaseIdToken } from '../server/firebaseToken.js'
+import { getCachedAccount } from '../server/accountAccessCache.js'
 
 const json=(res,status,data)=>res.status(status).json(data)
 const text=v=>String(v??'').trim()
@@ -8,8 +9,7 @@ const iso=v=>{if(!v)return null;if(typeof v==='string')return v;if(v?.seconds)re
 const j=v=>JSON.stringify(v??[])
 
 async function requireNeonAccount(sql,auth){
-  const rows=await sql`SELECT firebase_uid,role,disabled FROM accounts WHERE firebase_uid=${auth.uid} LIMIT 1`
-  const account=rows[0]
+  const account=await getCachedAccount(sql,auth.uid)
   if(!account) throw new Error('Neon 找不到登入帳號')
   if(account.disabled) throw new Error('帳號已停用')
   if(!['owner','staff','helper'].includes(account.role)) throw new Error('帳號權限無效')
