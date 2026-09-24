@@ -119,6 +119,9 @@ export default async function handler(req,res){
             POSITION(${search} IN LOWER(COALESCE(o.customer_name,'')))>0 OR
             POSITION(${search} IN LOWER(COALESCE(o.customer_phone_last2,'')))>0 OR
             POSITION(${search} IN LOWER(COALESCE(o.customer_phone,'')))>0 OR
+            POSITION(${search} IN LOWER(COALESCE(c.name,'')))>0 OR
+            POSITION(${search} IN LOWER(COALESCE(c.phone,'')))>0 OR
+            POSITION(${search} IN LOWER(RIGHT(REGEXP_REPLACE(COALESCE(c.phone,''),'[^0-9]','','g'),2)))>0 OR
             POSITION(${search} IN LOWER(COALESCE(c.line_nick,'')))>0 OR
             POSITION(${search} IN LOWER(COALESCE(c.fb_name,'')))>0 OR
             POSITION(${search} IN LOWER(COALESCE(c.note,'')))>0 OR
