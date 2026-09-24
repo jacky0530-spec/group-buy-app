@@ -932,6 +932,22 @@
       "data_logic": "候選客戶清單與下方明細查詢分離。buyerSearch 保留原始末兩碼搜尋結果；selectedBuyerLookup 僅用於選定客戶後補查完整歷史明細，不再覆蓋上方候選顯示。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "移除 buyerCandidateSnapshot / visibleBuyerCandidates，恢復 V72 點選客戶後候選清單跟著姓名補查結果變動。"
+    },
+    {
+      "version": "V74",
+      "date": "2026-09-24",
+      "type": "ui/customer-identification",
+      "summary": "客戶搜尋與選擇清單中的備註改為醒目棕橘色，方便辨識舊名、不登記等重要提醒。",
+      "database_changes": [],
+      "api_changes": [],
+      "ui_changes": [
+        "src/lib/customerSearch.js: 新增 customerIdentityLabel / customerNoteText，將手機末碼、電話、Line/FB 與備註拆開供 UI 分色顯示；保留 customerSecondaryLabel 相容既有使用。",
+        "src/pages/Orders.jsx: 開立／編輯訂單的客戶搜尋結果中，備註獨立一行以 #b45309、粗體顯示；已選客戶的備註沿用同色。",
+        "src/pages/HelperPortalV3.jsx: 小幫手依客戶打單、依商品連續打單及已選客戶區塊，備註統一改為 #b45309 粗體顯示。"
+      ],
+      "data_logic": "只調整客戶辨識資訊的呈現方式，不改搜尋條件、不改客戶資料、不改訂單資料。",
+      "data_migration": "無 schema migration、無正式資料改寫。",
+      "rollback": "還原 customerSearch 共用標籤拆分與 Orders/HelperPortalV3 備註分色，APP_VERSION 還原 V73。"
     }
   ]
 }
