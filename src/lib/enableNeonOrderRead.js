@@ -82,6 +82,12 @@ if(!globalThis[INSTALLED]){
     return withReleaseStates(result.rows)
   }
 
+  OrdersAPI.reportProductCatalog=async function({status='pending',includeArchived=false}={}){
+    const result=await neonOrderQuery('report_product_catalog',{status,includeArchived})
+    if(!Array.isArray(result?.rows)) throw new Error('Neon 出貨商品目錄回傳格式錯誤')
+    return result.rows.map(row=>({id:row.id||'',name:row.name||''}))
+  }
+
   OrdersAPI.reportData=async function({mode='month',month='',start='',end=''}={}){
     const result=await neonOrderQuery('report_data',{mode,month,start,end})
     if(!result?.report) throw new Error('Neon 報表統計回傳格式錯誤')
