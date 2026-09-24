@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第75版：修正正式訂單頁實際使用 OrdersFast，客戶備註改為醒目棕橘色獨立顯示。
-const APP_VERSION = '第75版｜2026/09/24'
+// 第76版：未出貨／已出貨報表改用輕量商品目錄 SQL，避免開頁即掃描全部訂單；同次訂單查詢直接帶回釋出／取貨狀態，減少重複 Neon 查詢。
+const APP_VERSION = '第76版｜2026/09/24'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
