@@ -241,12 +241,12 @@ async function setProductDeadline(sql,body){
 async function listCustomers(sql){return sql`SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note FROM customers WHERE active<>false ORDER BY name ASC`}
 async function searchCustomers(sql,q,limit=20){
   const query=text(q).toLowerCase()
-  if(!query)return[]
   const take=Math.min(50,Math.max(1,int(limit,20)))
   return sql`
     SELECT legacy_id AS id,name,phone,phone_last2,line_nick,fb_name,note
     FROM customers
     WHERE active<>false AND (
+      ${query}='' OR
       POSITION(${query} IN LOWER(COALESCE(name,'')))>0 OR
       POSITION(${query} IN LOWER(COALESCE(phone,'')))>0 OR
       POSITION(${query} IN LOWER(COALESCE(phone_last2,'')))>0 OR
