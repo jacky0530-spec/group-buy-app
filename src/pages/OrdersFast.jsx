@@ -329,7 +329,7 @@ export default function OrdersFast() {
   async function bulkDeleteSelected() {
     const targets = filtered.filter(o => selected.includes(o.id) && !o.archived && o.status !== 'cancelled')
     if (!targets.length) { toast('目前沒有可永久刪除的已選訂單','warning'); return }
-    const productText = filterProduct === 'all' ? '全部商品' : (products.find(p => p.id === filterProduct)?.name || '指定商品')
+    const productText = filterProduct === 'all' ? '全部商品' : (filterProductName || '指定商品')
     const dateText = filterDateFrom || filterDateTo ? `${filterDateFrom || '最早'} ～ ${filterDateTo || '今天'}` : '全部日期'
     const first = window.confirm(`確定要永久刪除目前選取的 ${targets.length} 筆訂單？\n\n商品條件：${productText}\n日期條件：${dateText}\n\n刪除後無法復原。`)
     if (!first) return
