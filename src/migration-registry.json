@@ -1022,6 +1022,27 @@
       "data_logic": "日期分組只讀商品層級 MAX timestamp，不下載訂單明細。正式 shipped 訂單優先 shipped_at；仍 pending 的部分先出貨品項使用 picked_up_at / picked_up_archived_at。pending 商品目錄同時回傳 latest_arrived_at 供相容與後續使用。",
       "data_migration": "無 schema migration、無正式資料改寫。",
       "rollback": "移除 report_product_catalog 日期欄位與 wrapper 日期 metadata 攔截，APP_VERSION 還原 V77。"
+    },
+    {
+      "version": "V79",
+      "date": "2026-09-25",
+      "type": "performance/orders-query-reduction",
+      "summary": "依效能檢查只實作前兩項：移除訂單頁進入時的完整客戶／商品名冊預載，改為按需搜尋；並把整體訂單統計與搜尋／篩選查詢拆開，避免每次輸入或切換篩選都重查 summary。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-helper-runtime.js: search_customers 在空白搜尋時改回傳最多 50 位輕量初始建議，避免為下拉選單下載全部客戶；仍使用既有 API Function。",
+        "沒有新增 Serverless Function、沒有 schema migration。"
+      ],
+      "ui_changes": [
+        "src/pages/OrdersFast.jsx: 進入訂單管理不再立即 ProductsAPI.list + CustomersAPI.list 全量下載。",
+        "新增客戶、加入商品、商品篩選改為開啟/輸入時才查 Neon，搜尋 debounce 約 220ms。",
+        "編輯既有訂單時只補查該訂單涉及的客戶與商品，以保留備註及規格編輯能力。",
+        "OrdersAPI.summary 改為首次載入一次；搜尋、日期、狀態、付款、商品篩選只查訂單結果，不再同步重查 summary。",
+        "新增/修改/出貨/收款/取消/退款/封存等寫入完成後仍會同步刷新 summary，統計數字保持即時。"
+      ],
+      "data_logic": "功能規則不變。主要降低訂單管理頁的 Neon request 數與全量名冊傳輸；正常搜尋仍使用 SQL server-side query，寫入後維持訂單清單與統計同步。",
+      "data_migration": "無資料搬移、無正式資料修改。",
+      "rollback": "還原 OrdersFast 全量 ProductsAPI/CustomersAPI 預載與 load() 內 summary 查詢；search_customers 空白搜尋恢復回傳空陣列；APP_VERSION 還原 V78。"
     }
   ]
 }
