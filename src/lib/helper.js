@@ -125,6 +125,10 @@ export const HelperAPI = {
     const snap = await getDocs(collection(db,'customers'))
     return snap.docs.map(normalize).filter(x=>x.active!==false).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'zh-Hant'))
   },
+  async searchCustomers(q='',limit=20){
+    const result=await neonHelperRuntime('search_customers',{q:String(q||'').trim(),limit})
+    return Array.isArray(result?.rows)?result.rows:[]
+  },
   async myEntries(uid){
     const snap = await getDocs(query(collection(db,'helper_entries'),where('created_by_uid','==',uid)))
     return snap.docs.map(normalize).sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')))
