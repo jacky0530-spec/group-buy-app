@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第78版：恢復已出貨商品依日期分組；日期直接由輕量商品目錄 SQL 回傳，不再為日期分組掃描全部訂單。
-const APP_VERSION = '第78版｜2026/09/24'
+// 第79版：訂單頁效能優化前兩項：客戶／商品改按需查詢；搜尋篩選不再重複查整體訂單統計。
+const APP_VERSION = '第79版｜2026/09/25'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
