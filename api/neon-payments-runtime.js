@@ -311,7 +311,7 @@ async function paymentDashboard(sql){
           (COALESCE(oi.cost_price,0)<=0) AS needs_cost
         FROM order_items oi
         JOIN orders o ON o.id=oi.order_id
-        WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false AND COALESCE(o.is_virtual,false)=false
+        WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
           AND (
             COALESCE(oi.cost_price,0)<=0 OR
             COALESCE(oi.supplier_paid_amount,0)<COALESCE(oi.cost_price,0)*COALESCE(oi.qty,0)-0.01
@@ -402,7 +402,7 @@ async function listSupplierPayables(sql,supplierName){
       FROM order_items oi
       JOIN orders o ON o.id=oi.order_id
       LEFT JOIN products p ON p.id=oi.product_id
-      WHERE o.status<>'cancelled' AND COALESCE(o.archived,false)=false AND COALESCE(o.is_virtual,false)=false
+      WHERE o.status<>'cancelled' AND COALESCE(o.is_virtual,false)=false
         AND COALESCE(NULLIF(oi.supplier,''),'未指定供應商')=${supplier}
         AND (
           COALESCE(oi.cost_price,0)<=0 OR
