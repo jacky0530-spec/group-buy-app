@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { UserMenu, useAuth } from './AuthGuard'
 import IncomingArchivePanel from './IncomingArchivePanel'
 
-// 第79版：訂單頁效能優化前兩項：客戶／商品改按需查詢；搜尋篩選不再重複查整體訂單統計。
-const APP_VERSION = '第79版｜2026/09/25'
+// 第80版：封存訂單若供應商尚未付清，仍保留在供應商付款中心可搜尋與付款。
+const APP_VERSION = '第80版｜2026/09/26'
 const BACKUP_OWNER_EMAIL='jacky0530@gmail.com'
 
 const NAV = [
