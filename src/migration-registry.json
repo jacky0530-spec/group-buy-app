@@ -1043,6 +1043,24 @@
       "data_logic": "功能規則不變。主要降低訂單管理頁的 Neon request 數與全量名冊傳輸；正常搜尋仍使用 SQL server-side query，寫入後維持訂單清單與統計同步。",
       "data_migration": "無資料搬移、無正式資料修改。",
       "rollback": "還原 OrdersFast 全量 ProductsAPI/CustomersAPI 預載與 load() 內 summary 查詢；search_customers 空白搜尋恢復回傳空陣列；APP_VERSION 還原 V78。"
+    },
+    {
+      "version": "V80",
+      "date": "2026-09-26",
+      "type": "bugfix/supplier-payables-archived-orders",
+      "summary": "修正已到貨、已出貨且封存後，尚未付清供應商款的訂單在供應商付款中心消失。封存只影響日常訂單顯示，不再影響應付帳款。",
+      "database_changes": [],
+      "api_changes": [
+        "api/neon-payments-runtime.js: paymentDashboard 與 supplier_payables 不再排除 archived=true 的訂單；仍排除 cancelled 與 virtual 訂單。",
+        "既有付款建立與分配流程原本即可處理封存訂單，無需新增 Function、無 schema migration。"
+      ],
+      "ui_changes": [
+        "供應商付款中心可再次看到已封存但尚未付清的歷史訂單品項，並可依商品名稱搜尋、勾選與付款。",
+        "APP_VERSION 更新為第80版｜2026/09/26。"
+      ],
+      "data_logic": "應付帳款以是否取消、是否虛擬、成本與 supplier_paid_amount 判斷；訂單 archived 狀態不再取消供應商債務。到貨後付款仍必須 arrived_qty >= qty 才可付款。",
+      "data_migration": "無資料搬移、無正式資料改寫。既有封存未付款資料會由查詢立即重新出現。",
+      "rollback": "恢復 paymentDashboard / supplier_payables 的 archived=false 條件，APP_VERSION 還原 V79。"
     }
   ]
 }
